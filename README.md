@@ -5,8 +5,9 @@ Starter implementation for the Visual Invoice & Receipt Processor system design.
 ## Implemented in this scaffold
 
 - Typed environment config loading and validation
-- Google authentication helpers (service account and OAuth)
+- Google authentication helpers (service account and OAuth) for Drive/Sheets mode
 - Google Drive client with inbox listing and file download methods
+- Cloudflare R2 ingestion service (S3-compatible)
 - Extraction service abstraction with Mistral/OpenRouter/Groq/OpenAI/Gemini adapters
 - Strict JSON parsing with one corrective retry on invalid model output
 - Google Sheets storage writer returning append row references
@@ -35,7 +36,8 @@ Starter implementation for the Visual Invoice & Receipt Processor system design.
    pip install -r requirements.txt
    ```
 3. Copy `.env.example` to `.env` and update values.
-4. Ensure Google credentials files exist at configured paths.
+4. For `INGESTION_BACKEND=r2`, configure R2 and Postgres credentials.
+5. Ensure Google credentials files exist only if using Drive/Sheets mode.
 
 ## Run
 
@@ -77,3 +79,14 @@ pytest -q -m integration
 - For production, prefer service account auth where possible.
 - Keep only one processor runtime active (worker or scheduled job).
 - Duplicate protection in this phase is process-local only; durable idempotency is planned in Phase 2 (`P2-02`).
+
+## Recommended Stack (No Google)
+
+- `INGESTION_BACKEND=r2`
+- `LEDGER_BACKEND=postgres`
+- Configure:
+  - `R2_ENDPOINT_URL`
+  - `R2_ACCESS_KEY_ID`
+  - `R2_SECRET_ACCESS_KEY`
+  - `R2_BUCKET_NAME`
+  - `POSTGRES_DSN`

@@ -7,6 +7,7 @@ from app.auth import get_google_credentials
 from app.config import Settings, load_dotenv
 from app.drive_service import DriveService
 from app.logger import configure_logging
+from app.r2_service import R2Service
 from app.replay import replay_failures
 
 
@@ -15,10 +16,19 @@ def run_poll_once() -> int:
     settings = Settings.from_env()
     configure_logging(settings.log_level)
 
-    credentials = get_google_credentials(settings)
-    drive = DriveService.from_credentials(credentials, settings)
-    files = drive.list_inbox_files()
-    logging.getLogger(__name__).info("Found %d candidate files in inbox", len(files))
+    if settings.ingestion_backend == "drive":
+        credentials = get_google_credentials(settings)
+        drive = DriveService.from_credentials(credentials, settings)
+        files = drive.list_inbox_files()
+    else:
+        r2 = R2Service.from_settings(settings)
+        files = r2.list_inbox_files()
+
+    logging.getLogger(__name__).info(
+        "Found %d candidate files in %s inbox",
+        len(files),
+        settings.ingestion_backend,
+    )
     return 0
 
 
