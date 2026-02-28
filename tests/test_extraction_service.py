@@ -42,6 +42,7 @@ def test_extract_document_success_first_try(tmp_path: Path) -> None:
 
     payload = extract_document(file_path=file_path, model_name="gpt-4o-mini", client=client)
     assert payload["vendor_name"] == "Test"
+    assert payload["_provider"] == "auto"
     assert len(client.calls) == 1
 
 
@@ -112,3 +113,12 @@ def test_extract_document_carries_ocr_text_when_available(tmp_path: Path) -> Non
     )
     payload = extract_document(file_path=file_path, client=client)
     assert payload["_ocr_text"].startswith("Invoice date")
+
+
+def test_extract_document_uses_client_provider_name_if_available(tmp_path: Path) -> None:
+    file_path = tmp_path / "doc.jpg"
+    file_path.write_bytes(b"img")
+    client = _FakeVisionClient(outputs=['{"vendor_name":"A","total_amount":1.0}'])
+    client.provider_name = "mistral"
+    payload = extract_document(file_path=file_path, client=client)
+    assert payload["_provider"] == "mistral"
