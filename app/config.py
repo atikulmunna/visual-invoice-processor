@@ -27,6 +27,8 @@ class Settings:
     google_oauth_token_file: str
     allowed_mime_types: tuple[str, ...]
     log_level: str
+    ledger_spreadsheet_id: str | None = None
+    ledger_range: str = "Ledger!A:Z"
 
     @property
     def google_scopes(self) -> tuple[str, ...]:
@@ -82,6 +84,8 @@ class Settings:
             google_oauth_token_file=oauth_token_file,
             allowed_mime_types=allowed_mimes,
             log_level=os.getenv("LOG_LEVEL", "INFO").upper(),
+            ledger_spreadsheet_id=os.getenv("LEDGER_SPREADSHEET_ID"),
+            ledger_range=os.getenv("LEDGER_RANGE", "Ledger!A:Z"),
         )
 
 
@@ -97,4 +101,3 @@ def load_dotenv(path: str | Path = ".env") -> None:
         key = key.strip()
         value = value.strip().strip('"').strip("'")
         os.environ.setdefault(key, value)
-
