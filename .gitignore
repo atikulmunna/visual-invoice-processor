@@ -4,3 +4,8 @@ Visual_Invoice_Receipt_Processor_System_Design.md
 __pycache__/
 .pytest_cache/
 *.pyc
+data/
+tmp/
+review_queue/
+logs/*.jsonl
+desktop.ini

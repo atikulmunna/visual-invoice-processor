@@ -69,6 +69,23 @@ class DocumentClaimStore:
                 """,
                 (drive_file_id, file_hash),
             ).fetchone()
+
+            if row and row[0] in {"FAILED", "REVIEW_REQUIRED"}:
+                conn.execute(
+                    """
+                    UPDATE document_claims
+                    SET status = 'CLAIMED', owner_id = ?, updated_at_utc = ?
+                    WHERE drive_file_id = ? AND file_hash = ?
+                    """,
+                    (owner_id, now, drive_file_id, file_hash),
+                )
+                conn.execute("COMMIT")
+                return ClaimResult(
+                    status="claimed",
+                    drive_file_id=drive_file_id,
+                    file_hash=file_hash,
+                    owner_id=owner_id,
+                )
             conn.execute("COMMIT")
 
         if not row:
@@ -104,4 +121,3 @@ class DocumentClaimStore:
                 """,
                 (status, now, drive_file_id, file_hash),
             )
-

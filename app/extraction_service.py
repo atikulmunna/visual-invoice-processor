@@ -5,6 +5,8 @@ import json
 from pathlib import Path
 from typing import Any, Protocol
 
+import requests
+
 
 class VisionClient(Protocol):
     def extract_json(self, file_path: Path, model_name: str, prompt: str) -> str:
@@ -130,6 +132,91 @@ class OpenAICompatibleVisionClient:
         return text
 
 
+class MistralVisionClient:
+    def __init__(self, api_key: str) -> None:
+        self._api_key = api_key
+        self._base_url = "https://api.mistral.ai/v1"
+
+    def _headers(self) -> dict[str, str]:
+        return {
+            "Authorization": f"Bearer {self._api_key}",
+            "Content-Type": "application/json",
+        }
+
+    def _ocr_text(self, file_path: Path) -> str:
+        mime = _mime_for_path(file_path)
+        encoded = base64.b64encode(file_path.read_bytes()).decode("ascii")
+        data_uri = f"data:{mime};base64,{encoded}"
+        doc_type = "document_url" if mime == "application/pdf" else "image_url"
+        doc_key = "document_url" if doc_type == "document_url" else "image_url"
+
+        response = requests.post(
+            f"{self._base_url}/ocr",
+            headers=self._headers(),
+            json={
+                "model": "mistral-ocr-latest",
+                "document": {
+                    "type": doc_type,
+                    doc_key: data_uri,
+                },
+            },
+            timeout=60,
+        )
+        if response.status_code >= 400:
+            raise ExtractionError(
+                f"Mistral OCR failed with status {response.status_code}: {response.text[:300]}",
+                code="provider_request_failed",
+            )
+
+        payload = response.json()
+        pages = payload.get("pages", [])
+        text_chunks: list[str] = []
+        for page in pages:
+            markdown = page.get("markdown")
+            if isinstance(markdown, str) and markdown.strip():
+                text_chunks.append(markdown)
+        if not text_chunks:
+            raise ExtractionError("Mistral OCR returned no text", code="empty_response")
+        return "\n\n".join(text_chunks)
+
+    def extract_json(self, file_path: Path, model_name: str, prompt: str) -> str:
+        ocr_text = self._ocr_text(file_path)
+        response = requests.post(
+            f"{self._base_url}/chat/completions",
+            headers=self._headers(),
+            json={
+                "model": model_name,
+                "response_format": {"type": "json_object"},
+                "messages": [
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {
+                        "role": "user",
+                        "content": (
+                            f"{prompt}\n\n"
+                            "Extract fields from this OCR text:\n"
+                            f"{ocr_text}"
+                        ),
+                    },
+                ],
+            },
+            timeout=60,
+        )
+        if response.status_code >= 400:
+            raise ExtractionError(
+                f"Mistral chat failed with status {response.status_code}: {response.text[:300]}",
+                code="provider_request_failed",
+            )
+        payload = response.json()
+        choices = payload.get("choices", [])
+        if not choices:
+            raise ExtractionError("Mistral chat returned no choices", code="empty_response")
+        message = choices[0].get("message", {})
+        content = message.get("content")
+        if not isinstance(content, str) or not content.strip():
+            raise ExtractionError("Mistral chat returned empty content", code="empty_response")
+        return content
+
+
 class GeminiVisionClient:
     def __init__(self, api_key: str) -> None:
         try:
@@ -199,11 +286,7 @@ def _client_for_provider(provider: str) -> VisionClient | None:
         api_key = os.getenv("MISTRAL_API_KEY")
         if not api_key:
             return None
-        return OpenAICompatibleVisionClient(
-            api_key=api_key,
-            base_url="https://api.mistral.ai/v1",
-            provider_name="Mistral",
-        )
+        return MistralVisionClient(api_key=api_key)
     if normalized == "openrouter":
         api_key = os.getenv("OPENROUTER_API_KEY")
         if not api_key:

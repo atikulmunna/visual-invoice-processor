@@ -36,3 +36,11 @@ def test_already_processed_after_stored_status(tmp_path: Path) -> None:
     result = store.claim_document("file-3", "hash-3", owner_id="worker-b")
     assert result.status == "already_processed"
 
+
+def test_failed_status_can_be_reclaimed(tmp_path: Path) -> None:
+    store = DocumentClaimStore(db_path=tmp_path / "claims.db")
+    store.claim_document("file-4", "hash-4", owner_id="worker-a")
+    store.mark_status("file-4", "hash-4", "FAILED")
+    result = store.claim_document("file-4", "hash-4", owner_id="worker-b")
+    assert result.status == "claimed"
+    assert result.owner_id == "worker-b"
