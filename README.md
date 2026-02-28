@@ -7,7 +7,7 @@ Starter implementation for the Visual Invoice & Receipt Processor system design.
 - Typed environment config loading and validation
 - Google authentication helpers (service account and OAuth)
 - Google Drive client with inbox listing and file download methods
-- Extraction service abstraction with OpenAI/Gemini adapters
+- Extraction service abstraction with Mistral/OpenRouter/Groq/OpenAI/Gemini adapters
 - Strict JSON parsing with one corrective retry on invalid model output
 - Google Sheets storage writer returning append row references
 - MVP duplicate skip guard based on in-process `file_hash` tracking
@@ -50,6 +50,14 @@ python -m app.main replay --status FAILED
 ```powershell
 python -m app.monitoring_main
 ```
+
+## Extraction Provider Setup (Recommended)
+
+- Set `EXTRACTION_PROVIDER=auto`
+- Set `EXTRACTION_PROVIDER_ORDER=mistral,openrouter,groq`
+- Add your `MISTRAL_API_KEY`
+- Optionally add `OPENROUTER_API_KEY` and `GROQ_API_KEY` for fallback
+- Keep provider-specific model names in `.env`
 
 ## Test
 
