@@ -14,6 +14,8 @@ Starter implementation for the Visual Invoice & Receipt Processor system design.
 - Baseline schema and validation wiring
 - Explicit processing state machine with transition validation
 - Durable SQLite claim store for idempotency (`drive_file_id + file_hash`)
+- Shared retry utility with exponential backoff and jitter
+- Dead-letter JSONL store for terminal failures and replay queries
 - Unit tests for config and Drive MIME filtering
 - Optional integration test for Drive listing
 
