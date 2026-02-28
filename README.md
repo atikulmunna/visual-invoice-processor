@@ -11,6 +11,7 @@ Starter implementation for the Visual Invoice & Receipt Processor system design.
 - Strict JSON parsing with one corrective retry on invalid model output
 - Google Sheets storage writer returning append row references
 - MVP duplicate skip guard based on in-process `file_hash` tracking
+- Configurable ledger backend (`sheets` or `postgres`)
 - Baseline schema and validation wiring
 - Explicit processing state machine with transition validation
 - Durable SQLite claim store for idempotency (`drive_file_id + file_hash`)

@@ -27,8 +27,11 @@ class Settings:
     google_oauth_token_file: str
     allowed_mime_types: tuple[str, ...]
     log_level: str
+    ledger_backend: str = "sheets"
     ledger_spreadsheet_id: str | None = None
     ledger_range: str = "Ledger!A:Z"
+    postgres_dsn: str | None = None
+    postgres_table: str = "ledger_records"
 
     @property
     def google_scopes(self) -> tuple[str, ...]:
@@ -76,6 +79,10 @@ class Settings:
         if not allowed_mimes:
             raise ValueError("ALLOWED_MIME_TYPES must contain at least one mime type")
 
+        ledger_backend = os.getenv("LEDGER_BACKEND", "sheets").strip().lower()
+        if ledger_backend not in {"sheets", "postgres"}:
+            raise ValueError("LEDGER_BACKEND must be one of: sheets, postgres")
+
         return cls(
             drive_inbox_folder_id=_require("DRIVE_INBOX_FOLDER_ID"),
             google_auth_mode=auth_mode,
@@ -84,8 +91,11 @@ class Settings:
             google_oauth_token_file=oauth_token_file,
             allowed_mime_types=allowed_mimes,
             log_level=os.getenv("LOG_LEVEL", "INFO").upper(),
+            ledger_backend=ledger_backend,
             ledger_spreadsheet_id=os.getenv("LEDGER_SPREADSHEET_ID"),
             ledger_range=os.getenv("LEDGER_RANGE", "Ledger!A:Z"),
+            postgres_dsn=os.getenv("POSTGRES_DSN"),
+            postgres_table=os.getenv("POSTGRES_TABLE", "ledger_records"),
         )
 
 

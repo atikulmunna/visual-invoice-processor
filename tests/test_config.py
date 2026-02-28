@@ -43,3 +43,14 @@ def test_settings_requires_existing_service_account_file(
     monkeypatch.setenv("GOOGLE_SERVICE_ACCOUNT_FILE", "missing-file.json")
     with pytest.raises(ValueError, match="not found"):
         Settings.from_env()
+
+
+def test_settings_rejects_invalid_ledger_backend(
+    monkeypatch: pytest.MonkeyPatch, service_account_file: Path
+) -> None:
+    monkeypatch.setenv("DRIVE_INBOX_FOLDER_ID", "folder-123")
+    monkeypatch.setenv("GOOGLE_AUTH_MODE", "service_account")
+    monkeypatch.setenv("GOOGLE_SERVICE_ACCOUNT_FILE", str(service_account_file))
+    monkeypatch.setenv("LEDGER_BACKEND", "mongo")
+    with pytest.raises(ValueError, match="LEDGER_BACKEND"):
+        Settings.from_env()

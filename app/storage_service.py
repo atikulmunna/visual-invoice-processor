@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from datetime import datetime, timezone
 from typing import Any
@@ -113,12 +114,98 @@ class SheetsStorageService:
             result["dedupe_key"] = dedupe_key
         return result
 
+
+class PostgresStorageService:
+    def __init__(self, dsn: str, table_name: str = "ledger_records") -> None:
+        self._dsn = dsn
+        self._table = table_name
+        self._ensure_schema()
+
+    def _connect(self) -> Any:
+        try:
+            import psycopg
+        except ImportError as exc:
+            raise RuntimeError("psycopg package is required for PostgreSQL backend") from exc
+        return psycopg.connect(self._dsn)
+
+    def _ensure_schema(self) -> None:
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"""
+                    CREATE TABLE IF NOT EXISTS {self._table} (
+                        id BIGSERIAL PRIMARY KEY,
+                        drive_file_id TEXT NOT NULL,
+                        file_hash TEXT NOT NULL,
+                        status TEXT NOT NULL,
+                        record_json JSONB NOT NULL,
+                        metadata_json JSONB NOT NULL,
+                        processed_at_utc TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                        UNIQUE (drive_file_id, file_hash)
+                    )
+                    """
+                )
+            conn.commit()
+
+    def append_record(self, record: dict[str, Any], metadata: dict[str, Any]) -> dict[str, Any]:
+        drive_file_id = metadata.get("drive_file_id")
+        file_hash = metadata.get("file_hash")
+        if not drive_file_id or not file_hash:
+            raise StorageError("Postgres storage requires metadata.drive_file_id and metadata.file_hash")
+
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"""
+                    INSERT INTO {self._table}
+                        (drive_file_id, file_hash, status, record_json, metadata_json, processed_at_utc)
+                    VALUES
+                        (%s, %s, %s, %s::jsonb, %s::jsonb, NOW())
+                    ON CONFLICT (drive_file_id, file_hash) DO NOTHING
+                    RETURNING id
+                    """,
+                    (
+                        drive_file_id,
+                        file_hash,
+                        metadata.get("status", "STORED"),
+                        json.dumps(record, ensure_ascii=True),
+                        json.dumps(metadata, ensure_ascii=True),
+                    ),
+                )
+                row = cur.fetchone()
+            conn.commit()
+
+        if row is None:
+            return {
+                "status": "skipped_duplicate",
+                "backend": "postgres",
+                "drive_file_id": drive_file_id,
+                "file_hash": file_hash,
+            }
+        return {
+            "status": "appended",
+            "backend": "postgres",
+            "row_id": int(row[0]),
+            "drive_file_id": drive_file_id,
+            "file_hash": file_hash,
+        }
+
+
 def append_record(record: dict[str, Any], metadata: dict[str, Any]) -> dict[str, Any]:
     load_dotenv()
     settings = Settings.from_env()
+
+    if settings.ledger_backend == "postgres":
+        if not settings.postgres_dsn:
+            raise StorageError("POSTGRES_DSN is required when LEDGER_BACKEND=postgres.")
+        service = PostgresStorageService(
+            dsn=settings.postgres_dsn,
+            table_name=settings.postgres_table,
+        )
+        return service.append_record(record=record, metadata=metadata)
+
     if not settings.ledger_spreadsheet_id:
         raise StorageError("LEDGER_SPREADSHEET_ID is required for Sheets storage.")
-
     credentials = get_google_credentials(settings)
     service = SheetsStorageService.from_credentials(
         credentials=credentials,
