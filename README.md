@@ -19,6 +19,7 @@ Starter implementation for the Visual Invoice & Receipt Processor system design.
 - Document-correlated JSON logging helper (`document_id`, stage, latency, outcome)
 - Simple metrics collector plus JSONL metrics sink for dashboard ingestion
 - Review queue router with reason-coded records and `Needs_Review` file moves
+- Business-rule validator for totals and line-item consistency with scored output
 - Unit tests for config and Drive MIME filtering
 - Optional integration test for Drive listing
 

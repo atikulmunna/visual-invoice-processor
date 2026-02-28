@@ -5,7 +5,7 @@ from copy import deepcopy
 import pytest
 from pydantic import ValidationError
 
-from app.validation import validate_invoice_payload
+from app.validation import evaluate_business_rules, validate_and_score, validate_invoice_payload
 
 
 def _valid_payload() -> dict:
@@ -63,3 +63,28 @@ def test_validate_invoice_payload_rejects_invalid_samples(
     errors = exc_info.value.errors()
     assert any(error_fragment in ".".join(map(str, e["loc"])) for e in errors)
 
+
+def test_business_rules_detect_tax_subtotal_total_mismatch() -> None:
+    payload = _valid_payload()
+    payload["total_amount"] = 999.0
+    record = validate_invoice_payload(payload)
+    violations = evaluate_business_rules(record)
+    assert any(v["code"] == "amount_mismatch" for v in violations)
+
+
+def test_business_rules_detect_line_item_subtotal_mismatch() -> None:
+    payload = _valid_payload()
+    payload["line_items"][0]["line_total"] = 90.0
+    record = validate_invoice_payload(payload)
+    violations = evaluate_business_rules(record)
+    assert any(v["code"] == "line_item_sum_mismatch" for v in violations)
+
+
+def test_validate_and_score_returns_machine_readable_violations() -> None:
+    payload = _valid_payload()
+    payload["invoice_number"] = None
+    payload["vendor_tax_id"] = None
+    result = validate_and_score(payload)
+    assert "validation_score" in result
+    assert isinstance(result["violations"], list)
+    assert any(v["code"] == "missing_identifier" for v in result["violations"])
