@@ -31,14 +31,25 @@ def evaluate_business_rules(
 
     if record.line_items:
         line_sum = round(sum(item.line_total for item in record.line_items), 2)
-        if abs(line_sum - round(record.subtotal, 2)) > amount_tolerance:
+        subtotal = round(record.subtotal, 2)
+        if line_sum <= amount_tolerance and subtotal > amount_tolerance:
+            violations.append(
+                {
+                    "code": "line_items_incomplete",
+                    "severity": "warning",
+                    "message": "line items present but amounts are missing or zero",
+                    "expected_subtotal": line_sum,
+                    "actual_subtotal": subtotal,
+                }
+            )
+        elif abs(line_sum - subtotal) > amount_tolerance:
             violations.append(
                 {
                     "code": "line_item_sum_mismatch",
                     "severity": "error",
                     "message": "sum(line_items.line_total) does not match subtotal",
                     "expected_subtotal": line_sum,
-                    "actual_subtotal": round(record.subtotal, 2),
+                    "actual_subtotal": subtotal,
                 }
             )
 

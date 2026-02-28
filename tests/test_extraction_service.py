@@ -23,6 +23,12 @@ class _FakeVisionClient:
         return self._outputs.pop(0)
 
 
+class _FakeVisionClientWithOcr(_FakeVisionClient):
+    def __init__(self, outputs: list[str], ocr_text: str) -> None:
+        super().__init__(outputs=outputs)
+        self.last_ocr_text = ocr_text
+
+
 class _AlwaysFailClient:
     def extract_json(self, file_path: Path, model_name: str, prompt: str) -> str:
         _ = (file_path, model_name, prompt)
@@ -95,3 +101,14 @@ def test_extract_document_auto_provider_requires_any_key(monkeypatch: pytest.Mon
 
     with pytest.raises(ExtractionError, match="No provider API key found"):
         extract_document(file_path=file_path, provider="auto")
+
+
+def test_extract_document_carries_ocr_text_when_available(tmp_path: Path) -> None:
+    file_path = tmp_path / "doc.jpg"
+    file_path.write_bytes(b"img")
+    client = _FakeVisionClientWithOcr(
+        outputs=['{"vendor_name":"A","total_amount":1.0}'],
+        ocr_text="Invoice date: 01/03/2026",
+    )
+    payload = extract_document(file_path=file_path, client=client)
+    assert payload["_ocr_text"].startswith("Invoice date")

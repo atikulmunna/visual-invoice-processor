@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import logging
 import os
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -69,6 +70,15 @@ def _normalize_date(value: Any) -> str | None:
     return None
 
 
+def _extract_date_from_ocr_text(text: str) -> str | None:
+    candidates = re.findall(r"\b(\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|\d{4}[/-]\d{1,2}[/-]\d{1,2})\b", text)
+    for candidate in candidates:
+        normalized = _normalize_date(candidate)
+        if normalized:
+            return normalized
+    return None
+
+
 def _normalize_payment_method(value: Any) -> str:
     text = str(value or "").strip().lower()
     if "card" in text:
@@ -111,7 +121,61 @@ def _normalize_line_items(raw: Any) -> list[dict[str, Any]]:
     return items
 
 
+def _line_items_have_amounts(items: list[dict[str, Any]]) -> bool:
+    return any(_safe_float(item.get("line_total"), 0.0) > 0 for item in items)
+
+
+def _extract_line_items_from_ocr_text(text: str) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    for line in text.splitlines():
+        compact = line.strip()
+        if len(compact) < 8:
+            continue
+        # Common line format: "<desc> <qty> <unit_price> <line_total>"
+        m = re.match(
+            r"^(?P<desc>.+?)\s+(?P<qty>\d+(?:\.\d+)?)\s+(?P<unit>\d[\d,]*(?:\.\d+)?)\s+(?P<total>\d[\d,]*(?:\.\d+)?)$",
+            compact,
+        )
+        if not m:
+            # Fallback: "<desc> ... <line_total>"
+            m2 = re.match(r"^(?P<desc>.+?)\s+(?P<total>\d[\d,]*(?:\.\d+)?)$", compact)
+            if not m2:
+                continue
+            desc = m2.group("desc").strip()
+            total = _safe_float(m2.group("total").replace(",", ""), 0.0)
+            if total <= 0:
+                continue
+            items.append(
+                {
+                    "description": desc,
+                    "quantity": 1.0,
+                    "unit_price": total,
+                    "line_total": total,
+                    "category": None,
+                }
+            )
+            continue
+
+        desc = m.group("desc").strip()
+        qty = _safe_float(m.group("qty"), 1.0)
+        unit = _safe_float(m.group("unit").replace(",", ""), 0.0)
+        total = _safe_float(m.group("total").replace(",", ""), qty * unit)
+        if total <= 0:
+            continue
+        items.append(
+            {
+                "description": desc,
+                "quantity": max(qty, 0.0001),
+                "unit_price": max(unit, 0.0),
+                "line_total": max(total, 0.0),
+                "category": None,
+            }
+        )
+    return items
+
+
 def _coerce_extraction_payload(raw: dict[str, Any]) -> dict[str, Any]:
+    ocr_text = str(_pick(raw, "_ocr_text", default="") or "")
     total = _safe_float(_pick(raw, "total_amount", "total", "order_total", "grand_total"), 0.0)
     subtotal = _safe_float(_pick(raw, "subtotal", "sub_total"), total)
     tax_amount = _safe_float(_pick(raw, "tax_amount", "tax", "vat"), max(total - subtotal, 0.0))
@@ -119,12 +183,22 @@ def _coerce_extraction_payload(raw: dict[str, Any]) -> dict[str, Any]:
     confidence = _safe_float(_pick(raw, "model_confidence", "confidence", "confidence_score"), 0.8)
     confidence = max(0.0, min(confidence, 1.0))
 
+    normalized_date = _normalize_date(_pick(raw, "invoice_date", "order_date", "date"))
+    if not normalized_date and ocr_text:
+        normalized_date = _extract_date_from_ocr_text(ocr_text)
+
+    line_items = _normalize_line_items(_pick(raw, "line_items", "items", "products", default=[]))
+    if (not line_items or not _line_items_have_amounts(line_items)) and ocr_text:
+        recovered = _extract_line_items_from_ocr_text(ocr_text)
+        if recovered:
+            line_items = recovered
+
     payload = {
         "document_type": str(_pick(raw, "document_type", default="invoice")).lower(),
         "vendor_name": _pick(raw, "vendor_name", "vendor", "merchant_name", default="Unknown Vendor"),
         "vendor_tax_id": _pick(raw, "vendor_tax_id", "tax_id", "vat_id"),
         "invoice_number": _pick(raw, "invoice_number", "order_id", "invoice_id"),
-        "invoice_date": _normalize_date(_pick(raw, "invoice_date", "order_date", "date")) or datetime.now(
+        "invoice_date": normalized_date or datetime.now(
             timezone.utc
         ).strftime("%Y-%m-%d"),
         "due_date": _normalize_date(_pick(raw, "due_date")),
@@ -133,7 +207,7 @@ def _coerce_extraction_payload(raw: dict[str, Any]) -> dict[str, Any]:
         "tax_amount": max(tax_amount, 0.0),
         "total_amount": max(total, 0.0),
         "payment_method": _normalize_payment_method(_pick(raw, "payment_method")),
-        "line_items": _normalize_line_items(_pick(raw, "line_items", "items", "products", default=[])),
+        "line_items": line_items,
         "model_confidence": confidence,
         "validation_score": confidence,
     }
@@ -175,6 +249,8 @@ def run_poll_once() -> int:
     extraction_provider = os.getenv("EXTRACTION_PROVIDER", "auto")
     extraction_model = os.getenv("EXTRACTION_MODEL", "auto")
     worker_id = os.getenv("WORKER_ID", "poll-once")
+    review_threshold = float(os.getenv("REVIEW_CONFIDENCE_THRESHOLD", "0.5"))
+    store_review_score_threshold = float(os.getenv("STORE_REVIEW_SCORE_THRESHOLD", "0.6"))
 
     for candidate in files:
         metrics.increment("documents_processed_total")
@@ -227,6 +303,7 @@ def run_poll_once() -> int:
             decision = decide_review_status(
                 is_valid=validation["is_valid"],
                 model_confidence=float(validation["record"].model_confidence),
+                confidence_threshold=review_threshold,
             )
 
             if decision.status == "REVIEW_REQUIRED":
@@ -256,12 +333,15 @@ def run_poll_once() -> int:
 
             record = validation["record"].model_dump(mode="json")
             record["validation_score"] = validation["validation_score"]
+            needs_review = validation["validation_score"] < store_review_score_threshold
+            record["needs_review"] = needs_review
             metadata = {
                 "document_id": document_id,
                 "drive_file_id": file_id,
                 "file_hash": file_hash,
                 "status": "STORED",
                 "processed_at_utc": datetime.now(timezone.utc).isoformat(),
+                "needs_review": needs_review,
             }
             append_result = append_record(record=record, metadata=metadata)
             claim_store.mark_status(file_id, file_hash, "STORED")
