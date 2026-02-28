@@ -12,6 +12,7 @@ Starter implementation for the Visual Invoice & Receipt Processor system design.
 - Google Sheets storage writer returning append row references
 - MVP duplicate skip guard based on in-process `file_hash` tracking
 - Baseline schema and validation wiring
+- Explicit processing state machine with transition validation
 - Unit tests for config and Drive MIME filtering
 - Optional integration test for Drive listing
 
