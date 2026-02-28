@@ -22,6 +22,7 @@ Starter implementation for the Visual Invoice & Receipt Processor system design.
 - Review queue router with reason-coded records and `Needs_Review` file moves
 - Business-rule validator for totals and line-item consistency with scored output
 - Replay tooling with dead-letter scanning and audit trail entries
+- Monitoring API endpoints for health, stats, failures, and backlog
 - Unit tests for config and Drive MIME filtering
 - Optional integration test for Drive listing
 
@@ -43,6 +44,10 @@ python -m app.main poll-once
 
 ```powershell
 python -m app.main replay --status FAILED
+```
+
+```powershell
+python -m app.monitoring_main
 ```
 
 ## Test
