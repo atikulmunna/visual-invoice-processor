@@ -1,34 +1,319 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import logging
+import os
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+from uuid import uuid4
 
 from app.auth import get_google_credentials
 from app.config import Settings, load_dotenv
+from app.dead_letter import DeadLetterStore
 from app.drive_service import DriveService
+from app.extraction_service import ExtractionError, extract_document
+from app.idempotency_store import DocumentClaimStore
 from app.logger import configure_logging
+from app.metrics import JsonlMetricsSink, MetricsCollector
 from app.r2_service import R2Service
+from app.review_queue import decide_review_status, route_to_review_queue
 from app.replay import replay_failures
+from app.storage_service import append_record
+from app.validation import validate_and_score
+from pydantic import ValidationError
+
+_TMP_DIR = Path("tmp")
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as fh:
+        for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _download_candidate(settings: Settings, backend: object, candidate: dict[str, str], out_path: Path) -> Path:
+    file_id = candidate["id"]
+    if settings.ingestion_backend == "drive":
+        assert isinstance(backend, DriveService)
+        return backend.download_file(file_id=file_id, out_path=out_path)
+    assert isinstance(backend, R2Service)
+    return backend.download_file(object_key=file_id, out_path=out_path)
+
+
+def _archive_candidate(settings: Settings, backend: object, candidate: dict[str, str]) -> None:
+    if settings.ingestion_backend == "r2":
+        assert isinstance(backend, R2Service)
+        backend.move_to_archive(object_key=candidate["id"])
+
+
+def _pick(data: dict[str, Any], *keys: str, default: Any = None) -> Any:
+    for key in keys:
+        if key in data and data[key] not in (None, ""):
+            return data[key]
+    return default
+
+
+def _normalize_date(value: Any) -> str | None:
+    if not value:
+        return None
+    text = str(value).strip()
+    for fmt in ("%Y-%m-%d", "%d-%m-%Y", "%d/%m/%Y", "%m/%d/%Y"):
+        try:
+            return datetime.strptime(text, fmt).strftime("%Y-%m-%d")
+        except ValueError:
+            continue
+    return None
+
+
+def _normalize_payment_method(value: Any) -> str:
+    text = str(value or "").strip().lower()
+    if "card" in text:
+        return "card"
+    if "cash" in text:
+        return "cash"
+    if "bank" in text or "transfer" in text:
+        return "bank"
+    return "unknown"
+
+
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    if value is None or value == "":
+        return default
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _normalize_line_items(raw: Any) -> list[dict[str, Any]]:
+    if not isinstance(raw, list):
+        return []
+    items: list[dict[str, Any]] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        quantity = _safe_float(_pick(item, "quantity", "qty"), 1.0)
+        unit_price = _safe_float(_pick(item, "unit_price", "price"), 0.0)
+        line_total = _safe_float(_pick(item, "line_total", "total"), quantity * unit_price)
+        items.append(
+            {
+                "description": str(_pick(item, "description", "name", "title", default="item")).strip(),
+                "quantity": max(quantity, 0.0001),
+                "unit_price": max(unit_price, 0.0),
+                "line_total": max(line_total, 0.0),
+                "category": _pick(item, "category"),
+            }
+        )
+    return items
+
+
+def _coerce_extraction_payload(raw: dict[str, Any]) -> dict[str, Any]:
+    total = _safe_float(_pick(raw, "total_amount", "total", "order_total", "grand_total"), 0.0)
+    subtotal = _safe_float(_pick(raw, "subtotal", "sub_total"), total)
+    tax_amount = _safe_float(_pick(raw, "tax_amount", "tax", "vat"), max(total - subtotal, 0.0))
+
+    confidence = _safe_float(_pick(raw, "model_confidence", "confidence", "confidence_score"), 0.8)
+    confidence = max(0.0, min(confidence, 1.0))
+
+    payload = {
+        "document_type": str(_pick(raw, "document_type", default="invoice")).lower(),
+        "vendor_name": _pick(raw, "vendor_name", "vendor", "merchant_name", default="Unknown Vendor"),
+        "vendor_tax_id": _pick(raw, "vendor_tax_id", "tax_id", "vat_id"),
+        "invoice_number": _pick(raw, "invoice_number", "order_id", "invoice_id"),
+        "invoice_date": _normalize_date(_pick(raw, "invoice_date", "order_date", "date")) or datetime.now(
+            timezone.utc
+        ).strftime("%Y-%m-%d"),
+        "due_date": _normalize_date(_pick(raw, "due_date")),
+        "currency": str(_pick(raw, "currency", default="BDT")).upper(),
+        "subtotal": max(subtotal, 0.0),
+        "tax_amount": max(tax_amount, 0.0),
+        "total_amount": max(total, 0.0),
+        "payment_method": _normalize_payment_method(_pick(raw, "payment_method")),
+        "line_items": _normalize_line_items(_pick(raw, "line_items", "items", "products", default=[])),
+        "model_confidence": confidence,
+        "validation_score": confidence,
+    }
+    if payload["document_type"] not in {"invoice", "receipt"}:
+        payload["document_type"] = "invoice"
+    if len(payload["currency"]) != 3:
+        payload["currency"] = "BDT"
+    return payload
 
 
 def run_poll_once() -> int:
     load_dotenv()
     settings = Settings.from_env()
     configure_logging(settings.log_level)
+    logger = logging.getLogger(__name__)
 
     if settings.ingestion_backend == "drive":
         credentials = get_google_credentials(settings)
         drive = DriveService.from_credentials(credentials, settings)
+        backend: object = drive
         files = drive.list_inbox_files()
     else:
         r2 = R2Service.from_settings(settings)
+        backend = r2
         files = r2.list_inbox_files()
 
-    logging.getLogger(__name__).info(
+    logger.info(
         "Found %d candidate files in %s inbox",
         len(files),
         settings.ingestion_backend,
     )
+
+    _TMP_DIR.mkdir(parents=True, exist_ok=True)
+    claim_store = DocumentClaimStore()
+    dead_letter = DeadLetterStore()
+    metrics = MetricsCollector()
+    metrics_sink = JsonlMetricsSink()
+
+    extraction_provider = os.getenv("EXTRACTION_PROVIDER", "auto")
+    extraction_model = os.getenv("EXTRACTION_MODEL", "auto")
+    worker_id = os.getenv("WORKER_ID", "poll-once")
+
+    for candidate in files:
+        metrics.increment("documents_processed_total")
+        file_id = candidate["id"]
+        file_name = candidate.get("name", "document")
+        local_path = _TMP_DIR / f"{uuid4().hex}_{file_name}"
+
+        try:
+            _download_candidate(settings, backend, candidate, local_path)
+            file_hash = _sha256(local_path)
+            claim = claim_store.claim_document(file_id, file_hash, owner_id=worker_id)
+            if claim.status != "claimed":
+                metrics.increment("documents_duplicate_skipped_total")
+                continue
+
+            document_id = str(uuid4())
+            extracted = extract_document(
+                file_path=local_path,
+                provider=extraction_provider,
+                model_name=extraction_model,
+            )
+            normalized_payload = _coerce_extraction_payload(extracted)
+            try:
+                validation = validate_and_score(normalized_payload)
+            except ValidationError as exc:
+                route_to_review_queue(
+                    document_id=document_id,
+                    reason_codes=["schema_validation_failed"],
+                    metadata={
+                        "source_file_id": file_id,
+                        "file_hash": file_hash,
+                        "error": str(exc),
+                        "raw_extracted": extracted,
+                    },
+                )
+                dead_letter.write_failure(
+                    {
+                        "document_id": document_id,
+                        "drive_file_id": file_id,
+                        "file_hash": file_hash,
+                        "status": "REVIEW_REQUIRED",
+                        "error_code": "schema_validation_failed",
+                        "error_message": str(exc),
+                    }
+                )
+                claim_store.mark_status(file_id, file_hash, "REVIEW_REQUIRED")
+                metrics.increment("documents_review_total")
+                logger.info("Document %s sent to review due to schema mismatch", document_id)
+                continue
+            decision = decide_review_status(
+                is_valid=validation["is_valid"],
+                model_confidence=float(validation["record"].model_confidence),
+            )
+
+            if decision.status == "REVIEW_REQUIRED":
+                route_to_review_queue(
+                    document_id=document_id,
+                    reason_codes=list(decision.reason_codes),
+                    metadata={
+                        "source_file_id": file_id,
+                        "file_hash": file_hash,
+                        "violations": validation["violations"],
+                    },
+                )
+                dead_letter.write_failure(
+                    {
+                        "document_id": document_id,
+                        "drive_file_id": file_id,
+                        "file_hash": file_hash,
+                        "status": "REVIEW_REQUIRED",
+                        "error_code": ",".join(decision.reason_codes),
+                        "error_message": "Routed to review queue",
+                    }
+                )
+                claim_store.mark_status(file_id, file_hash, "REVIEW_REQUIRED")
+                metrics.increment("documents_review_total")
+                logger.info("Document %s routed to review", document_id)
+                continue
+
+            record = validation["record"].model_dump(mode="json")
+            record["validation_score"] = validation["validation_score"]
+            metadata = {
+                "document_id": document_id,
+                "drive_file_id": file_id,
+                "file_hash": file_hash,
+                "status": "STORED",
+                "processed_at_utc": datetime.now(timezone.utc).isoformat(),
+            }
+            append_result = append_record(record=record, metadata=metadata)
+            claim_store.mark_status(file_id, file_hash, "STORED")
+            _archive_candidate(settings, backend, candidate)
+            claim_store.mark_status(file_id, file_hash, "ARCHIVED")
+            metrics.increment("documents_success_total")
+            logger.info(
+                "Stored document_id=%s source_id=%s result=%s",
+                document_id,
+                file_id,
+                append_result.get("status"),
+            )
+
+        except ExtractionError as exc:
+            metrics.increment("documents_failed_total")
+            dead_letter.write_failure(
+                {
+                    "document_id": str(uuid4()),
+                    "drive_file_id": file_id,
+                    "file_hash": _sha256(local_path) if local_path.exists() else "",
+                    "status": "FAILED",
+                    "error_code": exc.code,
+                    "error_message": str(exc),
+                }
+            )
+            if local_path.exists():
+                claim_store.mark_status(file_id, _sha256(local_path), "FAILED")
+            logger.exception("Extraction failed for source_id=%s", file_id)
+        except Exception as exc:  # noqa: BLE001
+            metrics.increment("documents_failed_total")
+            dead_letter.write_failure(
+                {
+                    "document_id": str(uuid4()),
+                    "drive_file_id": file_id,
+                    "file_hash": _sha256(local_path) if local_path.exists() else "",
+                    "status": "FAILED",
+                    "error_code": "pipeline_error",
+                    "error_message": str(exc),
+                }
+            )
+            if local_path.exists():
+                claim_store.mark_status(file_id, _sha256(local_path), "FAILED")
+            logger.exception("Pipeline failed for source_id=%s", file_id)
+        finally:
+            if local_path.exists():
+                local_path.unlink(missing_ok=True)
+
+    snapshot = metrics.snapshot()
+    for key, value in snapshot.items():
+        if isinstance(value, int):
+            metrics_sink.emit({"metric": key, "value": value, "stage": "poll_once"})
+    logger.info("Poll summary: %s", snapshot)
     return 0
 
 
