@@ -272,6 +272,8 @@ def run_poll_once() -> int:
                 provider=extraction_provider,
                 model_name=extraction_model,
             )
+            used_provider = str(extracted.get("_provider", "unknown"))
+            logger.info("Extraction provider=%s source_id=%s", used_provider, file_id)
             normalized_payload = _coerce_extraction_payload(extracted)
             try:
                 validation = validate_and_score(normalized_payload)
@@ -284,6 +286,7 @@ def run_poll_once() -> int:
                         "file_hash": file_hash,
                         "error": str(exc),
                         "raw_extracted": extracted,
+                        "used_provider": used_provider,
                     },
                 )
                 dead_letter.write_failure(
@@ -294,6 +297,7 @@ def run_poll_once() -> int:
                         "status": "REVIEW_REQUIRED",
                         "error_code": "schema_validation_failed",
                         "error_message": str(exc),
+                        "used_provider": used_provider,
                     }
                 )
                 claim_store.mark_status(file_id, file_hash, "REVIEW_REQUIRED")
@@ -314,6 +318,7 @@ def run_poll_once() -> int:
                         "source_file_id": file_id,
                         "file_hash": file_hash,
                         "violations": validation["violations"],
+                        "used_provider": used_provider,
                     },
                 )
                 dead_letter.write_failure(
@@ -324,6 +329,7 @@ def run_poll_once() -> int:
                         "status": "REVIEW_REQUIRED",
                         "error_code": ",".join(decision.reason_codes),
                         "error_message": "Routed to review queue",
+                        "used_provider": used_provider,
                     }
                 )
                 claim_store.mark_status(file_id, file_hash, "REVIEW_REQUIRED")
@@ -342,6 +348,7 @@ def run_poll_once() -> int:
                 "status": "STORED",
                 "processed_at_utc": datetime.now(timezone.utc).isoformat(),
                 "needs_review": needs_review,
+                "used_provider": used_provider,
             }
             append_result = append_record(record=record, metadata=metadata)
             claim_store.mark_status(file_id, file_hash, "STORED")

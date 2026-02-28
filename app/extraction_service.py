@@ -60,6 +60,7 @@ class OpenAIVisionClient:
         except ImportError as exc:
             raise RuntimeError("openai package is required for OpenAI extraction") from exc
         self._client = OpenAI(api_key=api_key)
+        self.provider_name = "openai"
 
     def extract_json(self, file_path: Path, model_name: str, prompt: str) -> str:
         mime = _mime_for_path(file_path)
@@ -99,6 +100,7 @@ class OpenAICompatibleVisionClient:
         except ImportError as exc:
             raise RuntimeError("openai package is required for OpenAI-compatible providers") from exc
         self._provider_name = provider_name
+        self.provider_name = provider_name.strip().lower()
         self._client = OpenAI(
             api_key=api_key,
             base_url=base_url,
@@ -137,6 +139,7 @@ class MistralVisionClient:
         self._api_key = api_key
         self._base_url = "https://api.mistral.ai/v1"
         self.last_ocr_text: str | None = None
+        self.provider_name = "mistral"
 
     def _headers(self) -> dict[str, str]:
         return {
@@ -226,6 +229,7 @@ class GeminiVisionClient:
         except ImportError as exc:
             raise RuntimeError("google-genai package is required for Gemini extraction") from exc
         self._client = genai.Client(api_key=api_key)
+        self.provider_name = "gemini"
 
     def extract_json(self, file_path: Path, model_name: str, prompt: str) -> str:
         mime = _mime_for_path(file_path)
@@ -249,6 +253,7 @@ class MultiProviderVisionClient:
     def __init__(self, providers: list[tuple[str, VisionClient, str]]) -> None:
         self._providers = providers
         self.last_ocr_text: str | None = None
+        self.last_provider: str | None = None
 
     def extract_json(self, file_path: Path, model_name: str, prompt: str) -> str:
         errors: list[str] = []
@@ -257,6 +262,7 @@ class MultiProviderVisionClient:
             try:
                 text = client.extract_json(file_path, active_model, prompt)
                 self.last_ocr_text = getattr(client, "last_ocr_text", None)
+                self.last_provider = provider_name
                 return text
             except Exception as exc:  # noqa: BLE001
                 errors.append(f"{provider_name}: {exc}")
@@ -367,12 +373,19 @@ def extract_document(
     else:
         active_client, active_model = client, model_name
 
+    def _resolved_provider_name() -> str:
+        name = getattr(active_client, "last_provider", None) or getattr(active_client, "provider_name", None)
+        if isinstance(name, str) and name.strip():
+            return name.strip().lower()
+        return provider.strip().lower()
+
     first_text = active_client.extract_json(path, active_model, USER_EXTRACTION_PROMPT)
     try:
         payload = _parse_json_payload(first_text)
         ocr_text = getattr(active_client, "last_ocr_text", None)
         if isinstance(ocr_text, str) and ocr_text.strip():
             payload["_ocr_text"] = ocr_text
+        payload["_provider"] = _resolved_provider_name()
         return payload
     except ExtractionError as exc:
         if exc.code not in {"invalid_json", "invalid_json_shape"}:
@@ -383,4 +396,5 @@ def extract_document(
     ocr_text = getattr(active_client, "last_ocr_text", None)
     if isinstance(ocr_text, str) and ocr_text.strip():
         payload["_ocr_text"] = ocr_text
+    payload["_provider"] = _resolved_provider_name()
     return payload
