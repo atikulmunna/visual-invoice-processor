@@ -67,3 +67,20 @@ def test_engine_recovers_line_items_from_ocr_text_when_item_amounts_missing() ->
     assert len(payload["line_items"]) >= 2
     assert any(item["line_total"] > 0 for item in payload["line_items"])
 
+
+def test_engine_reconciles_overcounted_line_items_to_subtotal() -> None:
+    rules = _rules()
+    rules["line_item_ignore_keywords"] = []
+    engine = NormalizationRuleEngine(rules)
+    raw = {
+        "subtotal": "$12.00",
+        "total": "$12.00",
+        "items": [
+            {"description": "Usage Summary", "qty": 3, "amount": "$12.00"},
+            {"description": "First 15", "qty": 0, "amount": "$0.00"},
+            {"description": "16 and above", "qty": 3, "amount": "$12.00"}
+        ]
+    }
+    payload = engine.coerce_payload(raw)
+    total = sum(item["line_total"] for item in payload["line_items"])
+    assert abs(total - 12.0) < 0.01

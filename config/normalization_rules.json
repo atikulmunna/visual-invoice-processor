@@ -2,31 +2,50 @@
   "default_currency": "BDT",
   "default_document_type": "invoice",
   "default_confidence": 0.8,
+  "amount_tolerance": 0.01,
   "field_aliases": {
-    "vendor_name": ["vendor_name", "vendor", "merchant_name", "seller"],
-    "vendor_tax_id": ["vendor_tax_id", "tax_id", "vat_id", "bin"],
-    "invoice_number": ["invoice_number", "order_id", "invoice_id", "receipt_number"],
-    "invoice_date": ["invoice_date", "order_date", "date", "payment_date", "date_paid"],
-    "due_date": ["due_date"],
-    "currency": ["currency"],
-    "subtotal_amount": ["subtotal", "sub_total"],
-    "tax_amount": ["tax_amount", "tax", "vat"],
-    "total_amount": ["total_amount", "total", "order_total", "grand_total", "amount_paid"],
-    "payment_method": ["payment_method", "payment_mode"],
-    "line_items": ["line_items", "items", "products"],
-    "model_confidence": ["model_confidence", "confidence", "confidence_score"]
+    "vendor_name": ["vendor_name", "vendor", "vendor.name", "merchant_name", "merchant", "seller", "supplier_name", "from.name", "company_name"],
+    "vendor_tax_id": ["vendor_tax_id", "tax_id", "vat_id", "bin", "supplier_tax_id", "gstin", "bill_from.tax_id", "vendor.tax_id"],
+    "invoice_number": ["invoice_number", "invoice_id", "order_id", "receipt_number", "reference_number", "invoice_no", "bill_no", "receipt_no", "document_number"],
+    "invoice_date": ["invoice_date", "order_date", "invoice_created_at", "date", "payment_date", "date_paid", "issued_date", "bill_date", "transaction_date"],
+    "due_date": ["due_date", "payment_due_date", "due_on"],
+    "currency": ["currency", "currency_code", "invoice_currency"],
+    "subtotal_amount": ["subtotal", "sub_total", "amount_before_tax", "net_amount", "item_total"],
+    "tax_amount": ["tax_amount", "tax", "vat", "gst", "sales_tax", "tax_total"],
+    "total_amount": ["total_amount", "total", "order_total", "grand_total", "amount_paid", "amount_due", "invoice_total", "total_due"],
+    "payment_method": ["payment_method", "payment_mode", "paid_via", "method", "payment_history.method"],
+    "line_items": ["line_items", "items", "products", "details", "charges", "invoice_lines"],
+    "model_confidence": ["model_confidence", "confidence", "confidence_score", "extraction_confidence"]
   },
   "line_item_aliases": {
-    "description": ["description", "name", "title"],
-    "quantity": ["quantity", "qty"],
-    "unit_price": ["unit_price", "price"],
-    "line_total": ["line_total", "total", "amount"],
+    "description": ["description", "name", "title", "item", "product_name", "service_name"],
+    "quantity": ["quantity", "qty", "count", "units"],
+    "unit_price": ["unit_price", "price", "rate", "unit_cost"],
+    "line_total": ["line_total", "total", "amount", "line_amount", "extended_price"],
     "category": ["category"]
   },
   "payment_method_map": {
-    "card": ["card", "visa", "mastercard", "amex"],
+    "card": ["card", "visa", "mastercard", "amex", "credit", "debit"],
     "cash": ["cash", "cod", "cash on delivery"],
-    "bank": ["bank", "transfer", "wire"]
-  }
+    "bank": ["bank", "transfer", "wire", "ach", "sepa", "swift"]
+  },
+  "line_item_ignore_keywords": [
+    "subtotal",
+    "total",
+    "grand total",
+    "amount paid",
+    "amount due",
+    "balance",
+    "tax",
+    "vat",
+    "gst",
+    "discount",
+    "shipping",
+    "delivery",
+    "payment method",
+    "payment history",
+    "invoice number",
+    "receipt number",
+    "date paid"
+  ]
 }
-
