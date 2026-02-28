@@ -5,3 +5,4 @@ google-auth-oauthlib>=1.2,<2
 openai>=1.45,<2
 google-genai>=1.28,<2
 pytest>=8.2,<9
+typing_extensions>=4.11,<5
