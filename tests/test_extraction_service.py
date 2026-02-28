@@ -4,7 +4,11 @@ from pathlib import Path
 
 import pytest
 
-from app.extraction_service import ExtractionError, extract_document
+from app.extraction_service import (
+    ExtractionError,
+    MultiProviderVisionClient,
+    extract_document,
+)
 
 
 class _FakeVisionClient:
@@ -17,6 +21,12 @@ class _FakeVisionClient:
         if not self._outputs:
             raise RuntimeError("No outputs configured")
         return self._outputs.pop(0)
+
+
+class _AlwaysFailClient:
+    def extract_json(self, file_path: Path, model_name: str, prompt: str) -> str:
+        _ = (file_path, model_name, prompt)
+        raise RuntimeError("provider down")
 
 
 def test_extract_document_success_first_try(tmp_path: Path) -> None:
@@ -58,3 +68,30 @@ def test_extract_document_missing_file_raises() -> None:
     with pytest.raises(ExtractionError, match="File not found"):
         extract_document("missing.jpg", client=_FakeVisionClient(outputs=['{}']))
 
+
+def test_multi_provider_client_falls_back_to_next_provider(tmp_path: Path) -> None:
+    file_path = tmp_path / "doc.jpg"
+    file_path.write_bytes(b"img")
+    client = MultiProviderVisionClient(
+        providers=[
+            ("mistral", _AlwaysFailClient(), "pixtral-large-latest"),
+            ("openrouter", _FakeVisionClient(outputs=['{"vendor_name":"Fallback"}']), "mistralai/pixtral-12b"),
+        ]
+    )
+
+    payload = extract_document(file_path=file_path, client=client, model_name="auto")
+    assert payload["vendor_name"] == "Fallback"
+
+
+def test_extract_document_auto_provider_requires_any_key(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    file_path = tmp_path / "doc.jpg"
+    file_path.write_bytes(b"img")
+    monkeypatch.delenv("MISTRAL_API_KEY", raising=False)
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+
+    with pytest.raises(ExtractionError, match="No provider API key found"):
+        extract_document(file_path=file_path, provider="auto")
