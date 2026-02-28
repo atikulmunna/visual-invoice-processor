@@ -3,7 +3,10 @@ from __future__ import annotations
 from datetime import date
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StringConstraints
+from typing_extensions import Annotated
+
+CurrencyCode = Annotated[str, StringConstraints(pattern=r"^[A-Z]{3}$")]
 
 
 class LineItem(BaseModel):
@@ -21,7 +24,7 @@ class InvoiceRecord(BaseModel):
     invoice_number: str | None = None
     invoice_date: date
     due_date: date | None = None
-    currency: str = Field(min_length=3, max_length=3)
+    currency: CurrencyCode
     subtotal: float = Field(ge=0)
     tax_amount: float = Field(ge=0)
     total_amount: float = Field(ge=0)
@@ -29,4 +32,3 @@ class InvoiceRecord(BaseModel):
     line_items: list[LineItem] = Field(default_factory=list)
     model_confidence: float = Field(ge=0, le=1)
     validation_score: float = Field(ge=0, le=1)
-
