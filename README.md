@@ -9,6 +9,8 @@ Starter implementation for the Visual Invoice & Receipt Processor system design.
 - Google Drive client with inbox listing and file download methods
 - Extraction service abstraction with OpenAI/Gemini adapters
 - Strict JSON parsing with one corrective retry on invalid model output
+- Google Sheets storage writer returning append row references
+- MVP duplicate skip guard based on in-process `file_hash` tracking
 - Baseline schema and validation wiring
 - Unit tests for config and Drive MIME filtering
 - Optional integration test for Drive listing
@@ -46,3 +48,4 @@ pytest -q -m integration
 
 - For production, prefer service account auth where possible.
 - Keep only one processor runtime active (worker or scheduled job).
+- Duplicate protection in this phase is process-local only; durable idempotency is planned in Phase 2 (`P2-02`).
