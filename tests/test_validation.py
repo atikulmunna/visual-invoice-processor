@@ -80,6 +80,24 @@ def test_business_rules_detect_line_item_subtotal_mismatch() -> None:
     assert any(v["code"] == "line_item_sum_mismatch" for v in violations)
 
 
+def test_business_rules_warn_when_line_items_have_no_amounts() -> None:
+    payload = _valid_payload()
+    payload["subtotal"] = 8300.0
+    payload["line_items"] = [
+        {
+            "description": "Item",
+            "quantity": 1,
+            "unit_price": 0.0,
+            "line_total": 0.0,
+            "category": None,
+        }
+    ]
+    record = validate_invoice_payload(payload)
+    violations = evaluate_business_rules(record)
+    assert any(v["code"] == "line_items_incomplete" and v["severity"] == "warning" for v in violations)
+    assert not any(v["code"] == "line_item_sum_mismatch" for v in violations)
+
+
 def test_validate_and_score_returns_machine_readable_violations() -> None:
     payload = _valid_payload()
     payload["invoice_number"] = None

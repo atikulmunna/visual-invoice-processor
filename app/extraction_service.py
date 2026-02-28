@@ -136,6 +136,7 @@ class MistralVisionClient:
     def __init__(self, api_key: str) -> None:
         self._api_key = api_key
         self._base_url = "https://api.mistral.ai/v1"
+        self.last_ocr_text: str | None = None
 
     def _headers(self) -> dict[str, str]:
         return {
@@ -181,6 +182,7 @@ class MistralVisionClient:
 
     def extract_json(self, file_path: Path, model_name: str, prompt: str) -> str:
         ocr_text = self._ocr_text(file_path)
+        self.last_ocr_text = ocr_text
         response = requests.post(
             f"{self._base_url}/chat/completions",
             headers=self._headers(),
@@ -246,13 +248,16 @@ class GeminiVisionClient:
 class MultiProviderVisionClient:
     def __init__(self, providers: list[tuple[str, VisionClient, str]]) -> None:
         self._providers = providers
+        self.last_ocr_text: str | None = None
 
     def extract_json(self, file_path: Path, model_name: str, prompt: str) -> str:
         errors: list[str] = []
         for provider_name, client, provider_model in self._providers:
             active_model = provider_model or model_name
             try:
-                return client.extract_json(file_path, active_model, prompt)
+                text = client.extract_json(file_path, active_model, prompt)
+                self.last_ocr_text = getattr(client, "last_ocr_text", None)
+                return text
             except Exception as exc:  # noqa: BLE001
                 errors.append(f"{provider_name}: {exc}")
                 continue
@@ -364,10 +369,18 @@ def extract_document(
 
     first_text = active_client.extract_json(path, active_model, USER_EXTRACTION_PROMPT)
     try:
-        return _parse_json_payload(first_text)
+        payload = _parse_json_payload(first_text)
+        ocr_text = getattr(active_client, "last_ocr_text", None)
+        if isinstance(ocr_text, str) and ocr_text.strip():
+            payload["_ocr_text"] = ocr_text
+        return payload
     except ExtractionError as exc:
         if exc.code not in {"invalid_json", "invalid_json_shape"}:
             raise
 
     corrective_text = active_client.extract_json(path, active_model, CORRECTIVE_PROMPT)
-    return _parse_json_payload(corrective_text)
+    payload = _parse_json_payload(corrective_text)
+    ocr_text = getattr(active_client, "last_ocr_text", None)
+    if isinstance(ocr_text, str) and ocr_text.strip():
+        payload["_ocr_text"] = ocr_text
+    return payload
