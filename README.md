@@ -18,6 +18,7 @@ Starter implementation for the Visual Invoice & Receipt Processor system design.
 - Dead-letter JSONL store for terminal failures and replay queries
 - Document-correlated JSON logging helper (`document_id`, stage, latency, outcome)
 - Simple metrics collector plus JSONL metrics sink for dashboard ingestion
+- Review queue router with reason-coded records and `Needs_Review` file moves
 - Unit tests for config and Drive MIME filtering
 - Optional integration test for Drive listing
 
