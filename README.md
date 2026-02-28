@@ -7,6 +7,8 @@ Starter implementation for the Visual Invoice & Receipt Processor system design.
 - Typed environment config loading and validation
 - Google authentication helpers (service account and OAuth)
 - Google Drive client with inbox listing and file download methods
+- Extraction service abstraction with OpenAI/Gemini adapters
+- Strict JSON parsing with one corrective retry on invalid model output
 - Baseline schema and validation wiring
 - Unit tests for config and Drive MIME filtering
 - Optional integration test for Drive listing
@@ -44,4 +46,3 @@ pytest -q -m integration
 
 - For production, prefer service account auth where possible.
 - Keep only one processor runtime active (worker or scheduled job).
-

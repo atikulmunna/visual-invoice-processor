@@ -2,5 +2,6 @@ pydantic>=2.8,<3
 google-api-python-client>=2.140,<3
 google-auth>=2.34,<3
 google-auth-oauthlib>=1.2,<2
+openai>=1.45,<2
+google-genai>=1.28,<2
 pytest>=8.2,<9
-
