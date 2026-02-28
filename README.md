@@ -13,6 +13,7 @@ Starter implementation for the Visual Invoice & Receipt Processor system design.
 - MVP duplicate skip guard based on in-process `file_hash` tracking
 - Baseline schema and validation wiring
 - Explicit processing state machine with transition validation
+- Durable SQLite claim store for idempotency (`drive_file_id + file_hash`)
 - Unit tests for config and Drive MIME filtering
 - Optional integration test for Drive listing
 
