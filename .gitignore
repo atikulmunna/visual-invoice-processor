@@ -1,0 +1,6 @@
+Visual_Invoice_Receipt_Processor_System_Design.md
+.env
+.tokens/
+__pycache__/
+.pytest_cache/
+*.pyc
