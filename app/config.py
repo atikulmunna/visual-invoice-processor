@@ -43,6 +43,7 @@ class Settings:
     ledger_range: str = "Ledger!A:Z"
     postgres_dsn: str | None = None
     postgres_table: str = "ledger_records"
+    normalization_rules_path: str = "config/normalization_rules.json"
 
     @property
     def google_scopes(self) -> tuple[str, ...]:
@@ -143,6 +144,9 @@ class Settings:
             ledger_range=os.getenv("LEDGER_RANGE", "Ledger!A:Z"),
             postgres_dsn=postgres_dsn,
             postgres_table=os.getenv("POSTGRES_TABLE", "ledger_records"),
+            normalization_rules_path=os.getenv(
+                "NORMALIZATION_RULES_PATH", "config/normalization_rules.json"
+            ),
         )
 
 

@@ -18,6 +18,7 @@ from app.extraction_service import ExtractionError, extract_document
 from app.idempotency_store import DocumentClaimStore
 from app.logger import configure_logging
 from app.metrics import JsonlMetricsSink, MetricsCollector
+from app.normalization_engine import NormalizationRuleEngine
 from app.r2_service import R2Service
 from app.review_queue import decide_review_status, route_to_review_queue
 from app.replay import replay_failures
@@ -245,6 +246,7 @@ def run_poll_once() -> int:
     dead_letter = DeadLetterStore()
     metrics = MetricsCollector()
     metrics_sink = JsonlMetricsSink()
+    normalization_engine = NormalizationRuleEngine.from_path(settings.normalization_rules_path)
 
     extraction_provider = os.getenv("EXTRACTION_PROVIDER", "auto")
     extraction_model = os.getenv("EXTRACTION_MODEL", "auto")
@@ -274,7 +276,7 @@ def run_poll_once() -> int:
             )
             used_provider = str(extracted.get("_provider", "unknown"))
             logger.info("Extraction provider=%s source_id=%s", used_provider, file_id)
-            normalized_payload = _coerce_extraction_payload(extracted)
+            normalized_payload = normalization_engine.coerce_payload(extracted)
             try:
                 validation = validate_and_score(normalized_payload)
             except ValidationError as exc:
