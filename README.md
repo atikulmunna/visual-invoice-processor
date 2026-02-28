@@ -23,6 +23,7 @@ Starter implementation for the Visual Invoice & Receipt Processor system design.
 - Business-rule validator for totals and line-item consistency with scored output
 - Replay tooling with dead-letter scanning and audit trail entries
 - Monitoring API endpoints for health, stats, failures, and backlog
+- Vendor normalization and confidence-scored category suggestion
 - Unit tests for config and Drive MIME filtering
 - Optional integration test for Drive listing
 
