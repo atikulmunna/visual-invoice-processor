@@ -16,6 +16,8 @@ Starter implementation for the Visual Invoice & Receipt Processor system design.
 - Durable SQLite claim store for idempotency (`drive_file_id + file_hash`)
 - Shared retry utility with exponential backoff and jitter
 - Dead-letter JSONL store for terminal failures and replay queries
+- Document-correlated JSON logging helper (`document_id`, stage, latency, outcome)
+- Simple metrics collector plus JSONL metrics sink for dashboard ingestion
 - Unit tests for config and Drive MIME filtering
 - Optional integration test for Drive listing
 
