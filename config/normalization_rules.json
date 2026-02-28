@@ -1,0 +1,32 @@
+{
+  "default_currency": "BDT",
+  "default_document_type": "invoice",
+  "default_confidence": 0.8,
+  "field_aliases": {
+    "vendor_name": ["vendor_name", "vendor", "merchant_name", "seller"],
+    "vendor_tax_id": ["vendor_tax_id", "tax_id", "vat_id", "bin"],
+    "invoice_number": ["invoice_number", "order_id", "invoice_id", "receipt_number"],
+    "invoice_date": ["invoice_date", "order_date", "date", "payment_date", "date_paid"],
+    "due_date": ["due_date"],
+    "currency": ["currency"],
+    "subtotal_amount": ["subtotal", "sub_total"],
+    "tax_amount": ["tax_amount", "tax", "vat"],
+    "total_amount": ["total_amount", "total", "order_total", "grand_total", "amount_paid"],
+    "payment_method": ["payment_method", "payment_mode"],
+    "line_items": ["line_items", "items", "products"],
+    "model_confidence": ["model_confidence", "confidence", "confidence_score"]
+  },
+  "line_item_aliases": {
+    "description": ["description", "name", "title"],
+    "quantity": ["quantity", "qty"],
+    "unit_price": ["unit_price", "price"],
+    "line_total": ["line_total", "total", "amount"],
+    "category": ["category"]
+  },
+  "payment_method_map": {
+    "card": ["card", "visa", "mastercard", "amex"],
+    "cash": ["cash", "cod", "cash on delivery"],
+    "bank": ["bank", "transfer", "wire"]
+  }
+}
+

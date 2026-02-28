@@ -25,6 +25,7 @@ Starter implementation for the Visual Invoice & Receipt Processor system design.
 - Replay tooling with dead-letter scanning and audit trail entries
 - Monitoring API endpoints for health, stats, failures, and backlog
 - Vendor normalization and confidence-scored category suggestion
+- Configurable normalization rule engine via `config/normalization_rules.json`
 - Unit tests for config and Drive MIME filtering
 - Optional integration test for Drive listing
 
