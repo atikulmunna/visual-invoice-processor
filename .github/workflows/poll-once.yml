@@ -52,5 +52,4 @@ jobs:
           pip install -r requirements.txt
 
       - name: Run poll-once
-        run: python -m app.main poll-once
-
+        run: python -u -m app.main poll-once
