@@ -26,8 +26,9 @@ def create_monitoring_app(
     @app.get("/stats")
     def stats() -> dict[str, Any]:
         metric_events = _read_jsonl(metrics_path)
-        dead_letters = _read_jsonl(dead_letter_path)
-        queue_size = _review_queue_size(review_queue_dir)
+        resolved_hashes = _resolved_file_hashes(active_postgres_dsn)
+        dead_letters = _active_dead_letters(dead_letter_path, resolved_hashes)
+        queue_size = _active_review_queue_size(review_queue_dir, resolved_hashes)
         counters = _aggregate_metrics(metric_events)
         counters["dead_letter_total"] = len(dead_letters)
         counters["review_queue_total"] = queue_size
@@ -40,8 +41,9 @@ def create_monitoring_app(
 
     @app.get("/backlog")
     def backlog() -> dict[str, Any]:
-        queue_size = _review_queue_size(review_queue_dir)
-        dead_letters = len(_read_jsonl(dead_letter_path))
+        resolved_hashes = _resolved_file_hashes(active_postgres_dsn)
+        queue_size = _active_review_queue_size(review_queue_dir, resolved_hashes)
+        dead_letters = len(_active_dead_letters(dead_letter_path, resolved_hashes))
         return {
             "review_queue_total": queue_size,
             "dead_letter_total": dead_letters,
@@ -51,8 +53,9 @@ def create_monitoring_app(
     @app.get("/dashboard/data")
     def dashboard_data(limit: int = 20) -> dict[str, Any]:
         data = _query_dashboard_data(active_postgres_dsn, limit=limit)
-        data["review_queue_total"] = _review_queue_size(review_queue_dir)
-        data["dead_letter_total"] = len(_read_jsonl(dead_letter_path))
+        resolved_hashes = _resolved_file_hashes(active_postgres_dsn)
+        data["review_queue_total"] = _active_review_queue_size(review_queue_dir, resolved_hashes)
+        data["dead_letter_total"] = len(_active_dead_letters(dead_letter_path, resolved_hashes))
         return data
 
     @app.get("/dashboard", response_class=HTMLResponse)
@@ -81,6 +84,28 @@ def _review_queue_size(path: str | Path) -> int:
     return len([x for x in p.glob("*.json") if x.is_file()])
 
 
+def _active_review_queue_size(path: str | Path, resolved_hashes: set[str]) -> int:
+    p = Path(path)
+    if not p.exists():
+        return 0
+    total = 0
+    for file_path in p.glob("*.json"):
+        if not file_path.is_file():
+            continue
+        try:
+            payload = json.loads(file_path.read_text(encoding="utf-8"))
+        except Exception:  # noqa: BLE001
+            continue
+        if payload.get("status") != "REVIEW_REQUIRED":
+            continue
+        metadata = payload.get("metadata", {}) if isinstance(payload.get("metadata"), dict) else {}
+        file_hash = str(metadata.get("file_hash", "") or "")
+        if file_hash and file_hash in resolved_hashes:
+            continue
+        total += 1
+    return total
+
+
 def _aggregate_metrics(events: list[dict[str, Any]]) -> dict[str, Any]:
     counters: dict[str, int] = {}
     for event in events:
@@ -89,6 +114,48 @@ def _aggregate_metrics(events: list[dict[str, Any]]) -> dict[str, Any]:
         if isinstance(name, str) and isinstance(value, int):
             counters[name] = counters.get(name, 0) + value
     return counters
+
+
+def _active_dead_letters(path: str | Path, resolved_hashes: set[str]) -> list[dict[str, Any]]:
+    events = _read_jsonl(path)
+    latest_by_key: dict[str, dict[str, Any]] = {}
+    for event in events:
+        status = str(event.get("status", "") or "")
+        if status not in {"FAILED", "REVIEW_REQUIRED"}:
+            continue
+        file_hash = str(event.get("file_hash", "") or "")
+        if file_hash and file_hash in resolved_hashes:
+            continue
+        key = (
+            str(event.get("document_id", "") or "")
+            or (str(event.get("drive_file_id", "") or "") + "|" + file_hash)
+            or str(hash(json.dumps(event, sort_keys=True)))
+        )
+        latest_by_key[key] = event
+    return list(latest_by_key.values())
+
+
+def _resolved_file_hashes(postgres_dsn: str | None) -> set[str]:
+    if not postgres_dsn:
+        return set()
+    try:
+        import psycopg
+    except ImportError:
+        return set()
+
+    try:
+        with psycopg.connect(postgres_dsn) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    select distinct file_hash
+                    from public.ledger_records
+                    where status in ('STORED', 'ARCHIVED')
+                    """
+                )
+                return {str(row[0]) for row in cur.fetchall() if row and row[0]}
+    except Exception:  # noqa: BLE001
+        return set()
 
 
 def _query_dashboard_data(postgres_dsn: str | None, *, limit: int) -> dict[str, Any]:
