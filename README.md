@@ -54,6 +54,10 @@ python -m app.main replay --status FAILED
 python -m app.monitoring_main
 ```
 
+Open dashboard:
+
+- `http://127.0.0.1:8000/dashboard`
+
 ## Extraction Provider Setup (Recommended)
 
 - Set `EXTRACTION_PROVIDER=auto`
@@ -134,3 +138,11 @@ select processing_date, records_total, stored_total, needs_review_total
 from public.ledger_daily_summary
 order by processing_date desc;
 ```
+
+The dashboard uses a restrained professional palette:
+
+- `#c1c1c1`
+- `#2c4251`
+- `#d16666`
+- `#b6c649`
+- `#ffffff`
