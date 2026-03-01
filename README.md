@@ -75,6 +75,24 @@ $env:RUN_DRIVE_INTEGRATION_TESTS="1"
 pytest -q -m integration
 ```
 
+## GitHub Actions Automation
+
+The workflow file `.github/workflows/poll-once.yml` runs `poll-once` every 15 minutes and also supports manual trigger (`workflow_dispatch`).
+
+Set these repository secrets before enabling it:
+
+- `R2_ENDPOINT_URL`
+- `R2_ACCESS_KEY_ID`
+- `R2_SECRET_ACCESS_KEY`
+- `R2_BUCKET_NAME`
+- `R2_INBOX_PREFIX` (for example `inbox/`)
+- `R2_ARCHIVE_PREFIX` (for example `archive/`)
+- `POSTGRES_DSN`
+- `POSTGRES_TABLE` (for example `ledger_records`)
+- `MISTRAL_API_KEY`
+- `OPENROUTER_API_KEY` (optional)
+- `GROQ_API_KEY` (optional)
+
 ## Notes
 
 - For production, prefer service account auth where possible.
