@@ -5,7 +5,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from app.monitoring_api import create_monitoring_app
+from app.monitoring_api import _active_dead_letters, _active_review_queue_size, create_monitoring_app
 
 
 def _write_jsonl(path: Path, rows: list[dict]) -> None:
@@ -20,7 +20,16 @@ def test_monitoring_endpoints_expose_stats_backlog_and_failures(tmp_path: Path) 
     dead = tmp_path / "logs" / "dead_letter.jsonl"
     queue = tmp_path / "review_queue"
     queue.mkdir(parents=True, exist_ok=True)
-    (queue / "doc-1.json").write_text("{}", encoding="utf-8")
+    (queue / "doc-1.json").write_text(
+        json.dumps(
+            {
+                "document_id": "doc-1",
+                "status": "REVIEW_REQUIRED",
+                "metadata": {"file_hash": "hash-open"},
+            }
+        ),
+        encoding="utf-8",
+    )
 
     _write_jsonl(
         metrics,
@@ -61,3 +70,28 @@ def test_monitoring_endpoints_expose_stats_backlog_and_failures(tmp_path: Path) 
     assert "Invoice Operations Dashboard" in dashboard.text
     assert dashboard_data.status_code == 200
     assert "kpis" in dashboard_data.json()
+
+
+def test_active_backlog_filters_resolved_hashes(tmp_path: Path) -> None:
+    dead = tmp_path / "logs" / "dead_letter.jsonl"
+    review = tmp_path / "review_queue"
+    review.mkdir(parents=True, exist_ok=True)
+    _write_jsonl(
+        dead,
+        [
+            {"document_id": "a", "status": "FAILED", "file_hash": "hash-a"},
+            {"document_id": "b", "status": "REVIEW_REQUIRED", "file_hash": "hash-b"},
+        ],
+    )
+    (review / "a.json").write_text(
+        json.dumps({"document_id": "a", "status": "REVIEW_REQUIRED", "metadata": {"file_hash": "hash-a"}}),
+        encoding="utf-8",
+    )
+    (review / "b.json").write_text(
+        json.dumps({"document_id": "b", "status": "REVIEW_REQUIRED", "metadata": {"file_hash": "hash-b"}}),
+        encoding="utf-8",
+    )
+
+    resolved = {"hash-a"}
+    assert len(_active_dead_letters(dead, resolved)) == 1
+    assert _active_review_queue_size(review, resolved) == 1
