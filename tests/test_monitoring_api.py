@@ -44,6 +44,8 @@ def test_monitoring_endpoints_expose_stats_backlog_and_failures(tmp_path: Path) 
     stats = client.get("/stats")
     backlog = client.get("/backlog")
     failures = client.get("/failures")
+    dashboard = client.get("/dashboard")
+    dashboard_data = client.get("/dashboard/data")
 
     assert health.status_code == 200
     assert health.json()["status"] == "ok"
@@ -55,4 +57,7 @@ def test_monitoring_endpoints_expose_stats_backlog_and_failures(tmp_path: Path) 
     assert backlog.json()["attention_total"] == 3
     assert failures.status_code == 200
     assert failures.json()["count"] == 2
-
+    assert dashboard.status_code == 200
+    assert "Invoice Operations Dashboard" in dashboard.text
+    assert dashboard_data.status_code == 200
+    assert "kpis" in dashboard_data.json()
