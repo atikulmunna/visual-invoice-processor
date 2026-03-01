@@ -109,3 +109,28 @@ Set these repository secrets before enabling it:
   - `R2_SECRET_ACCESS_KEY`
   - `R2_BUCKET_NAME`
   - `POSTGRES_DSN`
+
+## Supabase Analytics Views
+
+To flatten JSON records for querying/dashboarding:
+
+1. Open Supabase SQL Editor.
+2. Run the SQL in `migrations/001_analytics_views.sql`.
+
+This creates:
+
+- `public.ledger_records_flat`
+- `public.ledger_line_items_flat`
+- `public.ledger_daily_summary`
+
+Example queries:
+
+```sql
+select * from public.ledger_records_flat order by processed_at_utc desc limit 20;
+```
+
+```sql
+select processing_date, records_total, stored_total, needs_review_total
+from public.ledger_daily_summary
+order by processing_date desc;
+```
