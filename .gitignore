@@ -8,4 +8,5 @@ data/
 tmp/
 review_queue/
 logs/*.jsonl
+logs/golden_eval_report.json
 desktop.ini

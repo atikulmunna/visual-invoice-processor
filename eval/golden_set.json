@@ -1,0 +1,31 @@
+{
+  "cases": [
+    {
+      "id": "case-001",
+      "file_path": "eval/samples/invoice_001.pdf",
+      "expected": {
+        "document_type": "invoice",
+        "currency": "BDT",
+        "total_amount": 1954.0
+      }
+    },
+    {
+      "id": "case-002",
+      "file_path": "eval/samples/invoice_002.pdf",
+      "expected": {
+        "document_type": "invoice",
+        "currency": "BDT",
+        "total_amount": 400.0
+      }
+    },
+    {
+      "id": "case-003",
+      "file_path": "eval/samples/invoice_003.pdf",
+      "expected": {
+        "document_type": "invoice",
+        "currency": "BDT",
+        "total_amount": 50.1
+      }
+    }
+  ]
+}
