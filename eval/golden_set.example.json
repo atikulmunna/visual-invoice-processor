@@ -1,0 +1,30 @@
+{
+  "cases": [
+    {
+      "id": "case-001",
+      "file_path": "eval/samples/invoice_001.pdf",
+      "expected": {
+        "document_type": "invoice",
+        "vendor_name": "RYANS",
+        "invoice_date": "2026-02-28",
+        "currency": "BDT",
+        "subtotal": 8300.0,
+        "tax_amount": 0.0,
+        "total_amount": 8300.0,
+        "payment_method": "cash",
+        "line_items": [
+          {
+            "description": "OSCOO ON901 256GB M.2 2280 NVMe PCIe Gen3x4 SSD",
+            "quantity": 1,
+            "line_total": 4300.0
+          },
+          {
+            "description": "UGREEN CM578 (15512) M.2 Portable SSD Enclosure #15512",
+            "quantity": 1,
+            "line_total": 4000.0
+          }
+        ]
+      }
+    }
+  ]
+}

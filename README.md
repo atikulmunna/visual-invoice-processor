@@ -16,6 +16,7 @@ Production-focused AI pipeline for extracting structured data from invoice/recei
 - [Run Locally](#run-locally)
 - [GitHub Actions Automation](#github-actions-automation)
 - [Supabase Analytics Views](#supabase-analytics-views)
+- [Golden Set Evaluation](#golden-set-evaluation)
 - [Testing](#testing)
 - [Troubleshooting](#troubleshooting)
 - [Security Notes](#security-notes)
@@ -247,12 +248,15 @@ python -m app.monitoring_main
 Workflow:
 
 - `.github/workflows/poll-once.yml`
+- `.github/workflows/golden-eval.yml`
 
 Behavior:
 
 - Runs every 15 minutes
 - Supports manual trigger (`workflow_dispatch`)
 - Uses concurrency lock to prevent overlapping poll jobs
+- Golden-set workflow runs on push/PR (for relevant paths) and manual trigger
+- Golden-set workflow fails if average evaluation score drops below `0.90`
 
 Required repository secrets:
 
@@ -267,6 +271,12 @@ Required repository secrets:
 - `MISTRAL_API_KEY`
 - `OPENROUTER_API_KEY` (optional)
 - `GROQ_API_KEY` (optional)
+
+Quality gate command used in CI:
+
+```bash
+python -u -m app.evaluation --dataset eval/golden_set.json --provider auto --model auto --fail-under 0.90
+```
 
 ## Supabase Analytics Views
 
@@ -291,6 +301,32 @@ select processing_date, records_total, stored_total, needs_review_total
 from public.ledger_daily_summary
 order by processing_date desc;
 ```
+
+## Golden Set Evaluation
+
+Use a fixed dataset to track extraction quality over time.
+
+1. Copy the example file and add your own documents:
+
+```powershell
+Copy-Item eval/golden_set.example.json eval/golden_set.json
+```
+
+2. Update each case with:
+- `file_path`: local path to the invoice/receipt file
+- `expected`: normalized target fields (you can provide a subset of fields to score)
+
+3. Run evaluation:
+
+```powershell
+python -m app.evaluation --dataset eval/golden_set.json --provider auto --model auto --fail-under 0.80
+```
+
+Output:
+- Console summary (`cases`, `errors`, `avg_score`, provider mix)
+- Full JSON report at `logs/golden_eval_report.json`
+
+This gives you a repeatable quality gate for prompt/rules/provider changes.
 
 ## Testing
 
@@ -336,4 +372,3 @@ pytest -q -m integration
 - Role-based dashboard access
 - Additional provider adapters and cost-aware routing
 - Export pipelines for BI tools
-
