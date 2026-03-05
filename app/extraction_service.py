@@ -136,7 +136,7 @@ class OpenAICompatibleVisionClient:
 
 class MistralVisionClient:
     def __init__(self, api_key: str) -> None:
-        self._api_key = api_key
+        self._api_key = api_key.strip()
         self._base_url = "https://api.mistral.ai/v1"
         self.last_ocr_text: str | None = None
         self.provider_name = "mistral"
@@ -228,7 +228,7 @@ class GeminiVisionClient:
             from google import genai
         except ImportError as exc:
             raise RuntimeError("google-genai package is required for Gemini extraction") from exc
-        self._client = genai.Client(api_key=api_key)
+        self._client = genai.Client(api_key=api_key.strip())
         self.provider_name = "gemini"
 
     def extract_json(self, file_path: Path, model_name: str, prompt: str) -> str:
@@ -294,12 +294,12 @@ def _client_for_provider(provider: str) -> VisionClient | None:
 
     normalized = provider.strip().lower()
     if normalized == "mistral":
-        api_key = os.getenv("MISTRAL_API_KEY")
+        api_key = (os.getenv("MISTRAL_API_KEY") or "").strip()
         if not api_key:
             return None
         return MistralVisionClient(api_key=api_key)
     if normalized == "openrouter":
-        api_key = os.getenv("OPENROUTER_API_KEY")
+        api_key = (os.getenv("OPENROUTER_API_KEY") or "").strip()
         if not api_key:
             return None
         return OpenAICompatibleVisionClient(
@@ -309,7 +309,7 @@ def _client_for_provider(provider: str) -> VisionClient | None:
             default_headers={"HTTP-Referer": "https://github.com/atikulmunna/visual-invoice-processor"},
         )
     if normalized == "groq":
-        api_key = os.getenv("GROQ_API_KEY")
+        api_key = (os.getenv("GROQ_API_KEY") or "").strip()
         if not api_key:
             return None
         return OpenAICompatibleVisionClient(
@@ -318,12 +318,12 @@ def _client_for_provider(provider: str) -> VisionClient | None:
             provider_name="Groq",
         )
     if normalized == "openai":
-        api_key = os.getenv("OPENAI_API_KEY")
+        api_key = (os.getenv("OPENAI_API_KEY") or "").strip()
         if not api_key:
             return None
         return OpenAIVisionClient(api_key=api_key)
     if normalized == "gemini":
-        api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+        api_key = ((os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")) or "").strip()
         if not api_key:
             return None
         return GeminiVisionClient(api_key=api_key)
