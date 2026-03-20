@@ -249,6 +249,7 @@ Workflow:
 
 - `.github/workflows/poll-once.yml`
 - `.github/workflows/golden-eval.yml`
+- `.github/workflows/golden-eval-strict-nightly.yml`
 
 Behavior:
 
@@ -257,6 +258,7 @@ Behavior:
 - Uses concurrency lock to prevent overlapping poll jobs
 - Golden-set workflow runs on push/PR (for relevant paths) and manual trigger
 - Golden-set workflow fails if average evaluation score drops below `0.90`
+- Strict nightly workflow runs daily and tracks richer field quality with a `0.75` threshold
 
 Required repository secrets:
 
@@ -327,6 +329,16 @@ Output:
 - Full JSON report at `logs/golden_eval_report.json`
 
 This gives you a repeatable quality gate for prompt/rules/provider changes.
+
+Strict benchmark dataset:
+
+- `eval/golden_set_strict.json`
+
+Strict benchmark command (nightly):
+
+```powershell
+python -m app.evaluation --dataset eval/golden_set_strict.json --provider auto --model auto --fail-under 0.75 --output logs/golden_eval_strict_report.json
+```
 
 ## Testing
 

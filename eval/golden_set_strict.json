@@ -1,0 +1,95 @@
+{
+  "cases": [
+    {
+      "id": "strict-001",
+      "file_path": "eval/samples/invoice_001.pdf",
+      "expected": {
+        "document_type": "invoice",
+        "vendor_name": "RYANS",
+        "invoice_date": "2022-05-17",
+        "currency": "BDT",
+        "subtotal": 1954.0,
+        "tax_amount": 0.0,
+        "total_amount": 1954.0,
+        "payment_method": "unknown"
+      }
+    },
+    {
+      "id": "strict-002",
+      "file_path": "eval/samples/invoice_002.pdf",
+      "expected": {
+        "document_type": "invoice",
+        "vendor_name": "RYANS",
+        "invoice_date": "2022-11-05",
+        "currency": "BDT",
+        "subtotal": 449.0,
+        "tax_amount": 0.0,
+        "total_amount": 400.0,
+        "payment_method": "cash"
+      }
+    },
+    {
+      "id": "strict-003",
+      "file_path": "eval/samples/invoice_003.pdf",
+      "expected": {
+        "document_type": "invoice",
+        "vendor_name": "SuperStore",
+        "invoice_number": "36258",
+        "invoice_date": "2012-03-06",
+        "currency": "BDT",
+        "subtotal": 48.71,
+        "tax_amount": 1.39,
+        "total_amount": 50.1,
+        "payment_method": "unknown",
+        "line_items": [
+          {
+            "description": "Global Push Button Manager's Chair, Indigo",
+            "quantity": 1.0,
+            "line_total": 48.71
+          }
+        ]
+      }
+    },
+    {
+      "id": "strict-004",
+      "file_path": "eval/samples/invoice_004.pdf",
+      "expected": {
+        "document_type": "invoice",
+        "vendor_name": "Uber",
+        "invoice_date": "2026-03-02",
+        "currency": "BDT",
+        "subtotal": 291.54,
+        "tax_amount": 0.0,
+        "total_amount": 291.54,
+        "payment_method": "cash"
+      }
+    },
+    {
+      "id": "strict-005",
+      "file_path": "eval/samples/invoice_005.pdf",
+      "expected": {
+        "document_type": "invoice",
+        "vendor_name": "Unknown Vendor",
+        "invoice_number": "1001866868",
+        "invoice_date": "2025-03-03",
+        "currency": "BDT",
+        "subtotal": 4722.62,
+        "tax_amount": 472.26,
+        "total_amount": 5274.88,
+        "payment_method": "cash",
+        "line_items": [
+          {
+            "description": "Black Printed Ramie-Cotton Fatua",
+            "quantity": 1.0,
+            "line_total": 1246.51
+          },
+          {
+            "description": "White Printed Cotton Fatua",
+            "quantity": 1.0,
+            "line_total": 927.27
+          }
+        ]
+      }
+    }
+  ]
+}
