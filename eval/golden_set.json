@@ -26,6 +26,24 @@
         "currency": "BDT",
         "total_amount": 50.1
       }
+    },
+    {
+      "id": "case-004",
+      "file_path": "eval/samples/invoice_004.pdf",
+      "expected": {
+        "document_type": "invoice",
+        "currency": "BDT",
+        "total_amount": 291.54
+      }
+    },
+    {
+      "id": "case-005",
+      "file_path": "eval/samples/invoice_005.pdf",
+      "expected": {
+        "document_type": "invoice",
+        "currency": "BDT",
+        "total_amount": 5274.88
+      }
     }
   ]
 }
