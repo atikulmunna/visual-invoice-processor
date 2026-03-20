@@ -116,7 +116,13 @@ def mark_review_resolved(
     return payload
 
 
-def _load_resolution_record(review_item: dict[str, Any], record_path: str | None) -> dict[str, Any]:
+def _load_resolution_record(
+    review_item: dict[str, Any],
+    record_path: str | None,
+    record_override: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    if record_override is not None:
+        return record_override
     if record_path:
         payload = json.loads(Path(record_path).read_text(encoding="utf-8"))
         if not isinstance(payload, dict):
@@ -137,6 +143,7 @@ def resolve_review_item(
     *,
     queue_dir: str | Path = "review_queue",
     record_path: str | None = None,
+    record_override: dict[str, Any] | None = None,
     note: str | None = None,
 ) -> dict[str, Any]:
     from datetime import datetime, timezone
@@ -148,7 +155,7 @@ def resolve_review_item(
     if review_item.get("status") != "REVIEW_REQUIRED":
         raise ValueError(f"Review item {document_id} is not active; current status={review_item.get('status')}")
 
-    record = _load_resolution_record(review_item, record_path)
+    record = _load_resolution_record(review_item, record_path, record_override)
     validation = validate_and_score(record)
     resolved_record = validation["record"].model_dump(mode="json")
     resolved_record["validation_score"] = validation["validation_score"]

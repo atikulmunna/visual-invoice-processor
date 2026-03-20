@@ -135,10 +135,18 @@ def test_review_resolve_endpoint_uses_shared_resolution_flow(tmp_path: Path, mon
 
     called: dict[str, object] = {}
 
-    def _fake_resolve_review_item(document_id: str, *, queue_dir: str | Path, record_path: str | None = None, note: str | None = None) -> dict[str, object]:
+    def _fake_resolve_review_item(
+        document_id: str,
+        *,
+        queue_dir: str | Path,
+        record_path: str | None = None,
+        record_override: dict | None = None,
+        note: str | None = None,
+    ) -> dict[str, object]:
         called["document_id"] = document_id
         called["queue_dir"] = str(queue_dir)
         called["record_path"] = record_path
+        called["record_override"] = record_override
         called["note"] = note
         return {
             "storage_result": {"status": "appended", "row_id": 10},
@@ -150,9 +158,13 @@ def test_review_resolve_endpoint_uses_shared_resolution_flow(tmp_path: Path, mon
 
     app = create_monitoring_app(review_queue_dir=queue)
     client = TestClient(app)
-    response = client.post("/review-items/doc-2/resolve", json={"note": "approved"})
+    response = client.post(
+        "/review-items/doc-2/resolve",
+        json={"note": "approved", "corrected_record": {"vendor_name": "Gamma", "total_amount": 45.0}},
+    )
 
     assert response.status_code == 200
     assert response.json()["review_status"] == "RESOLVED_STORED"
     assert called["document_id"] == "doc-2"
     assert called["note"] == "approved"
+    assert called["record_override"] == {"vendor_name": "Gamma", "total_amount": 45.0}

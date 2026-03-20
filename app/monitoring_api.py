@@ -14,6 +14,7 @@ from app.review_queue import list_review_items, resolve_review_item
 
 class ReviewResolveRequest(BaseModel):
     note: str | None = None
+    corrected_record: dict[str, Any] | None = None
 
 
 def create_monitoring_app(
@@ -77,6 +78,7 @@ def create_monitoring_app(
             result = resolve_review_item(
                 document_id=document_id,
                 queue_dir=review_queue_dir,
+                record_override=payload.corrected_record if payload else None,
                 note=payload.note if payload else None,
             )
             return {
@@ -433,6 +435,10 @@ def _dashboard_html() -> str:
       cursor: pointer;
     }
     .action-btn:hover { background: rgba(182,198,73,0.3); }
+    .action-btn.warn {
+      border-color: rgba(209,102,102,0.7);
+      background: rgba(209,102,102,0.14);
+    }
     .json-preview {
       margin-top: 8px;
       padding: 10px;
@@ -443,6 +449,20 @@ def _dashboard_html() -> str:
       white-space: pre-wrap;
       word-break: break-word;
     }
+    .editor-wrap { margin-top: 8px; display: grid; gap: 8px; }
+    .editor-wrap textarea {
+      width: 100%;
+      min-height: 220px;
+      resize: vertical;
+      border-radius: 8px;
+      border: 1px solid rgba(44,66,81,0.18);
+      background: rgba(44,66,81,0.03);
+      padding: 10px;
+      font-family: Consolas, monospace;
+      font-size: 0.76rem;
+      color: var(--c-ink);
+    }
+    .editor-actions { display: flex; gap: 8px; flex-wrap: wrap; }
     @media (max-width: 920px) {
       .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .pane-grid { grid-template-columns: 1fr; }
@@ -536,10 +556,20 @@ def _dashboard_html() -> str:
     }
     async function resolveReviewItem(documentId) {
       const note = window.prompt('Optional resolution note:', '') ?? '';
+      const editor = document.getElementById(`editor-${documentId}`);
+      let correctedRecord = null;
+      if (editor) {
+        try {
+          correctedRecord = JSON.parse(editor.value);
+        } catch (err) {
+          window.alert(`Invalid JSON for ${documentId}: ${err.message}`);
+          return;
+        }
+      }
       const resp = await fetch(`/review-items/${encodeURIComponent(documentId)}/resolve`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ note })
+        body: JSON.stringify({ note, corrected_record: correctedRecord })
       });
       const payload = await resp.json();
       if (!resp.ok) {
@@ -617,6 +647,7 @@ def _dashboard_html() -> str:
       for (const item of reviewData.items || []) {
         const preview = esc(JSON.stringify(item.normalized_record || {}, null, 2));
         const reasons = esc((item.reason_codes || []).join(', '));
+        const rawJson = esc(JSON.stringify(item.normalized_record || {}, null, 2));
         reviewBody.innerHTML += `<tr>
           <td>${esc(item.document_id)}</td>
           <td>${esc(item.source_file_id || '-')}</td>
@@ -626,7 +657,15 @@ def _dashboard_html() -> str:
           <td><button class="action-btn" onclick="resolveReviewItem('${esc(item.document_id)}')">Approve</button></td>
         </tr>
         <tr>
-          <td colspan="6"><div class="json-preview">${preview}</div></td>
+          <td colspan="6">
+            <div class="json-preview">${preview}</div>
+            <div class="editor-wrap">
+              <textarea id="editor-${esc(item.document_id)}">${rawJson}</textarea>
+              <div class="editor-actions">
+                <button class="action-btn" onclick="resolveReviewItem('${esc(item.document_id)}')">Approve Edited Record</button>
+              </div>
+            </div>
+          </td>
         </tr>`;
       }
       if ((reviewData.items || []).length === 0) {
