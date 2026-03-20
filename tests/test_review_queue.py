@@ -3,7 +3,13 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from app.review_queue import decide_review_status, route_to_review_queue
+from app.review_queue import (
+    decide_review_status,
+    list_review_items,
+    load_review_item,
+    mark_review_resolved,
+    route_to_review_queue,
+)
 
 
 def test_decide_review_status_requires_review_on_invalid() -> None:
@@ -46,3 +52,44 @@ def test_route_to_review_queue_writes_reason_record_and_moves_file(tmp_path: Pat
     payload = json.loads(record_file.read_text(encoding="utf-8"))
     assert payload["reason_codes"] == ["low_confidence"]
 
+
+def test_list_and_load_review_items(tmp_path: Path) -> None:
+    queue = tmp_path / "review_queue"
+    route_to_review_queue(
+        document_id="doc-10",
+        reason_codes=["validation_failed"],
+        queue_dir=queue,
+        metadata={"file_hash": "hash-10"},
+    )
+
+    items = list_review_items(queue_dir=queue)
+    assert len(items) == 1
+    assert items[0]["document_id"] == "doc-10"
+
+    loaded = load_review_item("doc-10", queue_dir=queue)
+    assert loaded["status"] == "REVIEW_REQUIRED"
+    assert loaded["metadata"]["file_hash"] == "hash-10"
+
+
+def test_mark_review_resolved_updates_record(tmp_path: Path) -> None:
+    queue = tmp_path / "review_queue"
+    route_to_review_queue(
+        document_id="doc-11",
+        reason_codes=["low_confidence"],
+        queue_dir=queue,
+        metadata={"file_hash": "hash-11"},
+    )
+
+    updated = mark_review_resolved(
+        "doc-11",
+        queue_dir=queue,
+        resolution_status="RESOLVED_STORED",
+        resolved_record={"vendor_name": "Acme"},
+        storage_result={"status": "appended", "row_id": 5},
+        note="reviewed manually",
+    )
+
+    assert updated["status"] == "RESOLVED_STORED"
+    assert updated["resolved_record"]["vendor_name"] == "Acme"
+    assert updated["storage_result"]["row_id"] == 5
+    assert updated["resolution_note"] == "reviewed manually"

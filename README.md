@@ -237,6 +237,14 @@ python -m app.main replay --status FAILED
 python -m app.main replay --status REVIEW_REQUIRED
 ```
 
+Review queue operations:
+
+```powershell
+python -m app.main review-list
+python -m app.main review-resolve --document-id <review_document_id>
+python -m app.main review-resolve --document-id <review_document_id> --record-path corrected_record.json --note "manual correction"
+```
+
 Run monitoring + dashboard:
 
 ```powershell
