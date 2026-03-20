@@ -85,6 +85,7 @@ It shows:
 - Daily summary
 - Top vendor spend
 - Active backlog counters
+- Review queue inspection and one-click approval for queued items with a stored `normalized_record`
 
 Dashboard preview:
 

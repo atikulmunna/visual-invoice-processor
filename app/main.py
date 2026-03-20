@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-import json
 import logging
 import os
 import re
@@ -24,8 +23,7 @@ from app.r2_service import R2Service
 from app.review_queue import (
     decide_review_status,
     list_review_items,
-    load_review_item,
-    mark_review_resolved,
+    resolve_review_item,
     route_to_review_queue,
 )
 from app.replay import replay_failures
@@ -438,66 +436,23 @@ def run_review_list(queue_dir: str) -> int:
     return 0
 
 
-def _load_review_resolution_record(review_item: dict[str, Any], record_path: str | None) -> dict[str, Any]:
-    if record_path:
-        payload = json.loads(Path(record_path).read_text(encoding="utf-8"))
-        if not isinstance(payload, dict):
-            raise ValueError("Resolved review record JSON must be an object")
-        return payload
-
-    metadata = review_item.get("metadata", {}) if isinstance(review_item.get("metadata"), dict) else {}
-    payload = metadata.get("normalized_record")
-    if not isinstance(payload, dict):
-        raise ValueError(
-            "Review item does not contain a normalized_record. Supply --record-path with corrected JSON."
-        )
-    return payload
-
-
 def run_review_resolve(document_id: str, *, queue_dir: str, record_path: str | None, note: str | None) -> int:
     load_dotenv()
     settings = Settings.from_env()
     configure_logging(settings.log_level)
     logger = logging.getLogger(__name__)
 
-    review_item = load_review_item(document_id=document_id, queue_dir=queue_dir)
-    if review_item.get("status") != "REVIEW_REQUIRED":
-        raise ValueError(f"Review item {document_id} is not active; current status={review_item.get('status')}")
-
-    record = _load_review_resolution_record(review_item, record_path)
-    validation = validate_and_score(record)
-    resolved_record = validation["record"].model_dump(mode="json")
-    resolved_record["validation_score"] = validation["validation_score"]
-    resolved_record["needs_review"] = False
-
-    metadata = review_item.get("metadata", {}) if isinstance(review_item.get("metadata"), dict) else {}
-    drive_file_id = metadata.get("source_file_id") or metadata.get("drive_file_id")
-    file_hash = metadata.get("file_hash")
-    if not drive_file_id or not file_hash:
-        raise ValueError("Review item metadata is missing source_file_id/drive_file_id or file_hash")
-
-    append_metadata = {
-        "document_id": document_id,
-        "drive_file_id": drive_file_id,
-        "file_hash": file_hash,
-        "status": "STORED",
-        "processed_at_utc": datetime.now(timezone.utc).isoformat(),
-        "needs_review": False,
-        "used_provider": metadata.get("used_provider", "manual_review"),
-        "resolution_source": "manual_review",
-    }
-
-    append_result = append_record(record=resolved_record, metadata=append_metadata)
-    resolution_status = "RESOLVED_STORED" if append_result.get("status") == "appended" else "RESOLVED_DUPLICATE"
-    mark_review_resolved(
+    resolution = resolve_review_item(
         document_id=document_id,
         queue_dir=queue_dir,
-        resolution_status=resolution_status,
-        resolved_record=resolved_record,
-        storage_result=append_result,
+        record_path=record_path,
         note=note,
     )
-    logger.info("Resolved review item document_id=%s result=%s", document_id, append_result.get("status"))
+    logger.info(
+        "Resolved review item document_id=%s result=%s",
+        document_id,
+        resolution["storage_result"].get("status"),
+    )
     return 0
 
 

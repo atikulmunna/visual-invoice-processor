@@ -78,7 +78,7 @@ def test_run_review_resolve_uses_normalized_record_and_marks_resolved(tmp_path: 
         append_calls.append((record, metadata))
         return {"status": "appended", "row_id": 99}
 
-    monkeypatch.setattr("app.main.append_record", _fake_append_record)
+    monkeypatch.setattr("app.storage_service.append_record", _fake_append_record)
 
     code = run_review_resolve(
         document_id="doc-31",
