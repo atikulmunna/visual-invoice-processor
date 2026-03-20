@@ -5,6 +5,7 @@ from pathlib import Path
 
 from app.review_queue import (
     decide_review_status,
+    dismiss_review_item,
     list_review_items,
     load_review_item,
     mark_review_resolved,
@@ -93,3 +94,23 @@ def test_mark_review_resolved_updates_record(tmp_path: Path) -> None:
     assert updated["resolved_record"]["vendor_name"] == "Acme"
     assert updated["storage_result"]["row_id"] == 5
     assert updated["resolution_note"] == "reviewed manually"
+
+
+def test_dismiss_review_item_marks_rejected(tmp_path: Path) -> None:
+    queue = tmp_path / "review_queue"
+    route_to_review_queue(
+        document_id="doc-12",
+        reason_codes=["validation_failed"],
+        queue_dir=queue,
+        metadata={"file_hash": "hash-12"},
+    )
+
+    updated = dismiss_review_item(
+        "doc-12",
+        queue_dir=queue,
+        resolution_status="REJECTED",
+        note="not a valid business document",
+    )
+
+    assert updated["review_item"]["status"] == "REJECTED"
+    assert updated["storage_result"]["action"] == "REJECTED"

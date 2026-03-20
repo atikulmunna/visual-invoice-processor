@@ -9,10 +9,11 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
-from app.review_queue import list_review_items, resolve_review_item
+from app.review_queue import dismiss_review_item, list_review_items, resolve_review_item
 
 
 class ReviewResolveRequest(BaseModel):
+    action: str = "approve"
     note: str | None = None
     corrected_record: dict[str, Any] | None = None
 
@@ -75,15 +76,34 @@ def create_monitoring_app(
     @app.post("/review-items/{document_id}/resolve")
     def review_resolve(document_id: str, payload: ReviewResolveRequest | None = None) -> dict[str, Any]:
         try:
-            result = resolve_review_item(
-                document_id=document_id,
-                queue_dir=review_queue_dir,
-                record_override=payload.corrected_record if payload else None,
-                note=payload.note if payload else None,
-            )
+            action = (payload.action if payload else "approve").strip().lower()
+            if action == "approve":
+                result = resolve_review_item(
+                    document_id=document_id,
+                    queue_dir=review_queue_dir,
+                    record_override=payload.corrected_record if payload else None,
+                    note=payload.note if payload else None,
+                )
+            elif action == "reject":
+                result = dismiss_review_item(
+                    document_id=document_id,
+                    queue_dir=review_queue_dir,
+                    resolution_status="REJECTED",
+                    note=payload.note if payload else None,
+                )
+            elif action == "duplicate":
+                result = dismiss_review_item(
+                    document_id=document_id,
+                    queue_dir=review_queue_dir,
+                    resolution_status="RESOLVED_DUPLICATE_MANUAL",
+                    note=payload.note if payload else None,
+                )
+            else:
+                raise ValueError(f"Unsupported review action: {action}")
             return {
                 "status": "ok",
                 "document_id": document_id,
+                "action": action,
                 "storage_result": result["storage_result"],
                 "review_status": result["review_item"].get("status"),
             }
@@ -554,11 +574,11 @@ def _dashboard_html() -> str:
     function esc(s) {
       return String(s ?? "").replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',\"'\":'&#39;'}[c]));
     }
-    async function resolveReviewItem(documentId) {
-      const note = window.prompt('Optional resolution note:', '') ?? '';
+    async function submitReviewAction(documentId, action) {
+      const note = window.prompt(`Optional note for ${action}:`, '') ?? '';
       const editor = document.getElementById(`editor-${documentId}`);
       let correctedRecord = null;
-      if (editor) {
+      if (action === 'approve' && editor) {
         try {
           correctedRecord = JSON.parse(editor.value);
         } catch (err) {
@@ -569,7 +589,7 @@ def _dashboard_html() -> str:
       const resp = await fetch(`/review-items/${encodeURIComponent(documentId)}/resolve`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ note, corrected_record: correctedRecord })
+        body: JSON.stringify({ action, note, corrected_record: correctedRecord })
       });
       const payload = await resp.json();
       if (!resp.ok) {
@@ -577,7 +597,7 @@ def _dashboard_html() -> str:
         return;
       }
       await loadData();
-      window.alert(`Resolved ${documentId} (${payload.review_status})`);
+      window.alert(`${action} complete for ${documentId} (${payload.review_status})`);
     }
     async function loadData() {
       const [dashboardResp, reviewResp] = await Promise.all([
@@ -654,7 +674,11 @@ def _dashboard_html() -> str:
           <td>${esc(item.vendor_name || 'Unknown')}</td>
           <td>${esc(item.currency || 'NA')} ${fmtMoney(item.total_amount)}</td>
           <td>${reasons}</td>
-          <td><button class="action-btn" onclick="resolveReviewItem('${esc(item.document_id)}')">Approve</button></td>
+          <td>
+            <button class="action-btn" onclick="submitReviewAction('${esc(item.document_id)}', 'approve')">Approve</button>
+            <button class="action-btn warn" onclick="submitReviewAction('${esc(item.document_id)}', 'duplicate')">Duplicate</button>
+            <button class="action-btn warn" onclick="submitReviewAction('${esc(item.document_id)}', 'reject')">Reject</button>
+          </td>
         </tr>
         <tr>
           <td colspan="6">
@@ -662,7 +686,7 @@ def _dashboard_html() -> str:
             <div class="editor-wrap">
               <textarea id="editor-${esc(item.document_id)}">${rawJson}</textarea>
               <div class="editor-actions">
-                <button class="action-btn" onclick="resolveReviewItem('${esc(item.document_id)}')">Approve Edited Record</button>
+                <button class="action-btn" onclick="submitReviewAction('${esc(item.document_id)}', 'approve')">Approve Edited Record</button>
               </div>
             </div>
           </td>
