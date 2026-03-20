@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 import logging
 import os
 import re
@@ -20,7 +21,13 @@ from app.logger import configure_logging
 from app.metrics import JsonlMetricsSink, MetricsCollector
 from app.normalization_engine import NormalizationRuleEngine
 from app.r2_service import R2Service
-from app.review_queue import decide_review_status, route_to_review_queue
+from app.review_queue import (
+    decide_review_status,
+    list_review_items,
+    load_review_item,
+    mark_review_resolved,
+    route_to_review_queue,
+)
 from app.replay import replay_failures
 from app.storage_service import append_record
 from app.validation import validate_and_score
@@ -288,6 +295,7 @@ def run_poll_once() -> int:
                         "file_hash": file_hash,
                         "error": str(exc),
                         "raw_extracted": extracted,
+                        "normalized_record": normalized_payload,
                         "used_provider": used_provider,
                     },
                 )
@@ -319,6 +327,7 @@ def run_poll_once() -> int:
                     metadata={
                         "source_file_id": file_id,
                         "file_hash": file_hash,
+                        "normalized_record": normalized_payload,
                         "violations": validation["violations"],
                         "used_provider": used_provider,
                     },
@@ -406,6 +415,92 @@ def run_poll_once() -> int:
     return 0
 
 
+def run_review_list(queue_dir: str) -> int:
+    load_dotenv()
+    settings = Settings.from_env()
+    configure_logging(settings.log_level)
+
+    items = list_review_items(queue_dir=queue_dir)
+    active_items = [item for item in items if item.get("status") == "REVIEW_REQUIRED"]
+
+    if not active_items:
+        print("No active review items.")
+        return 0
+
+    for item in active_items:
+        metadata = item.get("metadata", {}) if isinstance(item.get("metadata"), dict) else {}
+        source_id = metadata.get("source_file_id") or metadata.get("drive_file_id") or "-"
+        reasons = ",".join(item.get("reason_codes", [])) or "-"
+        print(
+            f"{item.get('document_id')} | source={source_id} | reasons={reasons} | "
+            f"created_at={item.get('created_at_utc')}"
+        )
+    return 0
+
+
+def _load_review_resolution_record(review_item: dict[str, Any], record_path: str | None) -> dict[str, Any]:
+    if record_path:
+        payload = json.loads(Path(record_path).read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            raise ValueError("Resolved review record JSON must be an object")
+        return payload
+
+    metadata = review_item.get("metadata", {}) if isinstance(review_item.get("metadata"), dict) else {}
+    payload = metadata.get("normalized_record")
+    if not isinstance(payload, dict):
+        raise ValueError(
+            "Review item does not contain a normalized_record. Supply --record-path with corrected JSON."
+        )
+    return payload
+
+
+def run_review_resolve(document_id: str, *, queue_dir: str, record_path: str | None, note: str | None) -> int:
+    load_dotenv()
+    settings = Settings.from_env()
+    configure_logging(settings.log_level)
+    logger = logging.getLogger(__name__)
+
+    review_item = load_review_item(document_id=document_id, queue_dir=queue_dir)
+    if review_item.get("status") != "REVIEW_REQUIRED":
+        raise ValueError(f"Review item {document_id} is not active; current status={review_item.get('status')}")
+
+    record = _load_review_resolution_record(review_item, record_path)
+    validation = validate_and_score(record)
+    resolved_record = validation["record"].model_dump(mode="json")
+    resolved_record["validation_score"] = validation["validation_score"]
+    resolved_record["needs_review"] = False
+
+    metadata = review_item.get("metadata", {}) if isinstance(review_item.get("metadata"), dict) else {}
+    drive_file_id = metadata.get("source_file_id") or metadata.get("drive_file_id")
+    file_hash = metadata.get("file_hash")
+    if not drive_file_id or not file_hash:
+        raise ValueError("Review item metadata is missing source_file_id/drive_file_id or file_hash")
+
+    append_metadata = {
+        "document_id": document_id,
+        "drive_file_id": drive_file_id,
+        "file_hash": file_hash,
+        "status": "STORED",
+        "processed_at_utc": datetime.now(timezone.utc).isoformat(),
+        "needs_review": False,
+        "used_provider": metadata.get("used_provider", "manual_review"),
+        "resolution_source": "manual_review",
+    }
+
+    append_result = append_record(record=resolved_record, metadata=append_metadata)
+    resolution_status = "RESOLVED_STORED" if append_result.get("status") == "appended" else "RESOLVED_DUPLICATE"
+    mark_review_resolved(
+        document_id=document_id,
+        queue_dir=queue_dir,
+        resolution_status=resolution_status,
+        resolved_record=resolved_record,
+        storage_result=append_result,
+        note=note,
+    )
+    logger.info("Resolved review item document_id=%s result=%s", document_id, append_result.get("status"))
+    return 0
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Visual Invoice Processor")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -418,6 +513,19 @@ def _build_parser() -> argparse.ArgumentParser:
     replay.add_argument("--dead-letter-path", default="logs/dead_letter.jsonl")
     replay.add_argument("--audit-path", default="logs/replay_audit.jsonl")
     replay.add_argument("--claim-db-path", default="data/metadata.db")
+
+    review_list = subparsers.add_parser("review-list", help="List active review queue items")
+    review_list.add_argument("--queue-dir", default="review_queue")
+
+    review_resolve = subparsers.add_parser("review-resolve", help="Resolve a review queue item into storage")
+    review_resolve.add_argument("--document-id", required=True)
+    review_resolve.add_argument("--queue-dir", default="review_queue")
+    review_resolve.add_argument(
+        "--record-path",
+        default=None,
+        help="Optional path to corrected JSON record. If omitted, uses metadata.normalized_record.",
+    )
+    review_resolve.add_argument("--note", default=None)
     return parser
 
 
@@ -440,6 +548,15 @@ def main() -> int:
             summary["skipped_invalid"],
         )
         return 0
+    if args.command == "review-list":
+        return run_review_list(queue_dir=args.queue_dir)
+    if args.command == "review-resolve":
+        return run_review_resolve(
+            document_id=args.document_id,
+            queue_dir=args.queue_dir,
+            record_path=args.record_path,
+            note=args.note,
+        )
     return 1
 
 

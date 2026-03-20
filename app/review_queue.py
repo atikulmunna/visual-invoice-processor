@@ -63,3 +63,54 @@ def route_to_review_queue(
     record_file.write_text(json.dumps(record, ensure_ascii=True, indent=2), encoding="utf-8")
     return record
 
+
+def list_review_items(queue_dir: str | Path = "review_queue") -> list[dict[str, Any]]:
+    target_dir = Path(queue_dir)
+    if not target_dir.exists():
+        return []
+
+    items: list[dict[str, Any]] = []
+    for record_file in sorted(target_dir.glob("*.json")):
+        if not record_file.is_file():
+            continue
+        try:
+            payload = json.loads(record_file.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            continue
+        payload["_record_path"] = str(record_file)
+        items.append(payload)
+    return items
+
+
+def load_review_item(document_id: str, queue_dir: str | Path = "review_queue") -> dict[str, Any]:
+    record_file = Path(queue_dir) / f"{document_id}.json"
+    if not record_file.exists():
+        raise FileNotFoundError(f"Review item not found: {document_id}")
+    payload = json.loads(record_file.read_text(encoding="utf-8"))
+    payload["_record_path"] = str(record_file)
+    return payload
+
+
+def mark_review_resolved(
+    document_id: str,
+    *,
+    queue_dir: str | Path = "review_queue",
+    resolution_status: str,
+    resolved_record: dict[str, Any],
+    storage_result: dict[str, Any],
+    note: str | None = None,
+) -> dict[str, Any]:
+    record_file = Path(queue_dir) / f"{document_id}.json"
+    if not record_file.exists():
+        raise FileNotFoundError(f"Review item not found: {document_id}")
+
+    payload = json.loads(record_file.read_text(encoding="utf-8"))
+    payload["status"] = resolution_status
+    payload["resolved_at_utc"] = datetime.now(timezone.utc).isoformat()
+    payload["resolved_record"] = resolved_record
+    payload["storage_result"] = storage_result
+    if note:
+        payload["resolution_note"] = note
+
+    record_file.write_text(json.dumps(payload, ensure_ascii=True, indent=2), encoding="utf-8")
+    return payload
