@@ -5,7 +5,12 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from app.monitoring_api import _active_dead_letters, _active_review_queue_size, create_monitoring_app
+from app.monitoring_api import (
+    _active_dead_letters,
+    _active_review_items,
+    _active_review_queue_size,
+    create_monitoring_app,
+)
 
 
 def _write_jsonl(path: Path, rows: list[dict]) -> None:
@@ -25,7 +30,15 @@ def test_monitoring_endpoints_expose_stats_backlog_and_failures(tmp_path: Path) 
             {
                 "document_id": "doc-1",
                 "status": "REVIEW_REQUIRED",
-                "metadata": {"file_hash": "hash-open"},
+                "metadata": {
+                    "file_hash": "hash-open",
+                    "source_file_id": "inbox/doc-1.pdf",
+                    "normalized_record": {
+                        "vendor_name": "Acme",
+                        "currency": "BDT",
+                        "total_amount": 125.0,
+                    },
+                },
             }
         ),
         encoding="utf-8",
@@ -53,6 +66,7 @@ def test_monitoring_endpoints_expose_stats_backlog_and_failures(tmp_path: Path) 
     stats = client.get("/stats")
     backlog = client.get("/backlog")
     failures = client.get("/failures")
+    review_items = client.get("/review-items")
     dashboard = client.get("/dashboard")
     dashboard_data = client.get("/dashboard/data")
 
@@ -66,6 +80,9 @@ def test_monitoring_endpoints_expose_stats_backlog_and_failures(tmp_path: Path) 
     assert backlog.json()["attention_total"] == 3
     assert failures.status_code == 200
     assert failures.json()["count"] == 2
+    assert review_items.status_code == 200
+    assert review_items.json()["count"] == 1
+    assert review_items.json()["items"][0]["vendor_name"] == "Acme"
     assert dashboard.status_code == 200
     assert "Invoice Operations Dashboard" in dashboard.text
     assert dashboard_data.status_code == 200
@@ -95,3 +112,47 @@ def test_active_backlog_filters_resolved_hashes(tmp_path: Path) -> None:
     resolved = {"hash-a"}
     assert len(_active_dead_letters(dead, resolved)) == 1
     assert _active_review_queue_size(review, resolved) == 1
+    assert len(_active_review_items(review, resolved)) == 1
+
+
+def test_review_resolve_endpoint_uses_shared_resolution_flow(tmp_path: Path, monkeypatch) -> None:
+    queue = tmp_path / "review_queue"
+    queue.mkdir(parents=True, exist_ok=True)
+    (queue / "doc-2.json").write_text(
+        json.dumps(
+            {
+                "document_id": "doc-2",
+                "status": "REVIEW_REQUIRED",
+                "metadata": {
+                    "file_hash": "hash-2",
+                    "source_file_id": "inbox/doc-2.pdf",
+                    "normalized_record": {"vendor_name": "Beta", "total_amount": 42.0},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    called: dict[str, object] = {}
+
+    def _fake_resolve_review_item(document_id: str, *, queue_dir: str | Path, record_path: str | None = None, note: str | None = None) -> dict[str, object]:
+        called["document_id"] = document_id
+        called["queue_dir"] = str(queue_dir)
+        called["record_path"] = record_path
+        called["note"] = note
+        return {
+            "storage_result": {"status": "appended", "row_id": 10},
+            "review_item": {"status": "RESOLVED_STORED"},
+            "resolved_record": {"vendor_name": "Beta"},
+        }
+
+    monkeypatch.setattr("app.monitoring_api.resolve_review_item", _fake_resolve_review_item)
+
+    app = create_monitoring_app(review_queue_dir=queue)
+    client = TestClient(app)
+    response = client.post("/review-items/doc-2/resolve", json={"note": "approved"})
+
+    assert response.status_code == 200
+    assert response.json()["review_status"] == "RESOLVED_STORED"
+    assert called["document_id"] == "doc-2"
+    assert called["note"] == "approved"

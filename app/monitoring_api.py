@@ -5,8 +5,15 @@ import os
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
+from pydantic import BaseModel
+
+from app.review_queue import list_review_items, resolve_review_item
+
+
+class ReviewResolveRequest(BaseModel):
+    note: str | None = None
 
 
 def create_monitoring_app(
@@ -58,6 +65,31 @@ def create_monitoring_app(
         data["dead_letter_total"] = len(_active_dead_letters(dead_letter_path, resolved_hashes))
         return data
 
+    @app.get("/review-items")
+    def review_items() -> dict[str, Any]:
+        resolved_hashes = _resolved_file_hashes(active_postgres_dsn)
+        items = _active_review_items(review_queue_dir, resolved_hashes)
+        return {"count": len(items), "items": items}
+
+    @app.post("/review-items/{document_id}/resolve")
+    def review_resolve(document_id: str, payload: ReviewResolveRequest | None = None) -> dict[str, Any]:
+        try:
+            result = resolve_review_item(
+                document_id=document_id,
+                queue_dir=review_queue_dir,
+                note=payload.note if payload else None,
+            )
+            return {
+                "status": "ok",
+                "document_id": document_id,
+                "storage_result": result["storage_result"],
+                "review_status": result["review_item"].get("status"),
+            }
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     @app.get("/dashboard", response_class=HTMLResponse)
     def dashboard() -> str:
         return _dashboard_html()
@@ -104,6 +136,36 @@ def _active_review_queue_size(path: str | Path, resolved_hashes: set[str]) -> in
             continue
         total += 1
     return total
+
+
+def _active_review_items(path: str | Path, resolved_hashes: set[str]) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    for payload in list_review_items(queue_dir=path):
+        if payload.get("status") != "REVIEW_REQUIRED":
+            continue
+        metadata = payload.get("metadata", {}) if isinstance(payload.get("metadata"), dict) else {}
+        file_hash = str(metadata.get("file_hash", "") or "")
+        if file_hash and file_hash in resolved_hashes:
+            continue
+        normalized = metadata.get("normalized_record") if isinstance(metadata.get("normalized_record"), dict) else {}
+        items.append(
+            {
+                "document_id": payload.get("document_id"),
+                "status": payload.get("status"),
+                "reason_codes": payload.get("reason_codes", []),
+                "created_at_utc": payload.get("created_at_utc"),
+                "source_file_id": metadata.get("source_file_id") or metadata.get("drive_file_id"),
+                "file_hash": file_hash,
+                "used_provider": metadata.get("used_provider", "unknown"),
+                "vendor_name": normalized.get("vendor_name"),
+                "invoice_number": normalized.get("invoice_number"),
+                "invoice_date": normalized.get("invoice_date"),
+                "currency": normalized.get("currency"),
+                "total_amount": normalized.get("total_amount"),
+                "normalized_record": normalized,
+            }
+        )
+    return items
 
 
 def _aggregate_metrics(events: list[dict[str, Any]]) -> dict[str, Any]:
@@ -361,6 +423,26 @@ def _dashboard_html() -> str:
       margin-top: 10px; border: 1px solid rgba(209,102,102,0.35); background: rgba(209,102,102,0.08);
       color: #7d2f2f; border-radius: 8px; padding: 10px; font-size: 0.86rem;
     }
+    .action-btn {
+      border: 1px solid rgba(182,198,73,0.7);
+      background: rgba(182,198,73,0.18);
+      color: var(--c-ink);
+      border-radius: 999px;
+      padding: 6px 10px;
+      font-size: 0.78rem;
+      cursor: pointer;
+    }
+    .action-btn:hover { background: rgba(182,198,73,0.3); }
+    .json-preview {
+      margin-top: 8px;
+      padding: 10px;
+      border-radius: 8px;
+      background: rgba(44,66,81,0.05);
+      font-family: Consolas, monospace;
+      font-size: 0.76rem;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
     @media (max-width: 920px) {
       .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .pane-grid { grid-template-columns: 1fr; }
@@ -430,6 +512,18 @@ def _dashboard_html() -> str:
         </div>
       </div>
     </div>
+
+    <div class="card">
+      <h3>Review Queue</h3>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Document ID</th><th>Source</th><th>Vendor</th><th>Amount</th><th>Reasons</th><th>Action</th></tr>
+          </thead>
+          <tbody id="reviewBody"></tbody>
+        </table>
+      </div>
+    </div>
     <div class="warn-box" id="errorBox" style="display:none;"></div>
   </div>
   <script>
@@ -440,9 +534,28 @@ def _dashboard_html() -> str:
     function esc(s) {
       return String(s ?? "").replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',\"'\":'&#39;'}[c]));
     }
+    async function resolveReviewItem(documentId) {
+      const note = window.prompt('Optional resolution note:', '') ?? '';
+      const resp = await fetch(`/review-items/${encodeURIComponent(documentId)}/resolve`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ note })
+      });
+      const payload = await resp.json();
+      if (!resp.ok) {
+        window.alert(payload.detail || 'Review resolution failed.');
+        return;
+      }
+      await loadData();
+      window.alert(`Resolved ${documentId} (${payload.review_status})`);
+    }
     async function loadData() {
-      const resp = await fetch('/dashboard/data?limit=25');
-      const data = await resp.json();
+      const [dashboardResp, reviewResp] = await Promise.all([
+        fetch('/dashboard/data?limit=25'),
+        fetch('/review-items')
+      ]);
+      const data = await dashboardResp.json();
+      const reviewData = await reviewResp.json();
       document.getElementById('refreshAt').textContent = 'Updated: ' + new Date().toLocaleString();
       document.getElementById('kpiTotal').textContent = data.kpis.records_total ?? 0;
       document.getElementById('kpiStored').textContent = data.kpis.stored_total ?? 0;
@@ -497,6 +610,27 @@ def _dashboard_html() -> str:
           <div class="bar-track"><div class="bar-fill" style="width:${w}%"></div></div>
           <div>${esc(p.records_total)}</div>
         </div>`;
+      }
+
+      const reviewBody = document.getElementById('reviewBody');
+      reviewBody.innerHTML = '';
+      for (const item of reviewData.items || []) {
+        const preview = esc(JSON.stringify(item.normalized_record || {}, null, 2));
+        const reasons = esc((item.reason_codes || []).join(', '));
+        reviewBody.innerHTML += `<tr>
+          <td>${esc(item.document_id)}</td>
+          <td>${esc(item.source_file_id || '-')}</td>
+          <td>${esc(item.vendor_name || 'Unknown')}</td>
+          <td>${esc(item.currency || 'NA')} ${fmtMoney(item.total_amount)}</td>
+          <td>${reasons}</td>
+          <td><button class="action-btn" onclick="resolveReviewItem('${esc(item.document_id)}')">Approve</button></td>
+        </tr>
+        <tr>
+          <td colspan="6"><div class="json-preview">${preview}</div></td>
+        </tr>`;
+      }
+      if ((reviewData.items || []).length === 0) {
+        reviewBody.innerHTML = '<tr><td colspan="6" class="muted">No active review items.</td></tr>';
       }
 
       const errorBox = document.getElementById('errorBox');
