@@ -96,8 +96,8 @@ def mark_review_resolved(
     *,
     queue_dir: str | Path = "review_queue",
     resolution_status: str,
-    resolved_record: dict[str, Any],
-    storage_result: dict[str, Any],
+    resolved_record: dict[str, Any] | None,
+    storage_result: dict[str, Any] | None,
     note: str | None = None,
 ) -> dict[str, Any]:
     record_file = Path(queue_dir) / f"{document_id}.json"
@@ -114,6 +114,31 @@ def mark_review_resolved(
 
     record_file.write_text(json.dumps(payload, ensure_ascii=True, indent=2), encoding="utf-8")
     return payload
+
+
+def dismiss_review_item(
+    document_id: str,
+    *,
+    queue_dir: str | Path = "review_queue",
+    resolution_status: str,
+    note: str | None = None,
+) -> dict[str, Any]:
+    if resolution_status not in {"REJECTED", "RESOLVED_DUPLICATE_MANUAL"}:
+        raise ValueError(f"Unsupported dismissal status: {resolution_status}")
+
+    updated = mark_review_resolved(
+        document_id=document_id,
+        queue_dir=queue_dir,
+        resolution_status=resolution_status,
+        resolved_record=None,
+        storage_result={"status": "dismissed", "action": resolution_status},
+        note=note,
+    )
+    return {
+        "review_item": updated,
+        "storage_result": updated.get("storage_result"),
+        "resolved_record": None,
+    }
 
 
 def _load_resolution_record(

@@ -168,3 +168,55 @@ def test_review_resolve_endpoint_uses_shared_resolution_flow(tmp_path: Path, mon
     assert called["document_id"] == "doc-2"
     assert called["note"] == "approved"
     assert called["record_override"] == {"vendor_name": "Gamma", "total_amount": 45.0}
+
+
+def test_review_action_endpoint_supports_duplicate_and_reject(tmp_path: Path, monkeypatch) -> None:
+    queue = tmp_path / "review_queue"
+    queue.mkdir(parents=True, exist_ok=True)
+    (queue / "doc-3.json").write_text(
+        json.dumps(
+            {
+                "document_id": "doc-3",
+                "status": "REVIEW_REQUIRED",
+                "metadata": {
+                    "file_hash": "hash-3",
+                    "source_file_id": "inbox/doc-3.pdf",
+                    "normalized_record": {"vendor_name": "Delta", "total_amount": 50.0},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    dismiss_calls: list[tuple[str, str, str | None]] = []
+
+    def _fake_dismiss_review_item(
+        document_id: str,
+        *,
+        queue_dir: str | Path,
+        resolution_status: str,
+        note: str | None = None,
+    ) -> dict[str, object]:
+        dismiss_calls.append((document_id, resolution_status, note))
+        return {
+            "storage_result": {"status": "dismissed", "action": resolution_status},
+            "review_item": {"status": resolution_status},
+            "resolved_record": None,
+        }
+
+    monkeypatch.setattr("app.monitoring_api.dismiss_review_item", _fake_dismiss_review_item)
+
+    app = create_monitoring_app(review_queue_dir=queue)
+    client = TestClient(app)
+
+    duplicate_response = client.post("/review-items/doc-3/resolve", json={"action": "duplicate", "note": "already stored"})
+    reject_response = client.post("/review-items/doc-3/resolve", json={"action": "reject", "note": "invalid document"})
+
+    assert duplicate_response.status_code == 200
+    assert duplicate_response.json()["review_status"] == "RESOLVED_DUPLICATE_MANUAL"
+    assert reject_response.status_code == 200
+    assert reject_response.json()["review_status"] == "REJECTED"
+    assert dismiss_calls == [
+        ("doc-3", "RESOLVED_DUPLICATE_MANUAL", "already stored"),
+        ("doc-3", "REJECTED", "invalid document"),
+    ]
