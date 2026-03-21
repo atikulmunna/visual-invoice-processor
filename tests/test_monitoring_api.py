@@ -11,6 +11,7 @@ from app.monitoring_api import (
     _activity_feed_items,
     _active_review_items,
     _active_review_queue_size,
+    _format_currency_total_display,
     _review_history_items,
     create_monitoring_app,
 )
@@ -104,6 +105,7 @@ def test_monitoring_endpoints_expose_stats_backlog_and_failures(tmp_path: Path, 
     assert dashboard_data.status_code == 200
     assert "kpis" in dashboard_data.json()
     assert "activity_feed" in dashboard_data.json()
+    assert "currency_totals" in dashboard_data.json()
 
 
 def test_dashboard_routes_require_basic_auth_when_configured(tmp_path: Path, monkeypatch) -> None:
@@ -451,3 +453,14 @@ def test_activity_feed_combines_stored_review_resolved_and_failed_events() -> No
     assert events[1]["message"] == "approved"
     assert events[2]["message"] == "low_confidence"
     assert events[3]["message"] == "Stored in ledger"
+
+
+def test_format_currency_total_display_handles_single_and_multiple_currencies() -> None:
+    assert _format_currency_total_display([]) == "0"
+    assert _format_currency_total_display([{"currency": "BDT", "total_amount_sum": 1200.0}]) == "BDT 1,200.00"
+    assert _format_currency_total_display(
+        [
+            {"currency": "BDT", "total_amount_sum": 1200.0},
+            {"currency": "USD", "total_amount_sum": 15.0},
+        ]
+    ) == "2 currencies"

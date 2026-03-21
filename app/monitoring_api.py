@@ -459,9 +459,10 @@ def _query_dashboard_data(postgres_dsn: str | None, *, limit: int) -> dict[str, 
             "records_total": 0,
             "stored_total": 0,
             "needs_review_total": 0,
-            "total_amount_sum": 0.0,
+            "total_amount_display": "0",
         },
         "daily_summary": [],
+        "currency_totals": [],
         "vendor_spend": [],
         "provider_mix": [],
         "recent_records": [],
@@ -486,8 +487,7 @@ def _query_dashboard_data(postgres_dsn: str | None, *, limit: int) -> dict[str, 
                     select
                       count(*)::int as records_total,
                       count(*) filter (where row_status = 'STORED')::int as stored_total,
-                      count(*) filter (where needs_review = true)::int as needs_review_total,
-                      coalesce(sum(total_amount), 0)::float as total_amount_sum
+                      count(*) filter (where needs_review = true)::int as needs_review_total
                     from public.ledger_records_flat
                     """
                 )
@@ -497,8 +497,22 @@ def _query_dashboard_data(postgres_dsn: str | None, *, limit: int) -> dict[str, 
                         "records_total": row[0],
                         "stored_total": row[1],
                         "needs_review_total": row[2],
-                        "total_amount_sum": row[3],
+                        "total_amount_display": "0",
                     }
+
+                cur.execute(
+                    """
+                    select coalesce(currency, 'NA') as currency, coalesce(sum(total_amount), 0)::float as total_amount_sum
+                    from public.ledger_records_flat
+                    group by 1
+                    order by total_amount_sum desc, currency asc
+                    """
+                )
+                payload["currency_totals"] = [
+                    {"currency": r[0], "total_amount_sum": r[1]}
+                    for r in cur.fetchall()
+                ]
+                payload["kpis"]["total_amount_display"] = _format_currency_total_display(payload["currency_totals"])
 
                 cur.execute(
                     """
@@ -580,6 +594,15 @@ def _query_dashboard_data(postgres_dsn: str | None, *, limit: int) -> dict[str, 
     except Exception as exc:  # noqa: BLE001
         payload["error"] = str(exc)
     return payload
+
+
+def _format_currency_total_display(currency_totals: list[dict[str, Any]]) -> str:
+    if not currency_totals:
+        return "0"
+    if len(currency_totals) == 1:
+        item = currency_totals[0]
+        return f"{item.get('currency', 'NA')} {float(item.get('total_amount_sum', 0.0)):,.2f}"
+    return f"{len(currency_totals)} currencies"
 
 
 def _dashboard_html() -> str:
@@ -774,6 +797,25 @@ def _dashboard_html() -> str:
       gap: 10px;
       flex-wrap: wrap;
     }
+    .amount-stack {
+      display: grid;
+      gap: 4px;
+    }
+    .amount-breakdown {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 6px;
+    }
+    .mini-tag {
+      display: inline-block;
+      border-radius: 999px;
+      padding: 2px 8px;
+      font-size: 0.72rem;
+      border: 1px solid rgba(44,66,81,0.18);
+      background: rgba(44,66,81,0.04);
+      color: rgba(44,66,81,0.86);
+    }
     @media (max-width: 920px) {
       .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .pane-grid { grid-template-columns: 1fr; }
@@ -807,7 +849,13 @@ def _dashboard_html() -> str:
       <div class="card"><h3>Total Records</h3><div class="value" id="kpiTotal">0</div></div>
       <div class="card"><h3>Stored</h3><div class="value good" id="kpiStored">0</div></div>
       <div class="card"><h3>Needs Review</h3><div class="value warn" id="kpiReview">0</div></div>
-      <div class="card"><h3>Total Amount</h3><div class="value" id="kpiAmount">0</div></div>
+      <div class="card">
+        <h3>Total Amount By Currency</h3>
+        <div class="amount-stack">
+          <div class="value" id="kpiAmount">0</div>
+          <div class="amount-breakdown" id="kpiAmountBreakdown"></div>
+        </div>
+      </div>
     </div>
 
     <div class="pane-grid">
@@ -1127,7 +1175,15 @@ def _dashboard_html() -> str:
       document.getElementById('kpiTotal').textContent = data.kpis.records_total ?? 0;
       document.getElementById('kpiStored').textContent = data.kpis.stored_total ?? 0;
       document.getElementById('kpiReview').textContent = data.kpis.needs_review_total ?? 0;
-      document.getElementById('kpiAmount').textContent = fmtMoney(data.kpis.total_amount_sum ?? 0);
+      document.getElementById('kpiAmount').textContent = data.kpis.total_amount_display ?? '0';
+      const amountBreakdown = document.getElementById('kpiAmountBreakdown');
+      amountBreakdown.innerHTML = '';
+      for (const item of data.currency_totals || []) {
+        amountBreakdown.innerHTML += `<span class="mini-tag">${esc(item.currency)} ${fmtMoney(item.total_amount_sum)}</span>`;
+      }
+      if ((data.currency_totals || []).length === 0) {
+        amountBreakdown.innerHTML = '<span class="muted">No stored amounts yet.</span>';
+      }
       document.getElementById('reviewQueue').textContent = data.review_queue_total ?? 0;
       document.getElementById('deadLetter').textContent = data.dead_letter_total ?? 0;
       bindSearchInputs();
