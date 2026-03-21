@@ -260,150 +260,21 @@ def run_poll_once() -> int:
     store_review_score_threshold = float(os.getenv("STORE_REVIEW_SCORE_THRESHOLD", "0.6"))
 
     for candidate in files:
-        metrics.increment("documents_processed_total")
-        file_id = candidate["id"]
-        file_name = candidate.get("name", "document")
-        local_path = _TMP_DIR / f"{uuid4().hex}_{file_name}"
-
-        try:
-            _download_candidate(settings, backend, candidate, local_path)
-            file_hash = _sha256(local_path)
-            claim = claim_store.claim_document(file_id, file_hash, owner_id=worker_id)
-            if claim.status != "claimed":
-                metrics.increment("documents_duplicate_skipped_total")
-                continue
-
-            document_id = str(uuid4())
-            extracted = extract_document(
-                file_path=local_path,
-                provider=extraction_provider,
-                model_name=extraction_model,
-            )
-            used_provider = str(extracted.get("_provider", "unknown"))
-            logger.info("Extraction provider=%s source_id=%s", used_provider, file_id)
-            normalized_payload = normalization_engine.coerce_payload(extracted)
-            try:
-                validation = validate_and_score(normalized_payload)
-            except ValidationError as exc:
-                route_to_review_queue(
-                    document_id=document_id,
-                    reason_codes=["schema_validation_failed"],
-                    metadata={
-                        "source_file_id": file_id,
-                        "file_hash": file_hash,
-                        "error": str(exc),
-                        "raw_extracted": extracted,
-                        "normalized_record": normalized_payload,
-                        "used_provider": used_provider,
-                    },
-                )
-                dead_letter.write_failure(
-                    {
-                        "document_id": document_id,
-                        "drive_file_id": file_id,
-                        "file_hash": file_hash,
-                        "status": "REVIEW_REQUIRED",
-                        "error_code": "schema_validation_failed",
-                        "error_message": str(exc),
-                        "used_provider": used_provider,
-                    }
-                )
-                claim_store.mark_status(file_id, file_hash, "REVIEW_REQUIRED")
-                metrics.increment("documents_review_total")
-                logger.info("Document %s sent to review due to schema mismatch", document_id)
-                continue
-            decision = decide_review_status(
-                is_valid=validation["is_valid"],
-                model_confidence=float(validation["record"].model_confidence),
-                confidence_threshold=review_threshold,
-            )
-
-            if decision.status == "REVIEW_REQUIRED":
-                route_to_review_queue(
-                    document_id=document_id,
-                    reason_codes=list(decision.reason_codes),
-                    metadata={
-                        "source_file_id": file_id,
-                        "file_hash": file_hash,
-                        "normalized_record": normalized_payload,
-                        "violations": validation["violations"],
-                        "used_provider": used_provider,
-                    },
-                )
-                dead_letter.write_failure(
-                    {
-                        "document_id": document_id,
-                        "drive_file_id": file_id,
-                        "file_hash": file_hash,
-                        "status": "REVIEW_REQUIRED",
-                        "error_code": ",".join(decision.reason_codes),
-                        "error_message": "Routed to review queue",
-                        "used_provider": used_provider,
-                    }
-                )
-                claim_store.mark_status(file_id, file_hash, "REVIEW_REQUIRED")
-                metrics.increment("documents_review_total")
-                logger.info("Document %s routed to review", document_id)
-                continue
-
-            record = validation["record"].model_dump(mode="json")
-            record["validation_score"] = validation["validation_score"]
-            needs_review = validation["validation_score"] < store_review_score_threshold
-            record["needs_review"] = needs_review
-            metadata = {
-                "document_id": document_id,
-                "drive_file_id": file_id,
-                "file_hash": file_hash,
-                "status": "STORED",
-                "processed_at_utc": datetime.now(timezone.utc).isoformat(),
-                "needs_review": needs_review,
-                "used_provider": used_provider,
-            }
-            append_result = append_record(record=record, metadata=metadata)
-            claim_store.mark_status(file_id, file_hash, "STORED")
-            _archive_candidate(settings, backend, candidate)
-            claim_store.mark_status(file_id, file_hash, "ARCHIVED")
-            metrics.increment("documents_success_total")
-            logger.info(
-                "Stored document_id=%s source_id=%s result=%s",
-                document_id,
-                file_id,
-                append_result.get("status"),
-            )
-
-        except ExtractionError as exc:
-            metrics.increment("documents_failed_total")
-            dead_letter.write_failure(
-                {
-                    "document_id": str(uuid4()),
-                    "drive_file_id": file_id,
-                    "file_hash": _sha256(local_path) if local_path.exists() else "",
-                    "status": "FAILED",
-                    "error_code": exc.code,
-                    "error_message": str(exc),
-                }
-            )
-            if local_path.exists():
-                claim_store.mark_status(file_id, _sha256(local_path), "FAILED")
-            logger.exception("Extraction failed for source_id=%s", file_id)
-        except Exception as exc:  # noqa: BLE001
-            metrics.increment("documents_failed_total")
-            dead_letter.write_failure(
-                {
-                    "document_id": str(uuid4()),
-                    "drive_file_id": file_id,
-                    "file_hash": _sha256(local_path) if local_path.exists() else "",
-                    "status": "FAILED",
-                    "error_code": "pipeline_error",
-                    "error_message": str(exc),
-                }
-            )
-            if local_path.exists():
-                claim_store.mark_status(file_id, _sha256(local_path), "FAILED")
-            logger.exception("Pipeline failed for source_id=%s", file_id)
-        finally:
-            if local_path.exists():
-                local_path.unlink(missing_ok=True)
+        _process_candidate(
+            candidate=candidate,
+            settings=settings,
+            backend=backend,
+            claim_store=claim_store,
+            dead_letter=dead_letter,
+            metrics=metrics,
+            normalization_engine=normalization_engine,
+            extraction_provider=extraction_provider,
+            extraction_model=extraction_model,
+            worker_id=worker_id,
+            review_threshold=review_threshold,
+            store_review_score_threshold=store_review_score_threshold,
+            archive_on_success=True,
+        )
 
     snapshot = metrics.snapshot()
     for key, value in snapshot.items():
@@ -411,6 +282,238 @@ def run_poll_once() -> int:
             metrics_sink.emit({"metric": key, "value": value, "stage": "poll_once"})
     logger.info("Poll summary: %s", snapshot)
     return 0
+
+
+def _process_candidate(
+    *,
+    candidate: dict[str, str],
+    settings: Settings,
+    backend: object,
+    claim_store: DocumentClaimStore,
+    dead_letter: DeadLetterStore,
+    metrics: MetricsCollector,
+    normalization_engine: NormalizationRuleEngine,
+    extraction_provider: str,
+    extraction_model: str,
+    worker_id: str,
+    review_threshold: float,
+    store_review_score_threshold: float,
+    archive_on_success: bool,
+) -> dict[str, Any]:
+    logger = logging.getLogger(__name__)
+    metrics.increment("documents_processed_total")
+    file_id = candidate["id"]
+    file_name = candidate.get("name", "document")
+    local_path = _TMP_DIR / f"{uuid4().hex}_{file_name}"
+    result: dict[str, Any] = {"source_id": file_id, "status": "UNKNOWN"}
+
+    try:
+        _download_candidate(settings, backend, candidate, local_path)
+        file_hash = _sha256(local_path)
+        claim = claim_store.claim_document(file_id, file_hash, owner_id=worker_id)
+        if claim.status != "claimed":
+            metrics.increment("documents_duplicate_skipped_total")
+            return {"source_id": file_id, "status": "SKIPPED_DUPLICATE", "file_hash": file_hash}
+
+        document_id = str(uuid4())
+        result["document_id"] = document_id
+        extracted = extract_document(
+            file_path=local_path,
+            provider=extraction_provider,
+            model_name=extraction_model,
+        )
+        used_provider = str(extracted.get("_provider", "unknown"))
+        logger.info("Extraction provider=%s source_id=%s", used_provider, file_id)
+        normalized_payload = normalization_engine.coerce_payload(extracted)
+        try:
+            validation = validate_and_score(normalized_payload)
+        except ValidationError as exc:
+            route_to_review_queue(
+                document_id=document_id,
+                reason_codes=["schema_validation_failed"],
+                metadata={
+                    "source_file_id": file_id,
+                    "file_hash": file_hash,
+                    "error": str(exc),
+                    "raw_extracted": extracted,
+                    "normalized_record": normalized_payload,
+                    "used_provider": used_provider,
+                },
+            )
+            dead_letter.write_failure(
+                {
+                    "document_id": document_id,
+                    "drive_file_id": file_id,
+                    "file_hash": file_hash,
+                    "status": "REVIEW_REQUIRED",
+                    "error_code": "schema_validation_failed",
+                    "error_message": str(exc),
+                    "used_provider": used_provider,
+                }
+            )
+            claim_store.mark_status(file_id, file_hash, "REVIEW_REQUIRED")
+            metrics.increment("documents_review_total")
+            logger.info("Document %s sent to review due to schema mismatch", document_id)
+            return {
+                "source_id": file_id,
+                "document_id": document_id,
+                "status": "REVIEW_REQUIRED",
+                "reason_codes": ["schema_validation_failed"],
+                "file_hash": file_hash,
+            }
+        decision = decide_review_status(
+            is_valid=validation["is_valid"],
+            model_confidence=float(validation["record"].model_confidence),
+            confidence_threshold=review_threshold,
+        )
+
+        if decision.status == "REVIEW_REQUIRED":
+            route_to_review_queue(
+                document_id=document_id,
+                reason_codes=list(decision.reason_codes),
+                metadata={
+                    "source_file_id": file_id,
+                    "file_hash": file_hash,
+                    "normalized_record": normalized_payload,
+                    "violations": validation["violations"],
+                    "used_provider": used_provider,
+                },
+            )
+            dead_letter.write_failure(
+                {
+                    "document_id": document_id,
+                    "drive_file_id": file_id,
+                    "file_hash": file_hash,
+                    "status": "REVIEW_REQUIRED",
+                    "error_code": ",".join(decision.reason_codes),
+                    "error_message": "Routed to review queue",
+                    "used_provider": used_provider,
+                }
+            )
+            claim_store.mark_status(file_id, file_hash, "REVIEW_REQUIRED")
+            metrics.increment("documents_review_total")
+            logger.info("Document %s routed to review", document_id)
+            return {
+                "source_id": file_id,
+                "document_id": document_id,
+                "status": "REVIEW_REQUIRED",
+                "reason_codes": list(decision.reason_codes),
+                "file_hash": file_hash,
+            }
+
+        record = validation["record"].model_dump(mode="json")
+        record["validation_score"] = validation["validation_score"]
+        needs_review = validation["validation_score"] < store_review_score_threshold
+        record["needs_review"] = needs_review
+        metadata = {
+            "document_id": document_id,
+            "drive_file_id": file_id,
+            "file_hash": file_hash,
+            "status": "STORED",
+            "processed_at_utc": datetime.now(timezone.utc).isoformat(),
+            "needs_review": needs_review,
+            "used_provider": used_provider,
+        }
+        append_result = append_record(record=record, metadata=metadata)
+        claim_store.mark_status(file_id, file_hash, "STORED")
+        if archive_on_success:
+            _archive_candidate(settings, backend, candidate)
+            claim_store.mark_status(file_id, file_hash, "ARCHIVED")
+        metrics.increment("documents_success_total")
+        logger.info(
+            "Stored document_id=%s source_id=%s result=%s",
+            document_id,
+            file_id,
+            append_result.get("status"),
+        )
+        return {
+            "source_id": file_id,
+            "document_id": document_id,
+            "status": "STORED",
+            "append_result": append_result,
+            "file_hash": file_hash,
+            "used_provider": used_provider,
+            "needs_review": needs_review,
+        }
+
+    except ExtractionError as exc:
+        metrics.increment("documents_failed_total")
+        dead_letter.write_failure(
+            {
+                "document_id": str(uuid4()),
+                "drive_file_id": file_id,
+                "file_hash": _sha256(local_path) if local_path.exists() else "",
+                "status": "FAILED",
+                "error_code": exc.code,
+                "error_message": str(exc),
+            }
+        )
+        if local_path.exists():
+            claim_store.mark_status(file_id, _sha256(local_path), "FAILED")
+        logger.exception("Extraction failed for source_id=%s", file_id)
+        return {"source_id": file_id, "status": "FAILED", "error_code": exc.code, "error_message": str(exc)}
+    except Exception as exc:  # noqa: BLE001
+        metrics.increment("documents_failed_total")
+        dead_letter.write_failure(
+            {
+                "document_id": str(uuid4()),
+                "drive_file_id": file_id,
+                "file_hash": _sha256(local_path) if local_path.exists() else "",
+                "status": "FAILED",
+                "error_code": "pipeline_error",
+                "error_message": str(exc),
+            }
+        )
+        if local_path.exists():
+            claim_store.mark_status(file_id, _sha256(local_path), "FAILED")
+        logger.exception("Pipeline failed for source_id=%s", file_id)
+        return {"source_id": file_id, "status": "FAILED", "error_code": "pipeline_error", "error_message": str(exc)}
+    finally:
+        if local_path.exists():
+            local_path.unlink(missing_ok=True)
+
+
+def process_r2_object_now(candidate: dict[str, str]) -> dict[str, Any]:
+    load_dotenv()
+    settings = Settings.from_env()
+    configure_logging(settings.log_level)
+    if settings.ingestion_backend != "r2":
+        raise ValueError("Immediate upload processing requires INGESTION_BACKEND=r2")
+
+    r2 = R2Service.from_settings(settings)
+    _TMP_DIR.mkdir(parents=True, exist_ok=True)
+    claim_store = DocumentClaimStore()
+    dead_letter = DeadLetterStore()
+    metrics = MetricsCollector()
+    metrics_sink = JsonlMetricsSink()
+    normalization_engine = NormalizationRuleEngine.from_path(settings.normalization_rules_path)
+    extraction_provider = os.getenv("EXTRACTION_PROVIDER", "auto")
+    extraction_model = os.getenv("EXTRACTION_MODEL", "auto")
+    worker_id = os.getenv("WORKER_ID", "dashboard-upload")
+    review_threshold = float(os.getenv("REVIEW_CONFIDENCE_THRESHOLD", "0.5"))
+    store_review_score_threshold = float(os.getenv("STORE_REVIEW_SCORE_THRESHOLD", "0.6"))
+
+    result = _process_candidate(
+        candidate=candidate,
+        settings=settings,
+        backend=r2,
+        claim_store=claim_store,
+        dead_letter=dead_letter,
+        metrics=metrics,
+        normalization_engine=normalization_engine,
+        extraction_provider=extraction_provider,
+        extraction_model=extraction_model,
+        worker_id=worker_id,
+        review_threshold=review_threshold,
+        store_review_score_threshold=store_review_score_threshold,
+        archive_on_success=True,
+    )
+
+    snapshot = metrics.snapshot()
+    for key, value in snapshot.items():
+        if isinstance(value, int):
+            metrics_sink.emit({"metric": key, "value": value, "stage": "dashboard_upload"})
+    return result
 
 
 def run_review_list(queue_dir: str) -> int:

@@ -5,12 +5,17 @@ import os
 import secrets
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse
-from pydantic import BaseModel
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
+from pydantic import BaseModel
 
+from app.config import Settings, load_dotenv
+from app.drive_service import is_supported_mime_type
+from app.main import process_r2_object_now
+from app.r2_service import R2Service
 from app.review_queue import dismiss_review_item, list_review_items, resolve_review_item
 
 
@@ -156,6 +161,48 @@ def create_monitoring_app(
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except Exception as exc:  # noqa: BLE001
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/upload")
+    async def upload_and_process(
+        file: UploadFile = File(...),
+        _: str = Depends(require_dashboard_auth),
+    ) -> dict[str, Any]:
+        load_dotenv()
+        settings = Settings.from_env()
+        if settings.ingestion_backend != "r2":
+            raise HTTPException(status_code=400, detail="Dashboard upload requires INGESTION_BACKEND=r2")
+
+        content_type = file.content_type or "application/octet-stream"
+        if not is_supported_mime_type(content_type, settings.allowed_mime_types):
+            raise HTTPException(status_code=400, detail=f"Unsupported file type: {content_type}")
+
+        original_name = Path(file.filename or f"upload-{uuid4().hex}.bin").name
+        content = await file.read()
+        if not content:
+            raise HTTPException(status_code=400, detail="Uploaded file is empty")
+
+        inbox_prefix = settings.r2_inbox_prefix.rstrip("/")
+        object_key = f"{inbox_prefix}/{uuid4().hex}_{original_name}"
+
+        try:
+            r2_service = R2Service.from_settings(settings)
+            r2_service.upload_bytes(object_key, content, content_type=content_type)
+            result = process_r2_object_now(
+                {
+                    "id": object_key,
+                    "name": original_name,
+                    "mimeType": content_type,
+                    "size": str(len(content)),
+                }
+            )
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        return {
+            "status": "ok",
+            "uploaded_object_key": object_key,
+            "processing_result": result,
+        }
 
     @app.get("/dashboard", response_class=HTMLResponse)
     def dashboard(_: str = Depends(require_dashboard_auth)) -> str:
@@ -575,9 +622,32 @@ def _dashboard_html() -> str:
       font-size: 0.84rem;
       color: var(--c-ink);
     }
+    .upload-card {
+      display: grid;
+      grid-template-columns: 1.2fr auto;
+      gap: 12px;
+      align-items: end;
+      margin-bottom: 14px;
+    }
+    .upload-controls {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    .upload-controls input[type="file"] {
+      max-width: 100%;
+      font-size: 0.84rem;
+    }
+    .upload-status {
+      min-height: 1.2rem;
+      font-size: 0.84rem;
+      color: rgba(44,66,81,0.82);
+    }
     @media (max-width: 920px) {
       .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .pane-grid { grid-template-columns: 1fr; }
+      .upload-card { grid-template-columns: 1fr; }
     }
     @media (max-width: 540px) {
       .grid { grid-template-columns: 1fr; }
@@ -589,6 +659,19 @@ def _dashboard_html() -> str:
     <div class="head">
       <h1>Invoice Operations Dashboard</h1>
       <div class="muted" id="refreshAt">Loading...</div>
+    </div>
+    <div class="card upload-card">
+      <div>
+        <h3>Upload And Process</h3>
+        <div class="muted">Send a PDF or image directly to the R2 inbox, process it immediately, and refresh the dashboard in place.</div>
+      </div>
+      <div>
+        <div class="upload-controls">
+          <input id="uploadInput" type="file" accept=".pdf,.png,.jpg,.jpeg,application/pdf,image/png,image/jpeg" />
+          <button class="action-btn" type="button" onclick="uploadAndProcess()">Upload Now</button>
+        </div>
+        <div class="upload-status" id="uploadStatus"></div>
+      </div>
     </div>
     <div class="grid">
       <div class="card"><h3>Total Records</h3><div class="value" id="kpiTotal">0</div></div>
@@ -830,6 +913,32 @@ def _dashboard_html() -> str:
       }
       await loadData();
       window.alert(`${action} complete for ${documentId} (${payload.review_status})`);
+    }
+    async function uploadAndProcess() {
+      const input = document.getElementById('uploadInput');
+      const statusEl = document.getElementById('uploadStatus');
+      const file = input?.files?.[0];
+      if (!file) {
+        window.alert('Choose a file first.');
+        return;
+      }
+      const form = new FormData();
+      form.append('file', file);
+      statusEl.textContent = 'Uploading and processing...';
+      const resp = await fetch('/upload', {
+        method: 'POST',
+        body: form
+      });
+      const payload = await resp.json();
+      if (!resp.ok) {
+        statusEl.textContent = '';
+        window.alert(payload.detail || 'Upload failed.');
+        return;
+      }
+      const processing = payload.processing_result || {};
+      statusEl.textContent = `Processed ${file.name}: ${processing.status || 'completed'}`;
+      input.value = '';
+      await loadData();
     }
     async function loadData() {
       const [dashboardResp, reviewResp, historyResp] = await Promise.all([

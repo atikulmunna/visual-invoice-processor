@@ -290,7 +290,7 @@ Useful URLs after deploy:
 - `/`
   Root now redirects to `/dashboard`
 - `/dashboard`
-  Main UI
+  Main UI, including direct R2 upload + immediate processing
 - `/health`
   Health check endpoint
 
@@ -300,6 +300,7 @@ Important notes:
 - GitHub Actions can continue to run the ingestion worker on schedule.
 - Review queue state is now suitable for cloud hosting when `REVIEW_QUEUE_BACKEND=postgres`.
 - `/health` remains open for Render health checks, while the dashboard/API routes can be protected with HTTP Basic auth.
+- Dashboard uploads require `INGESTION_BACKEND=r2` and a valid R2 configuration, because the file is uploaded to the `inbox/` prefix and processed immediately from there.
 
 ## GitHub Actions Automation
 

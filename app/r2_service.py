@@ -70,6 +70,13 @@ class R2Service:
         self._s3.download_file(self._bucket, object_key, str(output_path))
         return output_path
 
+    def upload_bytes(self, object_key: str, content: bytes, *, content_type: str | None = None) -> str:
+        extra_args: dict[str, Any] = {}
+        if content_type:
+            extra_args["ContentType"] = content_type
+        self._s3.put_object(Bucket=self._bucket, Key=object_key, Body=content, **extra_args)
+        return object_key
+
     def move_to_archive(self, object_key: str, archive_prefix: str | None = None) -> str:
         active_archive_prefix = archive_prefix if archive_prefix is not None else self._settings.r2_archive_prefix
         destination_key = f"{active_archive_prefix.rstrip('/')}/{Path(object_key).name}"
@@ -80,4 +87,3 @@ class R2Service:
         )
         self._s3.delete_object(Bucket=self._bucket, Key=object_key)
         return destination_key
-
