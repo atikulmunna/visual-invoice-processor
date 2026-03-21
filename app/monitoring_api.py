@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel
 
 from app.review_queue import dismiss_review_item, list_review_items, resolve_review_item
@@ -31,6 +31,10 @@ def create_monitoring_app(
     @app.get("/health")
     def health() -> dict[str, str]:
         return {"status": "ok"}
+
+    @app.get("/", include_in_schema=False)
+    def root() -> RedirectResponse:
+        return RedirectResponse(url="/dashboard", status_code=307)
 
     @app.get("/stats")
     def stats() -> dict[str, Any]:

@@ -64,6 +64,7 @@ def test_monitoring_endpoints_expose_stats_backlog_and_failures(tmp_path: Path) 
     client = TestClient(app)
 
     health = client.get("/health")
+    root = client.get("/", follow_redirects=False)
     stats = client.get("/stats")
     backlog = client.get("/backlog")
     failures = client.get("/failures")
@@ -74,6 +75,8 @@ def test_monitoring_endpoints_expose_stats_backlog_and_failures(tmp_path: Path) 
 
     assert health.status_code == 200
     assert health.json()["status"] == "ok"
+    assert root.status_code == 307
+    assert root.headers["location"] == "/dashboard"
     assert stats.status_code == 200
     assert stats.json()["documents_processed_total"] == 3
     assert stats.json()["dead_letter_total"] == 2

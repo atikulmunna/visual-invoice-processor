@@ -43,6 +43,8 @@ class Settings:
     ledger_range: str = "Ledger!A:Z"
     postgres_dsn: str | None = None
     postgres_table: str = "ledger_records"
+    review_queue_backend: str = "auto"
+    review_queue_table: str = "review_queue_items"
     normalization_rules_path: str = "config/normalization_rules.json"
 
     @property
@@ -144,6 +146,8 @@ class Settings:
             ledger_range=os.getenv("LEDGER_RANGE", "Ledger!A:Z"),
             postgres_dsn=postgres_dsn,
             postgres_table=os.getenv("POSTGRES_TABLE", "ledger_records"),
+            review_queue_backend=os.getenv("REVIEW_QUEUE_BACKEND", "auto").strip().lower(),
+            review_queue_table=os.getenv("REVIEW_QUEUE_TABLE", "review_queue_items"),
             normalization_rules_path=os.getenv(
                 "NORMALIZATION_RULES_PATH", "config/normalization_rules.json"
             ),

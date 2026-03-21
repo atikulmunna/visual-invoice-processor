@@ -14,6 +14,7 @@ Production-focused AI pipeline for extracting structured data from invoice/recei
 - [Setup](#setup)
 - [Environment Variables](#environment-variables)
 - [Run Locally](#run-locally)
+- [Deploy On Render](#deploy-on-render)
 - [GitHub Actions Automation](#github-actions-automation)
 - [Supabase Analytics Views](#supabase-analytics-views)
 - [Golden Set Evaluation](#golden-set-evaluation)
@@ -217,6 +218,8 @@ Recommended:
 - `NORMALIZATION_RULES_PATH=config/normalization_rules.json`
 - `REVIEW_CONFIDENCE_THRESHOLD=0.5`
 - `STORE_REVIEW_SCORE_THRESHOLD=0.6`
+- `REVIEW_QUEUE_BACKEND=postgres`
+- `REVIEW_QUEUE_TABLE=review_queue_items`
 
 Optional fallbacks:
 
@@ -251,6 +254,49 @@ Run monitoring + dashboard:
 ```powershell
 python -m app.monitoring_main
 ```
+
+## Deploy On Render
+
+This repo now includes [`render.yaml`](render.yaml) for the dashboard/API deployment.
+
+What Render will host:
+
+- FastAPI monitoring API
+- Web dashboard at `/dashboard`
+- Review queue state backed by Postgres instead of local files
+
+Recommended service setup:
+
+1. In Render, choose `New +` -> `Blueprint` or `Web Service`.
+2. Connect the GitHub repo.
+3. If using the blueprint, Render will read [`render.yaml`](render.yaml) automatically.
+4. If creating a Web Service manually, use:
+   - Build Command: `pip install -r requirements.txt`
+   - Start Command: `python -m app.monitoring_main`
+   - Health Check Path: `/health`
+5. Set environment variables:
+   - `POSTGRES_DSN`
+   - `LEDGER_BACKEND=postgres`
+   - `POSTGRES_TABLE=ledger_records`
+   - `REVIEW_QUEUE_BACKEND=postgres`
+   - `REVIEW_QUEUE_TABLE=review_queue_items`
+   - `LOG_LEVEL=INFO`
+6. Deploy the service.
+
+Useful URLs after deploy:
+
+- `/`
+  Root now redirects to `/dashboard`
+- `/dashboard`
+  Main UI
+- `/health`
+  Health check endpoint
+
+Important notes:
+
+- The Render deployment is for the dashboard/API layer.
+- GitHub Actions can continue to run the ingestion worker on schedule.
+- Review queue state is now suitable for cloud hosting when `REVIEW_QUEUE_BACKEND=postgres`.
 
 ## GitHub Actions Automation
 

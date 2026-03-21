@@ -1,0 +1,24 @@
+services:
+  - type: web
+    name: visual-invoice-processor
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m app.monitoring_main
+    autoDeploy: true
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.13.5
+      - key: LOG_LEVEL
+        value: INFO
+      - key: LEDGER_BACKEND
+        value: postgres
+      - key: REVIEW_QUEUE_BACKEND
+        value: postgres
+      - key: REVIEW_QUEUE_TABLE
+        value: review_queue_items
+      - key: POSTGRES_TABLE
+        value: ledger_records
+      - key: POSTGRES_DSN
+        sync: false
