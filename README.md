@@ -281,6 +281,8 @@ Recommended service setup:
    - `REVIEW_QUEUE_BACKEND=postgres`
    - `REVIEW_QUEUE_TABLE=review_queue_items`
    - `LOG_LEVEL=INFO`
+   - `DASHBOARD_BASIC_AUTH_USERNAME=<your_username>`
+   - `DASHBOARD_BASIC_AUTH_PASSWORD=<your_strong_password>`
 6. Deploy the service.
 
 Useful URLs after deploy:
@@ -297,6 +299,7 @@ Important notes:
 - The Render deployment is for the dashboard/API layer.
 - GitHub Actions can continue to run the ingestion worker on schedule.
 - Review queue state is now suitable for cloud hosting when `REVIEW_QUEUE_BACKEND=postgres`.
+- `/health` remains open for Render health checks, while the dashboard/API routes can be protected with HTTP Basic auth.
 
 ## GitHub Actions Automation
 

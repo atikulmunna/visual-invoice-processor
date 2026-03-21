@@ -21,7 +21,9 @@ def _write_jsonl(path: Path, rows: list[dict]) -> None:
             fh.write(json.dumps(row) + "\n")
 
 
-def test_monitoring_endpoints_expose_stats_backlog_and_failures(tmp_path: Path) -> None:
+def test_monitoring_endpoints_expose_stats_backlog_and_failures(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.delenv("DASHBOARD_BASIC_AUTH_USERNAME", raising=False)
+    monkeypatch.delenv("DASHBOARD_BASIC_AUTH_PASSWORD", raising=False)
     metrics = tmp_path / "logs" / "metrics.jsonl"
     dead = tmp_path / "logs" / "dead_letter.jsonl"
     queue = tmp_path / "review_queue"
@@ -99,6 +101,24 @@ def test_monitoring_endpoints_expose_stats_backlog_and_failures(tmp_path: Path) 
     assert "kpis" in dashboard_data.json()
 
 
+def test_dashboard_routes_require_basic_auth_when_configured(tmp_path: Path, monkeypatch) -> None:
+    queue = tmp_path / "review_queue"
+    queue.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("DASHBOARD_BASIC_AUTH_USERNAME", "admin")
+    monkeypatch.setenv("DASHBOARD_BASIC_AUTH_PASSWORD", "secret-pass")
+
+    app = create_monitoring_app(review_queue_dir=queue)
+    client = TestClient(app)
+
+    health = client.get("/health")
+    dashboard_unauth = client.get("/dashboard")
+    dashboard_auth = client.get("/dashboard", auth=("admin", "secret-pass"))
+
+    assert health.status_code == 200
+    assert dashboard_unauth.status_code == 401
+    assert dashboard_auth.status_code == 200
+
+
 def test_active_backlog_filters_resolved_hashes(tmp_path: Path) -> None:
     dead = tmp_path / "logs" / "dead_letter.jsonl"
     review = tmp_path / "review_queue"
@@ -170,6 +190,8 @@ def test_review_history_items_return_resolved_entries(tmp_path: Path) -> None:
 
 
 def test_review_resolve_endpoint_uses_shared_resolution_flow(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.delenv("DASHBOARD_BASIC_AUTH_USERNAME", raising=False)
+    monkeypatch.delenv("DASHBOARD_BASIC_AUTH_PASSWORD", raising=False)
     queue = tmp_path / "review_queue"
     queue.mkdir(parents=True, exist_ok=True)
     (queue / "doc-2.json").write_text(
@@ -225,6 +247,8 @@ def test_review_resolve_endpoint_uses_shared_resolution_flow(tmp_path: Path, mon
 
 
 def test_review_action_endpoint_supports_duplicate_and_reject(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.delenv("DASHBOARD_BASIC_AUTH_USERNAME", raising=False)
+    monkeypatch.delenv("DASHBOARD_BASIC_AUTH_PASSWORD", raising=False)
     queue = tmp_path / "review_queue"
     queue.mkdir(parents=True, exist_ok=True)
     (queue / "doc-3.json").write_text(

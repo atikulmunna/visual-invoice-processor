@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import json
 import os
+import secrets
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
 
 from app.review_queue import dismiss_review_item, list_review_items, resolve_review_item
 
@@ -16,6 +18,35 @@ class ReviewResolveRequest(BaseModel):
     action: str = "approve"
     note: str | None = None
     corrected_record: dict[str, Any] | None = None
+
+
+def _build_auth_dependency():
+    security = HTTPBasic(auto_error=False)
+
+    def _auth(credentials: HTTPBasicCredentials | None = Depends(security)) -> str:
+        username = (os.getenv("DASHBOARD_BASIC_AUTH_USERNAME") or "").strip()
+        password = (os.getenv("DASHBOARD_BASIC_AUTH_PASSWORD") or "").strip()
+        if not username and not password:
+            return "anonymous"
+
+        if credentials is None:
+            raise HTTPException(
+                status_code=401,
+                detail="Unauthorized",
+                headers={"WWW-Authenticate": "Basic"},
+            )
+
+        valid_user = secrets.compare_digest(credentials.username, username)
+        valid_pass = secrets.compare_digest(credentials.password, password)
+        if not (valid_user and valid_pass):
+            raise HTTPException(
+                status_code=401,
+                detail="Unauthorized",
+                headers={"WWW-Authenticate": "Basic"},
+            )
+        return credentials.username
+
+    return _auth
 
 
 def create_monitoring_app(
@@ -27,17 +58,18 @@ def create_monitoring_app(
 ) -> FastAPI:
     app = FastAPI(title="Invoice Processor Monitoring API", version="0.1.0")
     active_postgres_dsn = postgres_dsn or os.getenv("POSTGRES_DSN")
+    require_dashboard_auth = _build_auth_dependency()
 
     @app.get("/health")
     def health() -> dict[str, str]:
         return {"status": "ok"}
 
     @app.get("/", include_in_schema=False)
-    def root() -> RedirectResponse:
+    def root(_: str = Depends(require_dashboard_auth)) -> RedirectResponse:
         return RedirectResponse(url="/dashboard", status_code=307)
 
     @app.get("/stats")
-    def stats() -> dict[str, Any]:
+    def stats(_: str = Depends(require_dashboard_auth)) -> dict[str, Any]:
         metric_events = _read_jsonl(metrics_path)
         resolved_hashes = _resolved_file_hashes(active_postgres_dsn)
         dead_letters = _active_dead_letters(dead_letter_path, resolved_hashes)
@@ -48,12 +80,12 @@ def create_monitoring_app(
         return counters
 
     @app.get("/failures")
-    def failures(limit: int = 50) -> dict[str, Any]:
+    def failures(limit: int = 50, _: str = Depends(require_dashboard_auth)) -> dict[str, Any]:
         items = _read_jsonl(dead_letter_path)
         return {"count": len(items), "items": items[-limit:]}
 
     @app.get("/backlog")
-    def backlog() -> dict[str, Any]:
+    def backlog(_: str = Depends(require_dashboard_auth)) -> dict[str, Any]:
         resolved_hashes = _resolved_file_hashes(active_postgres_dsn)
         queue_size = _active_review_queue_size(review_queue_dir, resolved_hashes)
         dead_letters = len(_active_dead_letters(dead_letter_path, resolved_hashes))
@@ -64,7 +96,7 @@ def create_monitoring_app(
         }
 
     @app.get("/dashboard/data")
-    def dashboard_data(limit: int = 20) -> dict[str, Any]:
+    def dashboard_data(limit: int = 20, _: str = Depends(require_dashboard_auth)) -> dict[str, Any]:
         data = _query_dashboard_data(active_postgres_dsn, limit=limit)
         resolved_hashes = _resolved_file_hashes(active_postgres_dsn)
         data["review_queue_total"] = _active_review_queue_size(review_queue_dir, resolved_hashes)
@@ -72,18 +104,22 @@ def create_monitoring_app(
         return data
 
     @app.get("/review-items")
-    def review_items() -> dict[str, Any]:
+    def review_items(_: str = Depends(require_dashboard_auth)) -> dict[str, Any]:
         resolved_hashes = _resolved_file_hashes(active_postgres_dsn)
         items = _active_review_items(review_queue_dir, resolved_hashes)
         return {"count": len(items), "items": items}
 
     @app.get("/review-history")
-    def review_history(limit: int = 20) -> dict[str, Any]:
+    def review_history(limit: int = 20, _: str = Depends(require_dashboard_auth)) -> dict[str, Any]:
         items = _review_history_items(review_queue_dir, limit=limit)
         return {"count": len(items), "items": items}
 
     @app.post("/review-items/{document_id}/resolve")
-    def review_resolve(document_id: str, payload: ReviewResolveRequest | None = None) -> dict[str, Any]:
+    def review_resolve(
+        document_id: str,
+        payload: ReviewResolveRequest | None = None,
+        _: str = Depends(require_dashboard_auth),
+    ) -> dict[str, Any]:
         try:
             action = (payload.action if payload else "approve").strip().lower()
             if action == "approve":
@@ -122,7 +158,7 @@ def create_monitoring_app(
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.get("/dashboard", response_class=HTMLResponse)
-    def dashboard() -> str:
+    def dashboard(_: str = Depends(require_dashboard_auth)) -> str:
         return _dashboard_html()
 
     return app
