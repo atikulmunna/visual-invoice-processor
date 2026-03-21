@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import uvicorn
 
+from app.config import load_dotenv
 from app.monitoring_api import create_monitoring_app
 
+load_dotenv()
 app = create_monitoring_app()
 
 
@@ -13,4 +15,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
