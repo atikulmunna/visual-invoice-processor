@@ -73,6 +73,11 @@ def create_monitoring_app(
         items = _active_review_items(review_queue_dir, resolved_hashes)
         return {"count": len(items), "items": items}
 
+    @app.get("/review-history")
+    def review_history(limit: int = 20) -> dict[str, Any]:
+        items = _review_history_items(review_queue_dir, limit=limit)
+        return {"count": len(items), "items": items}
+
     @app.post("/review-items/{document_id}/resolve")
     def review_resolve(document_id: str, payload: ReviewResolveRequest | None = None) -> dict[str, Any]:
         try:
@@ -188,6 +193,33 @@ def _active_review_items(path: str | Path, resolved_hashes: set[str]) -> list[di
             }
         )
     return items
+
+
+def _review_history_items(path: str | Path, *, limit: int = 20) -> list[dict[str, Any]]:
+    history: list[dict[str, Any]] = []
+    for payload in list_review_items(queue_dir=path):
+        status = str(payload.get("status", "") or "")
+        if status == "REVIEW_REQUIRED":
+            continue
+        metadata = payload.get("metadata", {}) if isinstance(payload.get("metadata"), dict) else {}
+        resolved_record = payload.get("resolved_record") if isinstance(payload.get("resolved_record"), dict) else {}
+        history.append(
+            {
+                "document_id": payload.get("document_id"),
+                "status": status,
+                "created_at_utc": payload.get("created_at_utc"),
+                "resolved_at_utc": payload.get("resolved_at_utc"),
+                "source_file_id": metadata.get("source_file_id") or metadata.get("drive_file_id"),
+                "used_provider": metadata.get("used_provider", "unknown"),
+                "vendor_name": resolved_record.get("vendor_name") or metadata.get("vendor_name") or "Unknown",
+                "invoice_number": resolved_record.get("invoice_number") or "-",
+                "total_amount": resolved_record.get("total_amount"),
+                "currency": resolved_record.get("currency") or "NA",
+                "resolution_note": payload.get("resolution_note"),
+            }
+        )
+    history.sort(key=lambda item: str(item.get("resolved_at_utc") or item.get("created_at_utc") or ""), reverse=True)
+    return history[:limit]
 
 
 def _aggregate_metrics(events: list[dict[str, Any]]) -> dict[str, Any]:
@@ -483,6 +515,12 @@ def _dashboard_html() -> str:
       color: var(--c-ink);
     }
     .editor-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+    .history-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 12px;
+      margin-top: 12px;
+    }
     @media (max-width: 920px) {
       .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .pane-grid { grid-template-columns: 1fr; }
@@ -564,6 +602,20 @@ def _dashboard_html() -> str:
         </table>
       </div>
     </div>
+
+    <div class="history-grid">
+      <div class="card">
+        <h3>Review History</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>Resolved</th><th>Status</th><th>Document</th><th>Vendor</th><th>Amount</th><th>Note</th></tr>
+            </thead>
+            <tbody id="reviewHistoryBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
     <div class="warn-box" id="errorBox" style="display:none;"></div>
   </div>
   <script>
@@ -600,12 +652,14 @@ def _dashboard_html() -> str:
       window.alert(`${action} complete for ${documentId} (${payload.review_status})`);
     }
     async function loadData() {
-      const [dashboardResp, reviewResp] = await Promise.all([
+      const [dashboardResp, reviewResp, historyResp] = await Promise.all([
         fetch('/dashboard/data?limit=25'),
-        fetch('/review-items')
+        fetch('/review-items'),
+        fetch('/review-history?limit=20')
       ]);
       const data = await dashboardResp.json();
       const reviewData = await reviewResp.json();
+      const historyData = await historyResp.json();
       document.getElementById('refreshAt').textContent = 'Updated: ' + new Date().toLocaleString();
       document.getElementById('kpiTotal').textContent = data.kpis.records_total ?? 0;
       document.getElementById('kpiStored').textContent = data.kpis.stored_total ?? 0;
@@ -694,6 +748,22 @@ def _dashboard_html() -> str:
       }
       if ((reviewData.items || []).length === 0) {
         reviewBody.innerHTML = '<tr><td colspan="6" class="muted">No active review items.</td></tr>';
+      }
+
+      const reviewHistoryBody = document.getElementById('reviewHistoryBody');
+      reviewHistoryBody.innerHTML = '';
+      for (const item of historyData?.items || []) {
+        reviewHistoryBody.innerHTML += `<tr>
+          <td>${esc(item.resolved_at_utc || item.created_at_utc || '-')}</td>
+          <td>${esc(item.status)}</td>
+          <td>${esc(item.document_id)}</td>
+          <td>${esc(item.vendor_name || 'Unknown')}</td>
+          <td>${esc(item.currency || 'NA')} ${fmtMoney(item.total_amount)}</td>
+          <td>${esc(item.resolution_note || '-')}</td>
+        </tr>`;
+      }
+      if ((historyData?.items || []).length === 0) {
+        reviewHistoryBody.innerHTML = '<tr><td colspan="6" class="muted">No resolved review items yet.</td></tr>';
       }
 
       const errorBox = document.getElementById('errorBox');
