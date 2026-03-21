@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 
@@ -94,6 +95,7 @@ def test_monitoring_endpoints_expose_stats_backlog_and_failures(tmp_path: Path, 
     assert review_history.json()["count"] == 0
     assert dashboard.status_code == 200
     assert "Invoice Operations Dashboard" in dashboard.text
+    assert 'id="uploadInput"' in dashboard.text
     assert 'id="recentSearch"' in dashboard.text
     assert 'id="reviewSearch"' in dashboard.text
     assert 'id="historySearch"' in dashboard.text
@@ -298,3 +300,84 @@ def test_review_action_endpoint_supports_duplicate_and_reject(tmp_path: Path, mo
         ("doc-3", "RESOLVED_DUPLICATE_MANUAL", "already stored"),
         ("doc-3", "REJECTED", "invalid document"),
     ]
+
+
+def test_dashboard_upload_endpoint_puts_file_in_r2_and_processes_it(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.delenv("DASHBOARD_BASIC_AUTH_USERNAME", raising=False)
+    monkeypatch.delenv("DASHBOARD_BASIC_AUTH_PASSWORD", raising=False)
+    queue = tmp_path / "review_queue"
+    queue.mkdir(parents=True, exist_ok=True)
+
+    upload_calls: list[tuple[str, bytes, str | None]] = []
+    process_calls: list[dict[str, str]] = []
+
+    class _FakeR2Service:
+        def upload_bytes(self, object_key: str, content: bytes, *, content_type: str | None = None) -> str:
+            upload_calls.append((object_key, content, content_type))
+            return object_key
+
+    monkeypatch.setattr("app.monitoring_api.load_dotenv", lambda: None)
+    monkeypatch.setattr(
+        "app.monitoring_api.Settings.from_env",
+        lambda: SimpleNamespace(
+            ingestion_backend="r2",
+            allowed_mime_types=("image/jpeg", "image/png", "application/pdf"),
+            r2_inbox_prefix="inbox/",
+        ),
+    )
+    monkeypatch.setattr("app.monitoring_api.R2Service.from_settings", lambda settings: _FakeR2Service())
+
+    def _fake_process_r2_object_now(candidate: dict[str, str]) -> dict[str, str]:
+        process_calls.append(candidate)
+        return {"status": "STORED", "document_id": "doc-upload"}
+
+    monkeypatch.setattr("app.monitoring_api.process_r2_object_now", _fake_process_r2_object_now)
+
+    app = create_monitoring_app(review_queue_dir=queue)
+    client = TestClient(app)
+
+    response = client.post(
+        "/upload",
+        files={"file": ("receipt.pdf", b"pdf-bytes", "application/pdf")},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "ok"
+    assert payload["processing_result"]["status"] == "STORED"
+    assert len(upload_calls) == 1
+    assert upload_calls[0][0].startswith("inbox/")
+    assert upload_calls[0][0].endswith("_receipt.pdf")
+    assert upload_calls[0][1] == b"pdf-bytes"
+    assert upload_calls[0][2] == "application/pdf"
+    assert len(process_calls) == 1
+    assert process_calls[0]["id"] == payload["uploaded_object_key"]
+    assert process_calls[0]["name"] == "receipt.pdf"
+
+
+def test_dashboard_upload_endpoint_rejects_unsupported_mime_type(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.delenv("DASHBOARD_BASIC_AUTH_USERNAME", raising=False)
+    monkeypatch.delenv("DASHBOARD_BASIC_AUTH_PASSWORD", raising=False)
+    queue = tmp_path / "review_queue"
+    queue.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setattr("app.monitoring_api.load_dotenv", lambda: None)
+    monkeypatch.setattr(
+        "app.monitoring_api.Settings.from_env",
+        lambda: SimpleNamespace(
+            ingestion_backend="r2",
+            allowed_mime_types=("image/jpeg", "image/png", "application/pdf"),
+            r2_inbox_prefix="inbox/",
+        ),
+    )
+
+    app = create_monitoring_app(review_queue_dir=queue)
+    client = TestClient(app)
+
+    response = client.post(
+        "/upload",
+        files={"file": ("notes.txt", b"text", "text/plain")},
+    )
+
+    assert response.status_code == 400
+    assert "Unsupported file type" in response.json()["detail"]

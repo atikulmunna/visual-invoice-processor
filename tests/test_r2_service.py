@@ -12,6 +12,7 @@ class _FakeR2Client:
         self._pages = list_pages
         self._list_calls = 0
         self.download_calls: list[tuple[str, str, str]] = []
+        self.put_calls: list[dict[str, Any]] = []
         self.copy_calls: list[dict[str, Any]] = []
         self.delete_calls: list[dict[str, Any]] = []
 
@@ -25,6 +26,9 @@ class _FakeR2Client:
     def download_file(self, bucket: str, key: str, output_path: str) -> None:
         self.download_calls.append((bucket, key, output_path))
         Path(output_path).write_bytes(b"data")
+
+    def put_object(self, **kwargs: Any) -> None:
+        self.put_calls.append(kwargs)
 
     def copy_object(self, **kwargs: Any) -> None:
         self.copy_calls.append(kwargs)
@@ -86,3 +90,19 @@ def test_download_and_archive_move() -> None:
     assert len(fake.copy_calls) == 1
     assert len(fake.delete_calls) == 1
 
+
+def test_upload_bytes_puts_object_with_content_type() -> None:
+    fake = _FakeR2Client([{"IsTruncated": False, "Contents": []}])
+    service = R2Service(fake, _settings())
+
+    object_key = service.upload_bytes("inbox/new.pdf", b"pdf-data", content_type="application/pdf")
+
+    assert object_key == "inbox/new.pdf"
+    assert fake.put_calls == [
+        {
+            "Bucket": "invoices",
+            "Key": "inbox/new.pdf",
+            "Body": b"pdf-data",
+            "ContentType": "application/pdf",
+        }
+    ]
