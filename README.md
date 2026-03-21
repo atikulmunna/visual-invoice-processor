@@ -85,7 +85,7 @@ It shows:
 - Daily summary
 - Top vendor spend
 - Active backlog counters
-- Review queue inspection, inline JSON edits, approve/reject/duplicate actions, and resolved review history for queued items with a stored `normalized_record`
+- Review queue inspection, inline JSON edits, approve/reject/duplicate actions, resolved review history, and table search/filtering for queued items with a stored `normalized_record`
 
 Dashboard preview:
 

@@ -521,6 +521,20 @@ def _dashboard_html() -> str:
       gap: 12px;
       margin-top: 12px;
     }
+    .toolbar {
+      display: flex;
+      justify-content: flex-end;
+      margin: 8px 0 10px;
+    }
+    .toolbar input {
+      width: min(320px, 100%);
+      border-radius: 999px;
+      border: 1px solid rgba(44,66,81,0.18);
+      background: rgba(44,66,81,0.03);
+      padding: 8px 12px;
+      font-size: 0.84rem;
+      color: var(--c-ink);
+    }
     @media (max-width: 920px) {
       .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .pane-grid { grid-template-columns: 1fr; }
@@ -546,6 +560,9 @@ def _dashboard_html() -> str:
     <div class="pane-grid">
       <div class="card">
         <h3>Recent Records</h3>
+        <div class="toolbar">
+          <input id="recentSearch" type="search" placeholder="Search vendor, invoice, provider..." />
+        </div>
         <div class="table-wrap">
           <table>
             <thead>
@@ -593,6 +610,9 @@ def _dashboard_html() -> str:
 
     <div class="card">
       <h3>Review Queue</h3>
+      <div class="toolbar">
+        <input id="reviewSearch" type="search" placeholder="Search document, vendor, source..." />
+      </div>
       <div class="table-wrap">
         <table>
           <thead>
@@ -606,6 +626,9 @@ def _dashboard_html() -> str:
     <div class="history-grid">
       <div class="card">
         <h3>Review History</h3>
+        <div class="toolbar">
+          <input id="historySearch" type="search" placeholder="Search status, note, document..." />
+        </div>
         <div class="table-wrap">
           <table>
             <thead>
@@ -619,12 +642,129 @@ def _dashboard_html() -> str:
     <div class="warn-box" id="errorBox" style="display:none;"></div>
   </div>
   <script>
+    let dashboardCache = {
+      recent_records: [],
+      review_items: [],
+      review_history: [],
+    };
     function fmtMoney(v) {
       const n = Number(v || 0);
       return n.toLocaleString(undefined, { maximumFractionDigits: 2 });
     }
     function esc(s) {
       return String(s ?? "").replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',\"'\":'&#39;'}[c]));
+    }
+    function matchesSearch(value, search) {
+      if (!search) return true;
+      return String(value ?? '').toLowerCase().includes(search);
+    }
+    function renderRecentRecords(items, search = '') {
+      const recentBody = document.getElementById('recentBody');
+      recentBody.innerHTML = '';
+      const filtered = (items || []).filter(r =>
+        matchesSearch(r.processed_at_utc, search) ||
+        matchesSearch(r.vendor_name, search) ||
+        matchesSearch(r.invoice_number, search) ||
+        matchesSearch(r.used_provider, search) ||
+        matchesSearch(r.currency, search)
+      );
+      for (const r of filtered) {
+        const statusTag = r.needs_review ? '<span class="tag warn">review</span>' : '<span class="tag good">ok</span>';
+        recentBody.innerHTML += `<tr>
+          <td>${esc(r.processed_at_utc)}</td>
+          <td>${esc(r.vendor_name)}</td>
+          <td>${esc(r.invoice_number)}</td>
+          <td>${esc(r.currency)} ${fmtMoney(r.total_amount)}</td>
+          <td>${esc(r.used_provider)}</td>
+          <td>${statusTag}</td>
+        </tr>`;
+      }
+      if (filtered.length === 0) {
+        recentBody.innerHTML = '<tr><td colspan="6" class="muted">No recent records match this search.</td></tr>';
+      }
+    }
+    function renderReviewItems(items, search = '') {
+      const reviewBody = document.getElementById('reviewBody');
+      reviewBody.innerHTML = '';
+      const filtered = (items || []).filter(item =>
+        matchesSearch(item.document_id, search) ||
+        matchesSearch(item.source_file_id, search) ||
+        matchesSearch(item.vendor_name, search) ||
+        matchesSearch(item.invoice_number, search) ||
+        matchesSearch((item.reason_codes || []).join(', '), search)
+      );
+      for (const item of filtered) {
+        const preview = esc(JSON.stringify(item.normalized_record || {}, null, 2));
+        const reasons = esc((item.reason_codes || []).join(', '));
+        const rawJson = esc(JSON.stringify(item.normalized_record || {}, null, 2));
+        reviewBody.innerHTML += `<tr>
+          <td>${esc(item.document_id)}</td>
+          <td>${esc(item.source_file_id || '-')}</td>
+          <td>${esc(item.vendor_name || 'Unknown')}</td>
+          <td>${esc(item.currency || 'NA')} ${fmtMoney(item.total_amount)}</td>
+          <td>${reasons}</td>
+          <td>
+            <button class="action-btn" onclick="submitReviewAction('${esc(item.document_id)}', 'approve')">Approve</button>
+            <button class="action-btn warn" onclick="submitReviewAction('${esc(item.document_id)}', 'duplicate')">Duplicate</button>
+            <button class="action-btn warn" onclick="submitReviewAction('${esc(item.document_id)}', 'reject')">Reject</button>
+          </td>
+        </tr>
+        <tr>
+          <td colspan="6">
+            <div class="json-preview">${preview}</div>
+            <div class="editor-wrap">
+              <textarea id="editor-${esc(item.document_id)}">${rawJson}</textarea>
+              <div class="editor-actions">
+                <button class="action-btn" onclick="submitReviewAction('${esc(item.document_id)}', 'approve')">Approve Edited Record</button>
+              </div>
+            </div>
+          </td>
+        </tr>`;
+      }
+      if (filtered.length === 0) {
+        reviewBody.innerHTML = '<tr><td colspan="6" class="muted">No active review items match this search.</td></tr>';
+      }
+    }
+    function renderReviewHistory(items, search = '') {
+      const reviewHistoryBody = document.getElementById('reviewHistoryBody');
+      reviewHistoryBody.innerHTML = '';
+      const filtered = (items || []).filter(item =>
+        matchesSearch(item.document_id, search) ||
+        matchesSearch(item.status, search) ||
+        matchesSearch(item.vendor_name, search) ||
+        matchesSearch(item.resolution_note, search) ||
+        matchesSearch(item.invoice_number, search)
+      );
+      for (const item of filtered) {
+        reviewHistoryBody.innerHTML += `<tr>
+          <td>${esc(item.resolved_at_utc || item.created_at_utc || '-')}</td>
+          <td>${esc(item.status)}</td>
+          <td>${esc(item.document_id)}</td>
+          <td>${esc(item.vendor_name || 'Unknown')}</td>
+          <td>${esc(item.currency || 'NA')} ${fmtMoney(item.total_amount)}</td>
+          <td>${esc(item.resolution_note || '-')}</td>
+        </tr>`;
+      }
+      if (filtered.length === 0) {
+        reviewHistoryBody.innerHTML = '<tr><td colspan="6" class="muted">No review history items match this search.</td></tr>';
+      }
+    }
+    function bindSearchInputs() {
+      const recentSearch = document.getElementById('recentSearch');
+      const reviewSearch = document.getElementById('reviewSearch');
+      const historySearch = document.getElementById('historySearch');
+      if (recentSearch && !recentSearch.dataset.bound) {
+        recentSearch.addEventListener('input', (e) => renderRecentRecords(dashboardCache.recent_records, e.target.value.trim().toLowerCase()));
+        recentSearch.dataset.bound = '1';
+      }
+      if (reviewSearch && !reviewSearch.dataset.bound) {
+        reviewSearch.addEventListener('input', (e) => renderReviewItems(dashboardCache.review_items, e.target.value.trim().toLowerCase()));
+        reviewSearch.dataset.bound = '1';
+      }
+      if (historySearch && !historySearch.dataset.bound) {
+        historySearch.addEventListener('input', (e) => renderReviewHistory(dashboardCache.review_history, e.target.value.trim().toLowerCase()));
+        historySearch.dataset.bound = '1';
+      }
     }
     async function submitReviewAction(documentId, action) {
       const note = window.prompt(`Optional note for ${action}:`, '') ?? '';
@@ -660,6 +800,9 @@ def _dashboard_html() -> str:
       const data = await dashboardResp.json();
       const reviewData = await reviewResp.json();
       const historyData = await historyResp.json();
+      dashboardCache.recent_records = data.recent_records || [];
+      dashboardCache.review_items = reviewData.items || [];
+      dashboardCache.review_history = historyData.items || [];
       document.getElementById('refreshAt').textContent = 'Updated: ' + new Date().toLocaleString();
       document.getElementById('kpiTotal').textContent = data.kpis.records_total ?? 0;
       document.getElementById('kpiStored').textContent = data.kpis.stored_total ?? 0;
@@ -667,20 +810,11 @@ def _dashboard_html() -> str:
       document.getElementById('kpiAmount').textContent = fmtMoney(data.kpis.total_amount_sum ?? 0);
       document.getElementById('reviewQueue').textContent = data.review_queue_total ?? 0;
       document.getElementById('deadLetter').textContent = data.dead_letter_total ?? 0;
-
-      const recentBody = document.getElementById('recentBody');
-      recentBody.innerHTML = '';
-      for (const r of data.recent_records || []) {
-        const statusTag = r.needs_review ? '<span class="tag warn">review</span>' : '<span class="tag good">ok</span>';
-        recentBody.innerHTML += `<tr>
-          <td>${esc(r.processed_at_utc)}</td>
-          <td>${esc(r.vendor_name)}</td>
-          <td>${esc(r.invoice_number)}</td>
-          <td>${esc(r.currency)} ${fmtMoney(r.total_amount)}</td>
-          <td>${esc(r.used_provider)}</td>
-          <td>${statusTag}</td>
-        </tr>`;
-      }
+      bindSearchInputs();
+      renderRecentRecords(
+        dashboardCache.recent_records,
+        document.getElementById('recentSearch')?.value.trim().toLowerCase() || ''
+      );
 
       const dailyBody = document.getElementById('dailyBody');
       dailyBody.innerHTML = '';
@@ -716,55 +850,14 @@ def _dashboard_html() -> str:
         </div>`;
       }
 
-      const reviewBody = document.getElementById('reviewBody');
-      reviewBody.innerHTML = '';
-      for (const item of reviewData.items || []) {
-        const preview = esc(JSON.stringify(item.normalized_record || {}, null, 2));
-        const reasons = esc((item.reason_codes || []).join(', '));
-        const rawJson = esc(JSON.stringify(item.normalized_record || {}, null, 2));
-        reviewBody.innerHTML += `<tr>
-          <td>${esc(item.document_id)}</td>
-          <td>${esc(item.source_file_id || '-')}</td>
-          <td>${esc(item.vendor_name || 'Unknown')}</td>
-          <td>${esc(item.currency || 'NA')} ${fmtMoney(item.total_amount)}</td>
-          <td>${reasons}</td>
-          <td>
-            <button class="action-btn" onclick="submitReviewAction('${esc(item.document_id)}', 'approve')">Approve</button>
-            <button class="action-btn warn" onclick="submitReviewAction('${esc(item.document_id)}', 'duplicate')">Duplicate</button>
-            <button class="action-btn warn" onclick="submitReviewAction('${esc(item.document_id)}', 'reject')">Reject</button>
-          </td>
-        </tr>
-        <tr>
-          <td colspan="6">
-            <div class="json-preview">${preview}</div>
-            <div class="editor-wrap">
-              <textarea id="editor-${esc(item.document_id)}">${rawJson}</textarea>
-              <div class="editor-actions">
-                <button class="action-btn" onclick="submitReviewAction('${esc(item.document_id)}', 'approve')">Approve Edited Record</button>
-              </div>
-            </div>
-          </td>
-        </tr>`;
-      }
-      if ((reviewData.items || []).length === 0) {
-        reviewBody.innerHTML = '<tr><td colspan="6" class="muted">No active review items.</td></tr>';
-      }
-
-      const reviewHistoryBody = document.getElementById('reviewHistoryBody');
-      reviewHistoryBody.innerHTML = '';
-      for (const item of historyData?.items || []) {
-        reviewHistoryBody.innerHTML += `<tr>
-          <td>${esc(item.resolved_at_utc || item.created_at_utc || '-')}</td>
-          <td>${esc(item.status)}</td>
-          <td>${esc(item.document_id)}</td>
-          <td>${esc(item.vendor_name || 'Unknown')}</td>
-          <td>${esc(item.currency || 'NA')} ${fmtMoney(item.total_amount)}</td>
-          <td>${esc(item.resolution_note || '-')}</td>
-        </tr>`;
-      }
-      if ((historyData?.items || []).length === 0) {
-        reviewHistoryBody.innerHTML = '<tr><td colspan="6" class="muted">No resolved review items yet.</td></tr>';
-      }
+      renderReviewItems(
+        dashboardCache.review_items,
+        document.getElementById('reviewSearch')?.value.trim().toLowerCase() || ''
+      );
+      renderReviewHistory(
+        dashboardCache.review_history,
+        document.getElementById('historySearch')?.value.trim().toLowerCase() || ''
+      );
 
       const errorBox = document.getElementById('errorBox');
       if (data.error) {
