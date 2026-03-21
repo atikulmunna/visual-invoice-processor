@@ -4,7 +4,11 @@ Production-focused AI pipeline for extracting structured data from invoice/recei
 
 Live dashboard:
 
-- `https://visual-invoice-processor.onrender.com/`
+<p>
+  <a href="https://visual-invoice-processor.onrender.com/">
+    <img src="https://img.shields.io/badge/Open-Live%20Dashboard-2c4251?style=for-the-badge&logo=render&logoColor=white" alt="Open Live Dashboard" />
+  </a>
+</p>
 
 ## Table of Contents
 
