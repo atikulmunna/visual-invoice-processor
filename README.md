@@ -93,6 +93,7 @@ The project includes a professional dashboard at:
 It shows:
 
 - KPI cards (total, stored, needs review, amount)
+- Amount KPI is currency-aware and shows a per-currency breakdown instead of summing mixed currencies into one raw total
 - Recent records
 - Provider mix
 - Daily summary
@@ -440,6 +441,9 @@ pytest -q -m integration
 - `Found 0 candidate files in r2 inbox`
   - No supported files currently under `inbox/`
   - Or files were already processed/archived by a recent scheduled run
+
+- Dashboard `Total Amount` looks different after mixed-currency uploads
+  - This is expected: the dashboard now shows per-currency totals instead of summing unlike currencies together
 
 - Dashboard shows `POSTGRES_DSN not configured`
   - Ensure `.env` has `POSTGRES_DSN`
