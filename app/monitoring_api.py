@@ -104,8 +104,18 @@ def create_monitoring_app(
     def dashboard_data(limit: int = 20, _: str = Depends(require_dashboard_auth)) -> dict[str, Any]:
         data = _query_dashboard_data(active_postgres_dsn, limit=limit)
         resolved_hashes = _resolved_file_hashes(active_postgres_dsn)
+        review_items = _active_review_items(review_queue_dir, resolved_hashes)
+        review_history = _review_history_items(review_queue_dir, limit=limit)
+        dead_letters = _active_dead_letters(dead_letter_path, resolved_hashes)
         data["review_queue_total"] = _active_review_queue_size(review_queue_dir, resolved_hashes)
-        data["dead_letter_total"] = len(_active_dead_letters(dead_letter_path, resolved_hashes))
+        data["dead_letter_total"] = len(dead_letters)
+        data["activity_feed"] = _activity_feed_items(
+            recent_records=data.get("recent_records", []),
+            review_items=review_items,
+            review_history=review_history,
+            dead_letters=dead_letters,
+            limit=limit,
+        )
         return data
 
     @app.get("/review-items")
@@ -309,6 +319,88 @@ def _review_history_items(path: str | Path, *, limit: int = 20) -> list[dict[str
     return history[:limit]
 
 
+def _activity_feed_items(
+    *,
+    recent_records: list[dict[str, Any]],
+    review_items: list[dict[str, Any]],
+    review_history: list[dict[str, Any]],
+    dead_letters: list[dict[str, Any]],
+    limit: int = 20,
+) -> list[dict[str, Any]]:
+    events: list[dict[str, Any]] = []
+
+    for record in recent_records:
+        status = "STORED_REVIEW_FLAG" if record.get("needs_review") else "STORED"
+        events.append(
+            {
+                "recorded_at_utc": record.get("processed_at_utc"),
+                "status": status,
+                "document_id": record.get("document_id"),
+                "source_file_id": record.get("drive_file_id"),
+                "vendor_name": record.get("vendor_name"),
+                "invoice_number": record.get("invoice_number"),
+                "currency": record.get("currency"),
+                "total_amount": record.get("total_amount"),
+                "used_provider": record.get("used_provider"),
+                "message": "Stored in ledger" if status == "STORED" else "Stored with needs_review flag",
+            }
+        )
+
+    for item in review_items:
+        reason_text = ", ".join(item.get("reason_codes", [])) or "routed to review"
+        events.append(
+            {
+                "recorded_at_utc": item.get("created_at_utc"),
+                "status": "REVIEW_REQUIRED",
+                "document_id": item.get("document_id"),
+                "source_file_id": item.get("source_file_id"),
+                "vendor_name": item.get("vendor_name"),
+                "invoice_number": item.get("invoice_number"),
+                "currency": item.get("currency"),
+                "total_amount": item.get("total_amount"),
+                "used_provider": item.get("used_provider"),
+                "message": reason_text,
+            }
+        )
+
+    for item in review_history:
+        events.append(
+            {
+                "recorded_at_utc": item.get("resolved_at_utc") or item.get("created_at_utc"),
+                "status": item.get("status"),
+                "document_id": item.get("document_id"),
+                "source_file_id": item.get("source_file_id"),
+                "vendor_name": item.get("vendor_name"),
+                "invoice_number": item.get("invoice_number"),
+                "currency": item.get("currency"),
+                "total_amount": item.get("total_amount"),
+                "used_provider": item.get("used_provider"),
+                "message": item.get("resolution_note") or "Review decision recorded",
+            }
+        )
+
+    for item in dead_letters:
+        if str(item.get("status", "") or "") != "FAILED":
+            continue
+        events.append(
+            {
+                "recorded_at_utc": item.get("recorded_at_utc"),
+                "status": "FAILED",
+                "document_id": item.get("document_id"),
+                "source_file_id": item.get("drive_file_id"),
+                "vendor_name": None,
+                "invoice_number": None,
+                "currency": None,
+                "total_amount": None,
+                "used_provider": item.get("used_provider", "unknown"),
+                "message": item.get("error_message") or item.get("error_code") or "Processing failed",
+            }
+        )
+
+    events.sort(key=lambda item: str(item.get("recorded_at_utc") or ""), reverse=True)
+    return events[:limit]
+
+
 def _aggregate_metrics(events: list[dict[str, Any]]) -> dict[str, Any]:
     counters: dict[str, int] = {}
     for event in events:
@@ -373,6 +465,7 @@ def _query_dashboard_data(postgres_dsn: str | None, *, limit: int) -> dict[str, 
         "vendor_spend": [],
         "provider_mix": [],
         "recent_records": [],
+        "activity_feed": [],
         "error": None,
     }
     if not postgres_dsn:
@@ -456,6 +549,8 @@ def _query_dashboard_data(postgres_dsn: str | None, *, limit: int) -> dict[str, 
                     """
                     select
                       processed_at_utc::text,
+                      coalesce(document_id, '') as document_id,
+                      coalesce(drive_file_id, '') as drive_file_id,
                       coalesce(vendor_name, 'Unknown') as vendor_name,
                       coalesce(currency, 'NA') as currency,
                       coalesce(total_amount, 0)::float as total_amount,
@@ -471,12 +566,14 @@ def _query_dashboard_data(postgres_dsn: str | None, *, limit: int) -> dict[str, 
                 payload["recent_records"] = [
                     {
                         "processed_at_utc": r[0],
-                        "vendor_name": r[1],
-                        "currency": r[2],
-                        "total_amount": r[3],
-                        "invoice_number": r[4],
-                        "used_provider": r[5],
-                        "needs_review": bool(r[6]),
+                        "document_id": r[1],
+                        "drive_file_id": r[2],
+                        "vendor_name": r[3],
+                        "currency": r[4],
+                        "total_amount": r[5],
+                        "invoice_number": r[6],
+                        "used_provider": r[7],
+                        "needs_review": bool(r[8]),
                     }
                     for r in cur.fetchall()
                 ]
@@ -644,6 +741,39 @@ def _dashboard_html() -> str:
       font-size: 0.84rem;
       color: rgba(44,66,81,0.82);
     }
+    .feed-list {
+      display: grid;
+      gap: 10px;
+    }
+    .feed-item {
+      border: 1px solid rgba(44,66,81,0.12);
+      border-radius: 10px;
+      padding: 10px;
+      background: rgba(44,66,81,0.03);
+    }
+    .feed-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      align-items: center;
+      margin-bottom: 6px;
+      flex-wrap: wrap;
+    }
+    .feed-title {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      font-size: 0.86rem;
+      font-weight: 600;
+    }
+    .feed-meta {
+      font-size: 0.8rem;
+      color: rgba(44,66,81,0.78);
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
     @media (max-width: 920px) {
       .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .pane-grid { grid-template-columns: 1fr; }
@@ -732,6 +862,11 @@ def _dashboard_html() -> str:
     </div>
 
     <div class="card">
+      <h3>Processing Activity</h3>
+      <div class="feed-list" id="activityFeed"></div>
+    </div>
+
+    <div class="card">
       <h3>Review Queue</h3>
       <div class="toolbar">
         <input id="reviewSearch" type="search" placeholder="Search document, vendor, source..." />
@@ -767,6 +902,7 @@ def _dashboard_html() -> str:
   <script>
     let dashboardCache = {
       recent_records: [],
+      activity_feed: [],
       review_items: [],
       review_history: [],
     };
@@ -872,6 +1008,40 @@ def _dashboard_html() -> str:
         reviewHistoryBody.innerHTML = '<tr><td colspan="6" class="muted">No review history items match this search.</td></tr>';
       }
     }
+    function renderActivityFeed(items) {
+      const feed = document.getElementById('activityFeed');
+      feed.innerHTML = '';
+      for (const item of items || []) {
+        const status = String(item.status || 'UNKNOWN');
+        const tagClass = status.includes('FAILED') || status.includes('REJECTED')
+          ? 'warn'
+          : status.includes('REVIEW')
+            ? 'warn'
+            : 'good';
+        const meta = [
+          item.vendor_name ? `Vendor: ${esc(item.vendor_name)}` : '',
+          item.invoice_number ? `Invoice: ${esc(item.invoice_number)}` : '',
+          item.currency ? `${esc(item.currency)} ${fmtMoney(item.total_amount)}` : '',
+          item.used_provider ? `Provider: ${esc(item.used_provider)}` : '',
+          item.source_file_id ? `Source: ${esc(item.source_file_id)}` : ''
+        ].filter(Boolean).join(' • ');
+        feed.innerHTML += `<div class="feed-item">
+          <div class="feed-head">
+            <div class="feed-title">
+              <span class="tag ${tagClass}">${esc(status)}</span>
+              <span>${esc(item.message || 'Pipeline event')}</span>
+            </div>
+            <div class="muted">${esc(item.recorded_at_utc || '-')}</div>
+          </div>
+          <div class="feed-meta">
+            ${meta || '<span class="muted">No additional details.</span>'}
+          </div>
+        </div>`;
+      }
+      if ((items || []).length === 0) {
+        feed.innerHTML = '<div class="muted">No recent activity yet.</div>';
+      }
+    }
     function bindSearchInputs() {
       const recentSearch = document.getElementById('recentSearch');
       const reviewSearch = document.getElementById('reviewSearch');
@@ -950,6 +1120,7 @@ def _dashboard_html() -> str:
       const reviewData = await reviewResp.json();
       const historyData = await historyResp.json();
       dashboardCache.recent_records = data.recent_records || [];
+      dashboardCache.activity_feed = data.activity_feed || [];
       dashboardCache.review_items = reviewData.items || [];
       dashboardCache.review_history = historyData.items || [];
       document.getElementById('refreshAt').textContent = 'Updated: ' + new Date().toLocaleString();
@@ -999,6 +1170,7 @@ def _dashboard_html() -> str:
         </div>`;
       }
 
+      renderActivityFeed(dashboardCache.activity_feed);
       renderReviewItems(
         dashboardCache.review_items,
         document.getElementById('reviewSearch')?.value.trim().toLowerCase() || ''

@@ -57,6 +57,7 @@ Implemented and working:
 - Monitoring API + professional web dashboard
 - Render deployment with HTTP Basic auth protection
 - Dashboard-driven R2 upload with immediate processing
+- Processing activity feed for recent pipeline outcomes
 - Supabase analytics views for reporting and dashboards
 
 ## Architecture
@@ -97,6 +98,7 @@ It shows:
 - Daily summary
 - Top vendor spend
 - Active backlog counters
+- Processing activity feed (stored, review-required, resolved, failed)
 - Review queue inspection, inline JSON edits, approve/reject/duplicate actions, resolved review history, and table search/filtering for queued items with a stored `normalized_record`
 - Direct document upload to R2 with immediate processing and automatic dashboard refresh
 
