@@ -105,7 +105,7 @@ It shows:
 
 Dashboard preview:
 
-![Invoice Operations Dashboard](assets/invoice_operations.png)
+![Invoice Operations Dashboard](assets/dashboard.png)
 
 ## Tech Stack
 
