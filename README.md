@@ -171,6 +171,7 @@ tests/
 - Data is coerced through `config/normalization_rules.json`.
 - Handles common alias patterns across invoice formats.
 - Recovers values from OCR text when model output is incomplete.
+- Uses explicit currency markers from model output and OCR text (`USD`, `$`, `EUR`, `€`, `GBP`, `£`, `BDT`, `৳`, `Tk`) before applying local defaults.
 
 ### 5) Validation
 

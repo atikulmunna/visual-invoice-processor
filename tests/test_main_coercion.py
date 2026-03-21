@@ -35,3 +35,44 @@ def test_coerce_recovers_line_items_from_ocr_when_model_items_zero() -> None:
     assert len(payload["line_items"]) >= 2
     assert any(item["line_total"] > 0 for item in payload["line_items"])
 
+
+def test_coerce_infers_usd_from_explicit_ocr_markers() -> None:
+    raw = {
+        "vendor": "Roboflow, Inc",
+        "total": 12,
+        "subtotal": 12,
+        "currency": "",
+        "_ocr_text": "Invoice Total USD 12.00\nAmount Due $12.00",
+    }
+
+    payload = _coerce_extraction_payload(raw)
+
+    assert payload["currency"] == "USD"
+
+
+def test_coerce_infers_bdt_from_local_currency_markers() -> None:
+    raw = {
+        "vendor": "Techland",
+        "total": 68700,
+        "subtotal": 68700,
+        "currency": None,
+        "_ocr_text": "Grand Total ৳ 68,700\nPaid by cash",
+    }
+
+    payload = _coerce_extraction_payload(raw)
+
+    assert payload["currency"] == "BDT"
+
+
+def test_coerce_preserves_explicit_three_letter_currency() -> None:
+    raw = {
+        "vendor": "SaaS Vendor",
+        "total": 29,
+        "subtotal": 29,
+        "currency": "eur",
+        "_ocr_text": "",
+    }
+
+    payload = _coerce_extraction_payload(raw)
+
+    assert payload["currency"] == "EUR"
