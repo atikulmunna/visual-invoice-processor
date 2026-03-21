@@ -180,6 +180,72 @@ def _extract_line_items_from_ocr_text(text: str) -> list[dict[str, Any]]:
     return items
 
 
+def _normalize_currency_code(value: Any) -> str | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    upper = text.upper()
+    aliases = {
+        "USD": "USD",
+        "US$": "USD",
+        "$": "USD",
+        "DOLLAR": "USD",
+        "DOLLARS": "USD",
+        "EUR": "EUR",
+        "EURO": "EUR",
+        "EUROS": "EUR",
+        "€": "EUR",
+        "GBP": "GBP",
+        "POUND": "GBP",
+        "POUNDS": "GBP",
+        "£": "GBP",
+        "BDT": "BDT",
+        "TK": "BDT",
+        "TAKA": "BDT",
+        "৳": "BDT",
+        "INR": "INR",
+        "RS": "INR",
+        "₹": "INR",
+    }
+    if upper in aliases:
+        return aliases[upper]
+    if re.fullmatch(r"[A-Z]{3}", upper):
+        return upper
+    return None
+
+
+def _infer_currency(raw: dict[str, Any], ocr_text: str) -> str:
+    explicit = _pick(raw, "currency", "currency_code", "currency_symbol")
+    normalized = _normalize_currency_code(explicit)
+    if normalized:
+        return normalized
+
+    corpus = " ".join(
+        part
+        for part in [
+            str(explicit or ""),
+            str(_pick(raw, "vendor_name", "vendor", "merchant_name", default="") or ""),
+            str(_pick(raw, "invoice_number", "order_id", "invoice_id", default="") or ""),
+            ocr_text,
+        ]
+        if part
+    )
+    upper = corpus.upper()
+
+    patterns: list[tuple[str, tuple[str, ...]]] = [
+        ("USD", (r"\bUSD\b", r"\bUS\$\b", r"(?<![A-Z])\$(?=\s*\d)", r"\bDOLLARS?\b")),
+        ("EUR", (r"\bEUR\b", r"€", r"\bEUROS?\b")),
+        ("GBP", (r"\bGBP\b", r"£", r"\bPOUNDS?\b")),
+        ("BDT", (r"\bBDT\b", r"৳", r"\bTAKA\b", r"(?<![A-Z])TK(?=\s*[\d.])")),
+        ("INR", (r"\bINR\b", r"₹", r"\bRUPEES?\b")),
+    ]
+    for code, code_patterns in patterns:
+        if any(re.search(pattern, upper) for pattern in code_patterns):
+            return code
+
+    return "BDT"
+
+
 def _coerce_extraction_payload(raw: dict[str, Any]) -> dict[str, Any]:
     ocr_text = str(_pick(raw, "_ocr_text", default="") or "")
     total = _safe_float(_pick(raw, "total_amount", "total", "order_total", "grand_total"), 0.0)
@@ -208,7 +274,7 @@ def _coerce_extraction_payload(raw: dict[str, Any]) -> dict[str, Any]:
             timezone.utc
         ).strftime("%Y-%m-%d"),
         "due_date": _normalize_date(_pick(raw, "due_date")),
-        "currency": str(_pick(raw, "currency", default="BDT")).upper(),
+        "currency": _infer_currency(raw, ocr_text),
         "subtotal": max(subtotal, 0.0),
         "tax_amount": max(tax_amount, 0.0),
         "total_amount": max(total, 0.0),
@@ -219,8 +285,6 @@ def _coerce_extraction_payload(raw: dict[str, Any]) -> dict[str, Any]:
     }
     if payload["document_type"] not in {"invoice", "receipt"}:
         payload["document_type"] = "invoice"
-    if len(payload["currency"]) != 3:
-        payload["currency"] = "BDT"
     return payload
 
 
