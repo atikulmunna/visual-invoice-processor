@@ -89,6 +89,9 @@ def test_monitoring_endpoints_expose_stats_backlog_and_failures(tmp_path: Path) 
     assert review_history.json()["count"] == 0
     assert dashboard.status_code == 200
     assert "Invoice Operations Dashboard" in dashboard.text
+    assert 'id="recentSearch"' in dashboard.text
+    assert 'id="reviewSearch"' in dashboard.text
+    assert 'id="historySearch"' in dashboard.text
     assert dashboard_data.status_code == 200
     assert "kpis" in dashboard_data.json()
 
