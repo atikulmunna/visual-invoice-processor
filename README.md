@@ -2,6 +2,10 @@
 
 Production-focused AI pipeline for extracting structured data from invoice/receipt files uploaded to Cloudflare R2 and storing validated records in Supabase Postgres.
 
+Live dashboard:
+
+- `https://visual-invoice-processor.onrender.com/`
+
 ## Table of Contents
 
 - [Overview](#overview)
@@ -47,6 +51,8 @@ Implemented and working:
 - Dead-letter logging and replay tooling
 - Scheduled GitHub Actions automation
 - Monitoring API + professional web dashboard
+- Render deployment with HTTP Basic auth protection
+- Dashboard-driven R2 upload with immediate processing
 - Supabase analytics views for reporting and dashboards
 
 ## Architecture
@@ -77,6 +83,7 @@ flowchart LR
 The project includes a professional dashboard at:
 
 - `http://127.0.0.1:8000/dashboard`
+- `https://visual-invoice-processor.onrender.com/dashboard`
 
 It shows:
 
@@ -87,6 +94,7 @@ It shows:
 - Top vendor spend
 - Active backlog counters
 - Review queue inspection, inline JSON edits, approve/reject/duplicate actions, resolved review history, and table search/filtering for queued items with a stored `normalized_record`
+- Direct document upload to R2 with immediate processing and automatic dashboard refresh
 
 Dashboard preview:
 
@@ -138,6 +146,7 @@ tests/
 
 - Reads candidate files from `R2_INBOX_PREFIX` (default `inbox/`).
 - Filters by supported MIME types.
+- Supports direct dashboard uploads, which place files into the same R2 inbox and process them immediately through the pipeline.
 
 ### 2) Claim & Idempotency
 
@@ -264,6 +273,7 @@ What Render will host:
 - FastAPI monitoring API
 - Web dashboard at `/dashboard`
 - Review queue state backed by Postgres instead of local files
+- Protected dashboard/API routes via HTTP Basic auth
 
 Recommended service setup:
 
@@ -294,6 +304,10 @@ Useful URLs after deploy:
 - `/health`
   Health check endpoint
 
+Current live deployment:
+
+- `https://visual-invoice-processor.onrender.com/`
+
 Important notes:
 
 - The Render deployment is for the dashboard/API layer.
@@ -301,6 +315,7 @@ Important notes:
 - Review queue state is now suitable for cloud hosting when `REVIEW_QUEUE_BACKEND=postgres`.
 - `/health` remains open for Render health checks, while the dashboard/API routes can be protected with HTTP Basic auth.
 - Dashboard uploads require `INGESTION_BACKEND=r2` and a valid R2 configuration, because the file is uploaded to the `inbox/` prefix and processed immediately from there.
+- After changing Render environment variables, redeploy the latest commit so auth, thresholds, and upload behavior are applied consistently.
 
 ## GitHub Actions Automation
 
