@@ -9,6 +9,7 @@ from app.monitoring_api import (
     _active_dead_letters,
     _active_review_items,
     _active_review_queue_size,
+    _review_history_items,
     create_monitoring_app,
 )
 
@@ -67,6 +68,7 @@ def test_monitoring_endpoints_expose_stats_backlog_and_failures(tmp_path: Path) 
     backlog = client.get("/backlog")
     failures = client.get("/failures")
     review_items = client.get("/review-items")
+    review_history = client.get("/review-history")
     dashboard = client.get("/dashboard")
     dashboard_data = client.get("/dashboard/data")
 
@@ -83,6 +85,8 @@ def test_monitoring_endpoints_expose_stats_backlog_and_failures(tmp_path: Path) 
     assert review_items.status_code == 200
     assert review_items.json()["count"] == 1
     assert review_items.json()["items"][0]["vendor_name"] == "Acme"
+    assert review_history.status_code == 200
+    assert review_history.json()["count"] == 0
     assert dashboard.status_code == 200
     assert "Invoice Operations Dashboard" in dashboard.text
     assert dashboard_data.status_code == 200
@@ -113,6 +117,50 @@ def test_active_backlog_filters_resolved_hashes(tmp_path: Path) -> None:
     assert len(_active_dead_letters(dead, resolved)) == 1
     assert _active_review_queue_size(review, resolved) == 1
     assert len(_active_review_items(review, resolved)) == 1
+
+
+def test_review_history_items_return_resolved_entries(tmp_path: Path) -> None:
+    review = tmp_path / "review_queue"
+    review.mkdir(parents=True, exist_ok=True)
+    (review / "a.json").write_text(
+        json.dumps(
+            {
+                "document_id": "a",
+                "status": "RESOLVED_STORED",
+                "created_at_utc": "2026-03-20T10:00:00+00:00",
+                "resolved_at_utc": "2026-03-20T10:05:00+00:00",
+                "resolution_note": "approved after edit",
+                "metadata": {"source_file_id": "inbox/a.pdf", "used_provider": "mistral"},
+                "resolved_record": {"vendor_name": "Acme", "currency": "BDT", "total_amount": 19.5},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (review / "b.json").write_text(
+        json.dumps(
+            {
+                "document_id": "b",
+                "status": "REJECTED",
+                "created_at_utc": "2026-03-20T11:00:00+00:00",
+                "resolved_at_utc": "2026-03-20T11:10:00+00:00",
+                "resolution_note": "not a receipt",
+                "metadata": {"source_file_id": "inbox/b.pdf", "used_provider": "mistral"},
+                "resolved_record": None,
+            }
+        ),
+        encoding="utf-8",
+    )
+    (review / "c.json").write_text(
+        json.dumps({"document_id": "c", "status": "REVIEW_REQUIRED"}),
+        encoding="utf-8",
+    )
+
+    items = _review_history_items(review, limit=10)
+
+    assert len(items) == 2
+    assert items[0]["document_id"] == "b"
+    assert items[0]["status"] == "REJECTED"
+    assert items[1]["vendor_name"] == "Acme"
 
 
 def test_review_resolve_endpoint_uses_shared_resolution_flow(tmp_path: Path, monkeypatch) -> None:
