@@ -22,3 +22,7 @@ services:
         value: ledger_records
       - key: POSTGRES_DSN
         sync: false
+      - key: DASHBOARD_BASIC_AUTH_USERNAME
+        sync: false
+      - key: DASHBOARD_BASIC_AUTH_PASSWORD
+        sync: false
