@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 
 from app.monitoring_api import (
     _active_dead_letters,
+    _activity_feed_items,
     _active_review_items,
     _active_review_queue_size,
     _review_history_items,
@@ -96,11 +97,13 @@ def test_monitoring_endpoints_expose_stats_backlog_and_failures(tmp_path: Path, 
     assert dashboard.status_code == 200
     assert "Invoice Operations Dashboard" in dashboard.text
     assert 'id="uploadInput"' in dashboard.text
+    assert 'id="activityFeed"' in dashboard.text
     assert 'id="recentSearch"' in dashboard.text
     assert 'id="reviewSearch"' in dashboard.text
     assert 'id="historySearch"' in dashboard.text
     assert dashboard_data.status_code == 200
     assert "kpis" in dashboard_data.json()
+    assert "activity_feed" in dashboard_data.json()
 
 
 def test_dashboard_routes_require_basic_auth_when_configured(tmp_path: Path, monkeypatch) -> None:
@@ -381,3 +384,70 @@ def test_dashboard_upload_endpoint_rejects_unsupported_mime_type(tmp_path: Path,
 
     assert response.status_code == 400
     assert "Unsupported file type" in response.json()["detail"]
+
+
+def test_activity_feed_combines_stored_review_resolved_and_failed_events() -> None:
+    events = _activity_feed_items(
+        recent_records=[
+            {
+                "processed_at_utc": "2026-03-22T10:00:00+00:00",
+                "document_id": "doc-stored",
+                "drive_file_id": "archive/a.pdf",
+                "vendor_name": "Acme",
+                "currency": "BDT",
+                "total_amount": 120.0,
+                "invoice_number": "INV-1",
+                "used_provider": "mistral",
+                "needs_review": False,
+            }
+        ],
+        review_items=[
+            {
+                "created_at_utc": "2026-03-22T10:05:00+00:00",
+                "document_id": "doc-review",
+                "source_file_id": "inbox/b.pdf",
+                "vendor_name": "Beta",
+                "currency": "BDT",
+                "total_amount": 88.0,
+                "invoice_number": "INV-2",
+                "used_provider": "mistral",
+                "reason_codes": ["low_confidence"],
+            }
+        ],
+        review_history=[
+            {
+                "resolved_at_utc": "2026-03-22T10:10:00+00:00",
+                "document_id": "doc-resolved",
+                "source_file_id": "inbox/c.pdf",
+                "vendor_name": "Gamma",
+                "currency": "BDT",
+                "total_amount": 77.0,
+                "invoice_number": "INV-3",
+                "used_provider": "mistral",
+                "status": "RESOLVED_STORED",
+                "resolution_note": "approved",
+            }
+        ],
+        dead_letters=[
+            {
+                "recorded_at_utc": "2026-03-22T10:15:00+00:00",
+                "document_id": "doc-failed",
+                "drive_file_id": "inbox/d.pdf",
+                "status": "FAILED",
+                "error_message": "OCR timeout",
+                "used_provider": "mistral",
+            }
+        ],
+        limit=10,
+    )
+
+    assert [event["status"] for event in events] == [
+        "FAILED",
+        "RESOLVED_STORED",
+        "REVIEW_REQUIRED",
+        "STORED",
+    ]
+    assert events[0]["message"] == "OCR timeout"
+    assert events[1]["message"] == "approved"
+    assert events[2]["message"] == "low_confidence"
+    assert events[3]["message"] == "Stored in ledger"
