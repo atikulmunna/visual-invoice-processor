@@ -48,6 +48,19 @@ Resources:
       RepositoryName: invoice-processor-alpha-web
       ImageScanningConfiguration:
         ScanOnPush: true
+      RepositoryPolicyText:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: LambdaPullOnly
+            Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action:
+              - ecr:BatchGetImage
+              - ecr:GetDownloadUrlForLayer
+            Condition:
+              ArnLike:
+                aws:SourceArn: !Sub "arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:invoice-processor-alpha-*"
       LifecyclePolicy:
         LifecyclePolicyText: >-
           {"rules":[{"rulePriority":1,"description":"Keep two images","selection":{"tagStatus":"any","countType":"imageCountMoreThan","countNumber":2},"action":{"type":"expire"}}]}
@@ -58,6 +71,19 @@ Resources:
       RepositoryName: invoice-processor-alpha-worker
       ImageScanningConfiguration:
         ScanOnPush: true
+      RepositoryPolicyText:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: LambdaPullOnly
+            Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action:
+              - ecr:BatchGetImage
+              - ecr:GetDownloadUrlForLayer
+            Condition:
+              ArnLike:
+                aws:SourceArn: !Sub "arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:invoice-processor-alpha-*"
       LifecyclePolicy:
         LifecyclePolicyText: >-
           {"rules":[{"rulePriority":1,"description":"Keep two images","selection":{"tagStatus":"any","countType":"imageCountMoreThan","countNumber":2},"action":{"type":"expire"}}]}
