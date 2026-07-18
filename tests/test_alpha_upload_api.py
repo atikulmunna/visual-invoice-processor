@@ -10,6 +10,7 @@ from app.monitoring_api import create_monitoring_app
 
 class _FakeAlphaStore:
     jobs: dict[str, dict[str, Any]] = {}
+    sessions: set[str] = set()
 
     def __init__(self, _: str) -> None:
         pass
@@ -18,6 +19,21 @@ class _FakeAlphaStore:
         assert username == "tester.one"
         assert password == "A-strong-alpha-password"
         return AlphaUser("11111111-1111-1111-1111-111111111111", username, 20, 3, True)
+
+    def create_session(self, user: AlphaUser) -> str:
+        assert user.username == "tester.one"
+        self.sessions.add("test-session-token")
+        return "test-session-token"
+
+    def authenticate_session(self, token: str) -> AlphaUser:
+        if token not in self.sessions:
+            from app.alpha_store import AlphaAuthenticationError
+
+            raise AlphaAuthenticationError("Invalid session")
+        return AlphaUser("11111111-1111-1111-1111-111111111111", "tester.one", 20, 3, True)
+
+    def delete_session(self, token: str) -> None:
+        self.sessions.discard(token)
 
     def authorize_upload(self, user: AlphaUser, **kwargs: Any) -> str:
         job_id = kwargs["object_key"].split("/")[-2]
@@ -84,6 +100,41 @@ def test_alpha_dashboard_shows_user_quota_and_result_workspace(monkeypatch: Any)
     assert '<span id="documentsRemaining">17</span>' in response.text
     assert 'id="resultPanel"' in response.text
     assert "terminalJobStatuses" in response.text
+
+
+def test_alpha_login_creates_secure_session_and_logout_clears_it(monkeypatch: Any) -> None:
+    _configure(monkeypatch)
+    _FakeAlphaStore.sessions.clear()
+    client = TestClient(
+        create_monitoring_app(postgres_dsn="postgresql://example"),
+        base_url="https://testserver",
+    )
+
+    root = client.get("/", follow_redirects=False)
+    login_page = client.get("/login")
+    login = client.post(
+        "/login",
+        data={"username": "tester.one", "password": "A-strong-alpha-password"},
+        follow_redirects=False,
+    )
+    dashboard = client.get("/dashboard")
+    logout = client.post("/logout", follow_redirects=False)
+    dashboard_after_logout = client.get("/dashboard")
+
+    assert root.status_code == 307
+    assert root.headers["location"] == "/login"
+    assert login_page.status_code == 200
+    assert "Enter workspace" in login_page.text
+    assert login.status_code == 303
+    assert login.headers["location"] == "/dashboard"
+    assert "httponly" in login.headers["set-cookie"].lower()
+    assert "secure" in login.headers["set-cookie"].lower()
+    assert "samesite=lax" in login.headers["set-cookie"].lower()
+    assert dashboard.status_code == 200
+    assert "tester.one" in dashboard.text
+    assert logout.status_code == 303
+    assert logout.headers["location"] == "/login"
+    assert dashboard_after_logout.status_code == 401
 
 
 def test_presign_rejects_unsupported_and_oversized_files(monkeypatch: Any) -> None:
