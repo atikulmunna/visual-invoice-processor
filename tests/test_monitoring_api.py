@@ -102,6 +102,10 @@ def test_monitoring_endpoints_expose_stats_backlog_and_failures(tmp_path: Path, 
     assert 'id="recentSearch"' in dashboard.text
     assert 'id="reviewSearch"' in dashboard.text
     assert 'id="historySearch"' in dashboard.text
+    assert 'id="dropZone"' in dashboard.text
+    assert 'id="resultContent"' in dashboard.text
+    assert "waitForJob" in dashboard.text
+    assert "directly to encrypted S3" in dashboard.text
     assert dashboard_data.status_code == 200
     assert "kpis" in dashboard_data.json()
     assert "activity_feed" in dashboard_data.json()

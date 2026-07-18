@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import html as html_lib
 import json
 import os
 import secrets
@@ -335,8 +336,8 @@ def create_monitoring_app(
         return {"job_id": job_id, "status": "AUTHORIZED"}
 
     @app.get("/dashboard", response_class=HTMLResponse)
-    def dashboard(_: str | AlphaUser = Depends(require_dashboard_auth)) -> str:
-        return _dashboard_html(os.getenv("INGESTION_BACKEND", "drive"))
+    def dashboard(principal: str | AlphaUser = Depends(require_dashboard_auth)) -> str:
+        return _dashboard_html(os.getenv("INGESTION_BACKEND", "drive"), principal)
 
     return app
 
@@ -725,13 +726,13 @@ def _format_currency_total_display(currency_totals: list[dict[str, Any]]) -> str
     return f"{len(currency_totals)} currencies"
 
 
-def _dashboard_html(upload_mode: str = "r2") -> str:
+def _dashboard_html(upload_mode: str = "r2", principal: str | AlphaUser = "Operator") -> str:
     html = """<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Invoice Ops Dashboard</title>
+  <title>Invoice Operations Dashboard · Ledgerly</title>
   <style>
     :root {
       --c-light: #c1c1c1;
@@ -944,128 +945,432 @@ def _dashboard_html(upload_mode: str = "r2") -> str:
     @media (max-width: 540px) {
       .grid { grid-template-columns: 1fr; }
     }
+
+    /* Private alpha workspace — palette supplied by the product owner. */
+    :root {
+      --ink-950: #111110;
+      --ink-900: #1d1c17;
+      --ink-850: #242321;
+      --ink-800: #2d2c29;
+      --graphite: #403e3a;
+      --stone: #cbc5b9;
+      --paper: #f4efe6;
+      --accent: #f15a24;
+      --accent-bright: #ff6b32;
+      --success: #8fbf91;
+      --danger: #ff8b75;
+      --line: rgba(203, 197, 185, 0.14);
+      --line-strong: rgba(203, 197, 185, 0.24);
+      --shadow: 0 22px 54px rgba(0, 0, 0, 0.24);
+    }
+    html { min-height: 100%; background: var(--ink-950); scroll-behavior: smooth; }
+    body {
+      min-height: 100vh;
+      color: var(--paper);
+      background:
+        radial-gradient(circle at 72% -12%, rgba(241, 90, 36, 0.12), transparent 32rem),
+        var(--ink-950);
+      font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.5;
+    }
+    button, input, textarea { font: inherit; }
+    button:focus-visible, input:focus-visible, textarea:focus-visible, [tabindex]:focus-visible {
+      outline: 3px solid rgba(241, 90, 36, 0.35);
+      outline-offset: 2px;
+    }
+    .app-shell { display: grid; grid-template-columns: 248px minmax(0, 1fr); min-height: 100vh; }
+    .sidebar {
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      padding: 28px 22px;
+      background: rgba(29, 28, 23, 0.96);
+      border-right: 1px solid var(--line);
+      z-index: 10;
+    }
+    .brand { display: flex; align-items: center; gap: 12px; color: var(--paper); text-decoration: none; }
+    .brand-mark {
+      width: 42px;
+      height: 42px;
+      display: grid;
+      place-items: center;
+      border-radius: 12px;
+      background: var(--accent);
+      color: var(--ink-950);
+      font-weight: 900;
+      font-size: 1.08rem;
+      letter-spacing: -0.06em;
+      box-shadow: 0 10px 24px rgba(241, 90, 36, 0.22);
+    }
+    .brand-copy strong { display: block; font-size: 0.98rem; letter-spacing: -0.02em; }
+    .brand-copy span { color: rgba(203, 197, 185, 0.62); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.14em; }
+    .side-nav { display: grid; gap: 7px; margin-top: 44px; }
+    .side-nav a {
+      display: flex;
+      align-items: center;
+      gap: 11px;
+      padding: 10px 12px;
+      border-radius: 10px;
+      color: rgba(244, 239, 230, 0.68);
+      text-decoration: none;
+      font-size: 0.86rem;
+      transition: background 160ms ease, color 160ms ease;
+    }
+    .side-nav a:hover, .side-nav a.active { background: rgba(203, 197, 185, 0.08); color: var(--paper); }
+    .nav-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--graphite); }
+    .side-nav a.active .nav-dot { background: var(--accent); box-shadow: 0 0 0 4px rgba(241, 90, 36, 0.12); }
+    .alpha-card {
+      margin-top: auto;
+      padding: 16px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: rgba(17, 17, 16, 0.42);
+    }
+    .alpha-label { display: flex; align-items: center; gap: 8px; color: var(--stone); font-size: 0.74rem; text-transform: uppercase; letter-spacing: 0.12em; }
+    .live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--success); box-shadow: 0 0 0 4px rgba(143, 191, 145, 0.11); }
+    .alpha-user { margin: 12px 0 3px; font-weight: 650; color: var(--paper); overflow-wrap: anywhere; }
+    .alpha-quota { color: rgba(203, 197, 185, 0.58); font-size: 0.76rem; }
+    .main { min-width: 0; padding: 0 34px 48px; }
+    .topbar {
+      min-height: 82px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+      border-bottom: 1px solid var(--line);
+    }
+    .topbar-title { font-size: 0.82rem; color: rgba(203, 197, 185, 0.6); text-transform: uppercase; letter-spacing: 0.13em; }
+    .topbar-meta { display: flex; align-items: center; gap: 12px; }
+    .secure-pill, .job-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      padding: 7px 10px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      color: rgba(244, 239, 230, 0.74);
+      background: rgba(29, 28, 23, 0.72);
+      font-size: 0.74rem;
+    }
+    .secure-pill::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--success); }
+    .muted { color: rgba(203, 197, 185, 0.62); }
+    #refreshAt { font-size: 0.76rem; white-space: nowrap; }
+    .hero-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1.35fr) minmax(340px, 0.65fr);
+      gap: 18px;
+      margin: 28px 0 18px;
+    }
+    .upload-panel, .result-panel {
+      min-height: 470px;
+      border: 1px solid var(--line);
+      border-radius: 22px;
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+    .upload-panel {
+      padding: clamp(24px, 4vw, 48px);
+      background:
+        linear-gradient(135deg, rgba(203, 197, 185, 0.04), transparent 48%),
+        var(--ink-900);
+    }
+    .eyebrow { margin: 0 0 14px; color: var(--accent); font-size: 0.72rem; font-weight: 750; letter-spacing: 0.16em; text-transform: uppercase; }
+    .upload-panel h1 { max-width: 680px; margin: 0; font-size: clamp(2rem, 4vw, 4.2rem); line-height: 0.98; letter-spacing: -0.055em; font-weight: 720; }
+    .hero-copy { max-width: 650px; margin: 20px 0 28px; color: rgba(203, 197, 185, 0.7); font-size: clamp(0.92rem, 1.2vw, 1.05rem); }
+    .drop-zone {
+      position: relative;
+      display: grid;
+      grid-template-columns: auto 1fr auto;
+      align-items: center;
+      gap: 16px;
+      min-height: 116px;
+      padding: 20px;
+      border: 1px dashed rgba(203, 197, 185, 0.3);
+      border-radius: 16px;
+      background: rgba(17, 17, 16, 0.44);
+      cursor: pointer;
+      transition: border-color 160ms ease, background 160ms ease, transform 160ms ease;
+    }
+    .drop-zone:hover, .drop-zone.dragging { border-color: var(--accent); background: rgba(241, 90, 36, 0.06); transform: translateY(-1px); }
+    .file-glyph { width: 54px; height: 64px; position: relative; border: 1px solid rgba(203, 197, 185, 0.34); border-radius: 9px; background: var(--ink-850); }
+    .file-glyph::before { content: ""; position: absolute; top: -1px; right: -1px; border-style: solid; border-width: 0 16px 16px 0; border-color: transparent var(--stone) transparent transparent; opacity: 0.78; }
+    .file-glyph::after { content: "↑"; position: absolute; inset: 0; display: grid; place-items: center; color: var(--accent); font-size: 1.3rem; font-weight: 800; }
+    .drop-title { color: var(--paper); font-size: 0.94rem; font-weight: 650; }
+    .drop-note { margin-top: 3px; color: rgba(203, 197, 185, 0.53); font-size: 0.76rem; }
+    .choose-label { color: var(--accent); font-size: 0.79rem; font-weight: 700; }
+    #uploadInput { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+    .upload-footer { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: 18px; }
+    .pipeline { display: flex; align-items: center; min-width: 0; }
+    .pipeline-step { display: flex; align-items: center; gap: 7px; color: rgba(203, 197, 185, 0.42); font-size: 0.73rem; white-space: nowrap; }
+    .pipeline-step::before { content: ""; width: 7px; height: 7px; border-radius: 50%; border: 1px solid currentColor; }
+    .pipeline-step.active { color: var(--accent); }
+    .pipeline-step.complete { color: var(--success); }
+    .pipeline-line { width: clamp(12px, 2vw, 38px); height: 1px; margin: 0 8px; background: var(--line-strong); }
+    .primary-btn, .action-btn {
+      border: 1px solid transparent;
+      border-radius: 10px;
+      background: var(--accent);
+      color: #161410;
+      padding: 10px 14px;
+      font-size: 0.78rem;
+      font-weight: 760;
+      cursor: pointer;
+      transition: background 150ms ease, transform 150ms ease, opacity 150ms ease;
+    }
+    .primary-btn { min-width: 142px; padding: 12px 17px; }
+    .primary-btn:hover, .action-btn:hover { background: var(--accent-bright); transform: translateY(-1px); }
+    .primary-btn:disabled, .action-btn:disabled { opacity: 0.5; cursor: wait; transform: none; }
+    .action-btn.warn { color: var(--danger); border-color: rgba(255, 139, 117, 0.28); background: rgba(255, 139, 117, 0.08); }
+    .action-btn.warn:hover { background: rgba(255, 139, 117, 0.15); }
+    .upload-status { min-height: 21px; margin-top: 14px; color: rgba(203, 197, 185, 0.68); font-size: 0.78rem; }
+    .upload-status.error { color: var(--danger); }
+    .upload-status.success { color: var(--success); }
+    .result-panel { display: flex; flex-direction: column; padding: 24px; background: var(--graphite); }
+    .panel-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-bottom: 18px; border-bottom: 1px solid rgba(244, 239, 230, 0.12); }
+    .panel-head h2 { margin: 0; font-size: 0.9rem; letter-spacing: -0.01em; }
+    .job-chip { max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; background: rgba(17, 17, 16, 0.16); }
+    .result-empty { flex: 1; display: grid; place-items: center; text-align: center; padding: 34px; color: rgba(244, 239, 230, 0.55); }
+    .result-empty-icon { width: 72px; height: 72px; display: grid; place-items: center; margin: 0 auto 16px; border: 1px solid rgba(244, 239, 230, 0.15); border-radius: 50%; color: var(--accent); font-size: 1.5rem; }
+    .result-empty strong { display: block; color: var(--paper); font-size: 0.9rem; margin-bottom: 6px; }
+    .result-empty span { font-size: 0.76rem; }
+    .result-content { display: grid; gap: 18px; padding-top: 20px; }
+    .result-content[hidden], .result-empty[hidden] { display: none; }
+    .result-status-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+    .result-status-row h3 { margin: 0; font-size: 1.42rem; letter-spacing: -0.03em; }
+    .result-summary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px; overflow: hidden; border: 1px solid rgba(244, 239, 230, 0.12); border-radius: 12px; background: rgba(244, 239, 230, 0.12); }
+    .result-stat { min-width: 0; padding: 13px; background: rgba(45, 44, 41, 0.92); }
+    .result-stat span { display: block; margin-bottom: 4px; color: rgba(203, 197, 185, 0.52); font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.1em; }
+    .result-stat strong { display: block; overflow: hidden; color: var(--paper); font-size: 0.86rem; text-overflow: ellipsis; white-space: nowrap; }
+    .result-message { padding: 11px 12px; border-left: 3px solid var(--accent); background: rgba(17, 17, 16, 0.16); color: rgba(244, 239, 230, 0.72); font-size: 0.76rem; }
+    details { border-top: 1px solid rgba(244, 239, 230, 0.1); padding-top: 14px; }
+    details summary { color: rgba(244, 239, 230, 0.72); font-size: 0.75rem; cursor: pointer; }
+    .result-json { max-height: 180px; overflow: auto; margin: 12px 0 0; padding: 12px; border-radius: 10px; background: rgba(17, 17, 16, 0.42); color: var(--stone); font: 0.7rem/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+    .section-heading { display: flex; justify-content: space-between; gap: 16px; align-items: end; margin: 34px 0 14px; }
+    .section-heading h2 { margin: 0; font-size: 1.16rem; letter-spacing: -0.03em; }
+    .section-heading p { margin: 4px 0 0; color: rgba(203, 197, 185, 0.55); font-size: 0.78rem; }
+    .grid { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 18px; }
+    .card {
+      padding: 18px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: var(--ink-900);
+      color: var(--paper);
+      box-shadow: none;
+    }
+    .card h3 { margin: 0 0 12px; color: rgba(203, 197, 185, 0.6); font-size: 0.69rem; font-weight: 650; text-transform: uppercase; letter-spacing: 0.11em; }
+    .kpi-card { min-height: 128px; display: flex; flex-direction: column; justify-content: space-between; }
+    .kpi-kicker { display: flex; justify-content: space-between; align-items: center; }
+    .kpi-icon { color: var(--accent); font-size: 0.92rem; }
+    .value { color: var(--paper); font-size: clamp(1.45rem, 2.1vw, 2.1rem); letter-spacing: -0.04em; }
+    .value.good { color: var(--success); }
+    .value.warn { color: var(--danger); }
+    .pane-grid { grid-template-columns: minmax(0, 1.35fr) minmax(300px, 0.65fr); gap: 12px; margin-bottom: 12px; }
+    .table-wrap { max-height: 430px; }
+    table { font-size: 0.81rem; }
+    th, td { padding: 11px 9px; border-bottom-color: rgba(203, 197, 185, 0.08); }
+    th { position: sticky; top: 0; z-index: 1; color: rgba(203, 197, 185, 0.5); background: var(--ink-900); font-size: 0.65rem; }
+    td { color: rgba(244, 239, 230, 0.78); }
+    .tag, .mini-tag { border-color: var(--line-strong); color: var(--stone); background: rgba(203, 197, 185, 0.07); }
+    .tag.good { border-color: rgba(143, 191, 145, 0.28); color: var(--success); background: rgba(143, 191, 145, 0.08); }
+    .tag.warn { border-color: rgba(255, 139, 117, 0.3); color: var(--danger); background: rgba(255, 139, 117, 0.08); }
+    .toolbar { margin-top: -34px; }
+    .toolbar input { border-color: var(--line); background: rgba(17, 17, 16, 0.48); color: var(--paper); }
+    .toolbar input::placeholder { color: rgba(203, 197, 185, 0.4); }
+    .bar-track { background: rgba(203, 197, 185, 0.11); }
+    .bar-fill { background: linear-gradient(90deg, var(--accent), #ff8a51); }
+    .feed-item { border-color: var(--line); background: rgba(17, 17, 16, 0.3); }
+    .json-preview, .editor-wrap textarea { border-color: var(--line); background: rgba(17, 17, 16, 0.42); color: var(--stone); }
+    .warn-box { border-color: rgba(255, 139, 117, 0.3); background: rgba(255, 139, 117, 0.08); color: var(--danger); }
+    .empty-row { padding: 26px 10px; text-align: center; color: rgba(203, 197, 185, 0.46); }
+    .footer-note { margin-top: 22px; color: rgba(203, 197, 185, 0.38); font-size: 0.7rem; text-align: right; }
+    @media (max-width: 1180px) {
+      .app-shell { grid-template-columns: 86px minmax(0, 1fr); }
+      .sidebar { padding: 24px 14px; align-items: center; }
+      .brand-copy, .side-nav span:not(.nav-dot), .alpha-card { display: none; }
+      .side-nav a { justify-content: center; width: 44px; height: 44px; }
+      .side-nav { margin-top: 34px; }
+      .hero-grid { grid-template-columns: 1fr; }
+      .result-panel { min-height: 390px; }
+    }
+    @media (max-width: 820px) {
+      .app-shell { display: block; }
+      .sidebar { position: static; width: 100%; height: auto; flex-direction: row; justify-content: space-between; padding: 14px 18px; border-right: 0; border-bottom: 1px solid var(--line); }
+      .brand-copy { display: block; }
+      .side-nav { display: none; }
+      .main { padding: 0 18px 36px; }
+      .topbar { min-height: 68px; }
+      .topbar-title { display: none; }
+      .hero-grid { margin-top: 18px; }
+      .upload-panel, .result-panel { min-height: auto; }
+      .upload-panel { padding: 28px 22px; }
+      .upload-panel h1 { font-size: clamp(2rem, 10vw, 3.2rem); }
+      .pane-grid { grid-template-columns: 1fr; }
+      .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+    @media (max-width: 560px) {
+      .secure-pill { display: none; }
+      .drop-zone { grid-template-columns: auto 1fr; }
+      .choose-label { display: none; }
+      .upload-footer { align-items: stretch; flex-direction: column; }
+      .pipeline { justify-content: space-between; }
+      .pipeline-line { flex: 1; }
+      .primary-btn { width: 100%; }
+      .grid { grid-template-columns: 1fr; }
+      .result-summary { grid-template-columns: 1fr; }
+      .section-heading { align-items: start; flex-direction: column; }
+      .toolbar { margin: 8px 0 10px; justify-content: stretch; }
+      .toolbar input { width: 100%; }
+    }
   </style>
 </head>
 <body>
-  <div class="wrap">
-    <div class="head">
-      <h1>Invoice Operations Dashboard</h1>
-      <div class="muted" id="refreshAt">Loading...</div>
-    </div>
-    <div class="card upload-card">
-      <div>
-        <h3>Upload And Process</h3>
-        <div class="muted">Send a PDF or image directly to the R2 inbox, process it immediately, and refresh the dashboard in place.</div>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <a class="brand" href="#upload" aria-label="Ledgerly home">
+        <span class="brand-mark">L</span>
+        <span class="brand-copy"><strong>Ledgerly</strong><span>Invoice intelligence</span></span>
+      </a>
+      <nav class="side-nav" aria-label="Workspace navigation">
+        <a class="active" href="#upload"><span class="nav-dot"></span><span>Process invoice</span></a>
+        <a href="#overview"><span class="nav-dot"></span><span>Overview</span></a>
+        <a href="#records"><span class="nav-dot"></span><span>Records</span></a>
+        <a href="#reviews"><span class="nav-dot"></span><span>Review queue</span></a>
+      </nav>
+      <div class="alpha-card">
+        <div class="alpha-label"><span class="live-dot"></span>Private alpha</div>
+        <div class="alpha-user">__ALPHA_USER__</div>
+        <div class="alpha-quota"><span id="documentsRemaining">__DOCUMENTS_REMAINING__</span> document credits remain</div>
       </div>
-      <div>
-        <div class="upload-controls">
-          <input id="uploadInput" type="file" accept=".pdf,.png,.jpg,.jpeg,application/pdf,image/png,image/jpeg" />
-          <button class="action-btn" type="button" onclick="uploadAndProcess()">Upload Now</button>
-        </div>
-        <div class="upload-status" id="uploadStatus"></div>
-      </div>
-    </div>
-    <div class="grid">
-      <div class="card"><h3>Total Records</h3><div class="value" id="kpiTotal">0</div></div>
-      <div class="card"><h3>Stored</h3><div class="value good" id="kpiStored">0</div></div>
-      <div class="card"><h3>Needs Review</h3><div class="value warn" id="kpiReview">0</div></div>
-      <div class="card">
-        <h3>Total Amount By Currency</h3>
-        <div class="amount-stack">
-          <div class="value" id="kpiAmount">0</div>
-          <div class="amount-breakdown" id="kpiAmountBreakdown"></div>
-        </div>
-      </div>
-    </div>
+    </aside>
 
-    <div class="pane-grid">
-      <div class="card">
-        <h3>Recent Records</h3>
-        <div class="toolbar">
-          <input id="recentSearch" type="search" placeholder="Search vendor, invoice, provider..." />
+    <main class="main">
+      <header class="topbar">
+        <div class="topbar-title">Invoice processing workspace</div>
+        <div class="topbar-meta">
+          <span class="secure-pill">Private &amp; encrypted</span>
+          <span class="muted" id="refreshAt">Loading workspace…</span>
         </div>
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Processed</th><th>Vendor</th><th>Invoice #</th><th>Amount</th><th>Provider</th><th>Status</th>
-              </tr>
-            </thead>
-            <tbody id="recentBody"></tbody>
-          </table>
-        </div>
-      </div>
-      <div class="card">
-        <h3>Provider Mix</h3>
-        <div class="bar-list" id="providerBars"></div>
-        <h3 style="margin-top:14px;">Backlog</h3>
-        <div class="muted">Review Queue: <strong id="reviewQueue">0</strong></div>
-        <div class="muted">Dead Letter: <strong id="deadLetter">0</strong></div>
-      </div>
-    </div>
+      </header>
 
-    <div class="pane-grid">
-      <div class="card">
-        <h3>Daily Summary</h3>
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr><th>Date</th><th>Records</th><th>Stored</th><th>Needs Review</th><th>Total Amount</th></tr>
-            </thead>
-            <tbody id="dailyBody"></tbody>
-          </table>
-        </div>
-      </div>
-      <div class="card">
-        <h3>Top Vendor Spend</h3>
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr><th>Vendor</th><th>Invoices</th><th>Total Spend</th></tr>
-            </thead>
-            <tbody id="vendorBody"></tbody>
-          </table>
-        </div>
-      </div>
-    </div>
+      <section class="hero-grid" id="upload">
+        <article class="upload-panel">
+          <p class="eyebrow">Direct to secure S3</p>
+          <h1>From invoice to structured data.</h1>
+          <p class="hero-copy">Drop a PDF or image here. It uploads directly to private storage, runs through the extraction pipeline, and returns the normalized result without leaving this workspace.</p>
 
-    <div class="card">
-      <h3>Processing Activity</h3>
-      <div class="feed-list" id="activityFeed"></div>
-    </div>
+          <label class="drop-zone" id="dropZone" for="uploadInput" tabindex="0">
+            <span class="file-glyph" aria-hidden="true"></span>
+            <span>
+              <span class="drop-title" id="fileName">Drop an invoice here</span>
+              <span class="drop-note" id="fileMeta">PDF, PNG or JPG · up to 5 MB · maximum 5 PDF pages</span>
+            </span>
+            <span class="choose-label">Choose file</span>
+            <input id="uploadInput" type="file" accept=".pdf,.png,.jpg,.jpeg,application/pdf,image/png,image/jpeg" />
+          </label>
 
-    <div class="card">
-      <h3>Review Queue</h3>
-      <div class="toolbar">
-        <input id="reviewSearch" type="search" placeholder="Search document, vendor, source..." />
-      </div>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr><th>Document ID</th><th>Source</th><th>Vendor</th><th>Amount</th><th>Reasons</th><th>Action</th></tr>
-          </thead>
-          <tbody id="reviewBody"></tbody>
-        </table>
-      </div>
-    </div>
+          <div class="upload-footer">
+            <div class="pipeline" aria-label="Processing progress">
+              <span class="pipeline-step" id="stepAuthorize">Authorize</span><span class="pipeline-line"></span>
+              <span class="pipeline-step" id="stepUpload">Upload</span><span class="pipeline-line"></span>
+              <span class="pipeline-step" id="stepProcess">Extract</span>
+            </div>
+            <button class="primary-btn" id="uploadButton" type="button" onclick="uploadAndProcess()">Process invoice</button>
+          </div>
+          <div class="upload-status" id="uploadStatus" role="status" aria-live="polite">Select a document to begin.</div>
+        </article>
 
-    <div class="history-grid">
-      <div class="card">
-        <h3>Review History</h3>
-        <div class="toolbar">
-          <input id="historySearch" type="search" placeholder="Search status, note, document..." />
+        <aside class="result-panel" id="resultPanel" aria-live="polite">
+          <div class="panel-head">
+            <h2>Latest result</h2>
+            <span class="job-chip" id="resultJob">Waiting</span>
+          </div>
+          <div class="result-empty" id="resultEmpty">
+            <div>
+              <div class="result-empty-icon" aria-hidden="true">⌁</div>
+              <strong>No invoice processed yet</strong>
+              <span>Your extraction summary will appear here as soon as processing completes.</span>
+            </div>
+          </div>
+          <div class="result-content" id="resultContent" hidden>
+            <div class="result-status-row">
+              <h3 id="resultTitle">Processing</h3>
+              <span class="tag" id="resultStatus">QUEUED</span>
+            </div>
+            <div class="result-summary">
+              <div class="result-stat"><span>Vendor</span><strong id="resultVendor">—</strong></div>
+              <div class="result-stat"><span>Invoice number</span><strong id="resultInvoice">—</strong></div>
+              <div class="result-stat"><span>Total</span><strong id="resultAmount">—</strong></div>
+              <div class="result-stat"><span>Confidence</span><strong id="resultConfidence">—</strong></div>
+            </div>
+            <div class="result-message" id="resultMessage">The document is moving through the extraction pipeline.</div>
+            <details>
+              <summary>View processing payload</summary>
+              <pre class="result-json" id="resultJson"></pre>
+            </details>
+          </div>
+        </aside>
+      </section>
+
+      <section id="overview">
+        <div class="section-heading">
+          <div><h2>Workspace overview</h2><p>Live totals from normalized invoice records.</p></div>
         </div>
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr><th>Resolved</th><th>Status</th><th>Document</th><th>Vendor</th><th>Amount</th><th>Note</th></tr>
-            </thead>
-            <tbody id="reviewHistoryBody"></tbody>
-          </table>
+        <div class="grid">
+          <div class="card kpi-card"><div class="kpi-kicker"><h3>Total records</h3><span class="kpi-icon">↗</span></div><div class="value" id="kpiTotal">0</div></div>
+          <div class="card kpi-card"><div class="kpi-kicker"><h3>Stored cleanly</h3><span class="kpi-icon">✓</span></div><div class="value good" id="kpiStored">0</div></div>
+          <div class="card kpi-card"><div class="kpi-kicker"><h3>Needs review</h3><span class="kpi-icon">!</span></div><div class="value warn" id="kpiReview">0</div></div>
+          <div class="card kpi-card"><div class="kpi-kicker"><h3>Processed value</h3><span class="kpi-icon">◇</span></div><div class="amount-stack"><div class="value" id="kpiAmount">0</div><div class="amount-breakdown" id="kpiAmountBreakdown"></div></div></div>
         </div>
-      </div>
-    </div>
-    <div class="warn-box" id="errorBox" style="display:none;"></div>
+      </section>
+
+      <section id="records">
+        <div class="section-heading"><div><h2>Records &amp; pipeline</h2><p>Search recent invoices and inspect processing health.</p></div></div>
+        <div class="pane-grid">
+          <div class="card">
+            <h3>Recent records</h3>
+            <div class="toolbar"><input id="recentSearch" type="search" placeholder="Search vendor, invoice, provider…" /></div>
+            <div class="table-wrap"><table><thead><tr><th>Processed</th><th>Vendor</th><th>Invoice #</th><th>Amount</th><th>Provider</th><th>Status</th></tr></thead><tbody id="recentBody"></tbody></table></div>
+          </div>
+          <div class="card">
+            <h3>Provider mix</h3>
+            <div class="bar-list" id="providerBars"></div>
+            <h3 style="margin-top:28px;">Attention required</h3>
+            <div class="feed-list">
+              <div class="feed-item"><div class="feed-head"><span class="muted">Review queue</span><strong id="reviewQueue">0</strong></div></div>
+              <div class="feed-item"><div class="feed-head"><span class="muted">Failed jobs</span><strong id="deadLetter">0</strong></div></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="pane-grid">
+          <div class="card"><h3>Daily summary</h3><div class="table-wrap"><table><thead><tr><th>Date</th><th>Records</th><th>Stored</th><th>Needs review</th><th>Total amount</th></tr></thead><tbody id="dailyBody"></tbody></table></div></div>
+          <div class="card"><h3>Top vendor spend</h3><div class="table-wrap"><table><thead><tr><th>Vendor</th><th>Invoices</th><th>Total spend</th></tr></thead><tbody id="vendorBody"></tbody></table></div></div>
+        </div>
+
+        <div class="card"><h3>Processing activity</h3><div class="feed-list" id="activityFeed"></div></div>
+      </section>
+
+      <section id="reviews">
+        <div class="section-heading"><div><h2>Human review</h2><p>Approve, correct, or reject invoices that need attention.</p></div></div>
+        <div class="card">
+          <h3>Review queue</h3>
+          <div class="toolbar"><input id="reviewSearch" type="search" placeholder="Search document, vendor, source…" /></div>
+          <div class="table-wrap"><table><thead><tr><th>Document ID</th><th>Source</th><th>Vendor</th><th>Amount</th><th>Reasons</th><th>Action</th></tr></thead><tbody id="reviewBody"></tbody></table></div>
+        </div>
+        <div class="history-grid">
+          <div class="card">
+            <h3>Review history</h3>
+            <div class="toolbar"><input id="historySearch" type="search" placeholder="Search status, note, document…" /></div>
+            <div class="table-wrap"><table><thead><tr><th>Resolved</th><th>Status</th><th>Document</th><th>Vendor</th><th>Amount</th><th>Note</th></tr></thead><tbody id="reviewHistoryBody"></tbody></table></div>
+          </div>
+        </div>
+      </section>
+
+      <div class="warn-box" id="errorBox" style="display:none;"></div>
+      <div class="footer-note">Private alpha · files are uploaded directly to encrypted Amazon S3</div>
+    </main>
   </div>
   <script>
     let dashboardCache = {
@@ -1074,6 +1379,7 @@ def _dashboard_html(upload_mode: str = "r2") -> str:
       review_items: [],
       review_history: [],
     };
+    let selectedUploadFile = null;
     function fmtMoney(v) {
       const n = Number(v || 0);
       return n.toLocaleString(undefined, { maximumFractionDigits: 2 });
@@ -1253,56 +1559,202 @@ def _dashboard_html(upload_mode: str = "r2") -> str:
       window.alert(`${action} complete for ${documentId} (${payload.review_status})`);
     }
     const uploadMode = '__UPLOAD_MODE__';
+    const terminalJobStatuses = new Set(['STORED', 'REVIEW_REQUIRED', 'DUPLICATE', 'REJECTED', 'FAILED']);
+    const wait = (milliseconds) => new Promise(resolve => window.setTimeout(resolve, milliseconds));
+
+    function detectContentType(file) {
+      if (file.type) return file.type;
+      const name = file.name.toLowerCase();
+      if (name.endsWith('.pdf')) return 'application/pdf';
+      if (name.endsWith('.png')) return 'image/png';
+      if (name.endsWith('.jpg') || name.endsWith('.jpeg')) return 'image/jpeg';
+      return 'application/octet-stream';
+    }
+    function formatFileSize(bytes) {
+      if (bytes < 1024) return `${bytes} B`;
+      if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+      return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+    }
+    function showSelectedFile(file) {
+      selectedUploadFile = file || null;
+      document.getElementById('fileName').textContent = file ? file.name : 'Drop an invoice here';
+      document.getElementById('fileMeta').textContent = file
+        ? `${formatFileSize(file.size)} · ${detectContentType(file)}`
+        : 'PDF, PNG or JPG · up to 5 MB · maximum 5 PDF pages';
+      const statusEl = document.getElementById('uploadStatus');
+      statusEl.className = 'upload-status';
+      statusEl.textContent = file ? 'Ready for secure upload.' : 'Select a document to begin.';
+      setPipeline('idle');
+    }
+    function bindUploadControls() {
+      const input = document.getElementById('uploadInput');
+      const zone = document.getElementById('dropZone');
+      if (!input || !zone || zone.dataset.bound) return;
+      input.addEventListener('change', () => showSelectedFile(input.files?.[0] || null));
+      for (const eventName of ['dragenter', 'dragover']) {
+        zone.addEventListener(eventName, event => {
+          event.preventDefault();
+          zone.classList.add('dragging');
+        });
+      }
+      for (const eventName of ['dragleave', 'drop']) {
+        zone.addEventListener(eventName, event => {
+          event.preventDefault();
+          zone.classList.remove('dragging');
+        });
+      }
+      zone.addEventListener('drop', event => showSelectedFile(event.dataTransfer?.files?.[0] || null));
+      zone.addEventListener('keydown', event => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          input.click();
+        }
+      });
+      zone.dataset.bound = '1';
+    }
+    function setPipeline(stage) {
+      const order = ['authorize', 'upload', 'process'];
+      const ids = { authorize: 'stepAuthorize', upload: 'stepUpload', process: 'stepProcess' };
+      const activeIndex = order.indexOf(stage);
+      for (const [index, name] of order.entries()) {
+        const element = document.getElementById(ids[name]);
+        element.classList.remove('active', 'complete');
+        if (stage === 'complete' || (activeIndex >= 0 && index < activeIndex)) element.classList.add('complete');
+        if (name === stage) element.classList.add('active');
+      }
+    }
+    function setUploadMessage(message, kind = '') {
+      const statusEl = document.getElementById('uploadStatus');
+      statusEl.className = `upload-status${kind ? ` ${kind}` : ''}`;
+      statusEl.textContent = message;
+    }
+    function setUploadBusy(isBusy) {
+      const button = document.getElementById('uploadButton');
+      button.disabled = isBusy;
+      button.textContent = isBusy ? 'Processing…' : 'Process invoice';
+    }
+    function renderJobResult(job) {
+      const result = job.result || {};
+      const record = result.record || result.normalized_record || {};
+      const status = String(job.status || result.status || 'UNKNOWN');
+      const successful = status === 'STORED';
+      const warning = ['REVIEW_REQUIRED', 'DUPLICATE', 'REJECTED', 'FAILED'].includes(status);
+      document.getElementById('resultEmpty').hidden = true;
+      document.getElementById('resultContent').hidden = false;
+      document.getElementById('resultJob').textContent = String(job.id || 'Job').slice(0, 13);
+      document.getElementById('resultTitle').textContent = job.original_name || 'Invoice result';
+      const statusTag = document.getElementById('resultStatus');
+      statusTag.textContent = status.replaceAll('_', ' ');
+      statusTag.className = `tag${successful ? ' good' : warning ? ' warn' : ''}`;
+      document.getElementById('resultVendor').textContent = record.vendor_name || '—';
+      document.getElementById('resultInvoice').textContent = record.invoice_number || '—';
+      document.getElementById('resultAmount').textContent = record.total_amount != null
+        ? `${record.currency || ''} ${fmtMoney(record.total_amount)}`.trim()
+        : '—';
+      document.getElementById('resultConfidence').textContent = record.model_confidence != null
+        ? `${Math.round(Number(record.model_confidence) * 100)}%`
+        : '—';
+      const messages = {
+        STORED: 'Extraction complete. The normalized invoice has been stored and added to your records.',
+        REVIEW_REQUIRED: 'Extraction completed, but this invoice needs a quick human review before approval.',
+        DUPLICATE: 'This file matches an invoice that has already been processed.',
+        REJECTED: job.error_message || result.error_message || 'The file did not pass document validation.',
+        FAILED: job.error_message || result.error_message || 'Processing failed. You can retry this job from the workspace.',
+      };
+      document.getElementById('resultMessage').textContent = messages[status] || 'The document is moving through the extraction pipeline.';
+      document.getElementById('resultJson').textContent = JSON.stringify(result, null, 2);
+    }
+    function renderProcessingJob(jobId, fileName) {
+      document.getElementById('resultEmpty').hidden = true;
+      document.getElementById('resultContent').hidden = false;
+      document.getElementById('resultJob').textContent = String(jobId).slice(0, 13);
+      document.getElementById('resultTitle').textContent = fileName;
+      const statusTag = document.getElementById('resultStatus');
+      statusTag.textContent = 'PROCESSING';
+      statusTag.className = 'tag';
+      document.getElementById('resultVendor').textContent = 'Extracting…';
+      document.getElementById('resultInvoice').textContent = '—';
+      document.getElementById('resultAmount').textContent = '—';
+      document.getElementById('resultConfidence').textContent = '—';
+      document.getElementById('resultMessage').textContent = 'Secure upload complete. The worker is validating and extracting invoice fields.';
+      document.getElementById('resultJson').textContent = JSON.stringify({ job_id: jobId, status: 'PROCESSING' }, null, 2);
+    }
+    async function waitForJob(jobId, fileName) {
+      const deadline = Date.now() + 360000;
+      renderProcessingJob(jobId, fileName);
+      while (Date.now() < deadline) {
+        await wait(1800);
+        const response = await fetch(`/uploads/${encodeURIComponent(jobId)}`);
+        if (!response.ok) throw new Error('Could not read processing status.');
+        const job = await response.json();
+        if (job.status === 'PROCESSING') setUploadMessage(`Extracting data from ${fileName}…`);
+        if (terminalJobStatuses.has(job.status)) {
+          renderJobResult(job);
+          setPipeline('complete');
+          const isFailure = ['REJECTED', 'FAILED'].includes(job.status);
+          setUploadMessage(
+            isFailure ? `${fileName} could not be processed.` : `${fileName} finished with status ${job.status.replaceAll('_', ' ')}.`,
+            isFailure ? 'error' : 'success'
+          );
+          await loadData();
+          return job;
+        }
+      }
+      throw new Error('Processing is taking longer than expected. The job is still running; refresh shortly to see it in activity.');
+    }
     async function uploadAndProcess() {
       const input = document.getElementById('uploadInput');
-      const statusEl = document.getElementById('uploadStatus');
-      const file = input?.files?.[0];
+      const file = selectedUploadFile || input?.files?.[0];
       if (!file) {
-        window.alert('Choose a file first.');
+        setUploadMessage('Choose a PDF, PNG, or JPG before processing.', 'error');
         return;
       }
-      statusEl.textContent = 'Uploading and processing...';
-      if (uploadMode === 's3') {
-        const authResp = await fetch('/uploads/presign', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ filename: file.name, content_type: file.type, size: file.size })
-        });
-        const authPayload = await authResp.json();
-        if (!authResp.ok) {
-          statusEl.textContent = '';
-          window.alert(authPayload.detail || 'Upload authorization failed.');
+      setUploadBusy(true);
+      setPipeline('authorize');
+      setUploadMessage('Authorizing a private upload…');
+      try {
+        if (uploadMode === 's3') {
+          const authResp = await fetch('/uploads/presign', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ filename: file.name, content_type: detectContentType(file), size: file.size })
+          });
+          const authPayload = await authResp.json();
+          if (!authResp.ok) throw new Error(authPayload.detail || 'Upload authorization failed.');
+          const remaining = document.getElementById('documentsRemaining');
+          if (remaining && authPayload.documents_remaining != null) remaining.textContent = authPayload.documents_remaining;
+          setPipeline('upload');
+          setUploadMessage(`Uploading ${file.name} directly to encrypted S3…`);
+          const form = new FormData();
+          for (const [key, value] of Object.entries(authPayload.upload.fields || {})) form.append(key, value);
+          form.append('file', file);
+          const s3Resp = await fetch(authPayload.upload.url, { method: 'POST', body: form });
+          if (!s3Resp.ok) throw new Error('The direct S3 upload failed. Please try again.');
+          setPipeline('process');
+          setUploadMessage(`Upload complete. Starting extraction for ${file.name}…`);
+          input.value = '';
+          selectedUploadFile = null;
+          await waitForJob(authPayload.job_id, file.name);
           return;
         }
         const form = new FormData();
-        for (const [key, value] of Object.entries(authPayload.upload.fields || {})) form.append(key, value);
         form.append('file', file);
-        const s3Resp = await fetch(authPayload.upload.url, { method: 'POST', body: form });
-        if (!s3Resp.ok) {
-          statusEl.textContent = '';
-          window.alert('S3 upload failed.');
-          return;
-        }
-        statusEl.textContent = `Uploaded ${file.name}; processing has started.`;
+        const response = await fetch('/upload', { method: 'POST', body: form });
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.detail || 'Upload failed.');
+        const processing = payload.processing_result || {};
+        renderJobResult({ id: processing.document_id, original_name: file.name, status: processing.status, result: processing });
+        setPipeline('complete');
+        setUploadMessage(`${file.name} finished with status ${processing.status || 'completed'}.`, 'success');
         input.value = '';
-        return;
+        selectedUploadFile = null;
+        await loadData();
+      } catch (error) {
+        setUploadMessage(error.message || 'The upload could not be completed.', 'error');
+        setPipeline('idle');
+      } finally {
+        setUploadBusy(false);
       }
-      const form = new FormData();
-      form.append('file', file);
-      const resp = await fetch('/upload', {
-        method: 'POST',
-        body: form
-      });
-      const payload = await resp.json();
-      if (!resp.ok) {
-        statusEl.textContent = '';
-        window.alert(payload.detail || 'Upload failed.');
-        return;
-      }
-      const processing = payload.processing_result || {};
-      statusEl.textContent = `Processed ${file.name}: ${processing.status || 'completed'}`;
-      input.value = '';
-      await loadData();
     }
     async function loadData() {
       const [dashboardResp, reviewResp, historyResp] = await Promise.all([
@@ -1390,9 +1842,21 @@ def _dashboard_html(upload_mode: str = "r2") -> str:
         errorBox.style.display = 'none';
       }
     }
+    bindUploadControls();
     loadData();
     setInterval(loadData, 30000);
   </script>
 </body>
 </html>"""
-    return html.replace("__UPLOAD_MODE__", upload_mode)
+    if isinstance(principal, AlphaUser):
+        alpha_user = principal.username
+        documents_remaining = str(principal.documents_remaining)
+    else:
+        alpha_user = str(principal or "Operator")
+        documents_remaining = "—"
+    safe_upload_mode = upload_mode if upload_mode in {"s3", "r2"} else "disabled"
+    return (
+        html.replace("__UPLOAD_MODE__", safe_upload_mode)
+        .replace("__ALPHA_USER__", html_lib.escape(alpha_user))
+        .replace("__DOCUMENTS_REMAINING__", documents_remaining)
+    )

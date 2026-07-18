@@ -440,6 +440,7 @@ def _process_candidate(
                 "status": "REVIEW_REQUIRED",
                 "reason_codes": ["schema_validation_failed"],
                 "file_hash": file_hash,
+                "record": normalized_payload,
             }
         decision = decide_review_status(
             is_valid=validation["is_valid"],
@@ -479,6 +480,7 @@ def _process_candidate(
                 "status": "REVIEW_REQUIRED",
                 "reason_codes": list(decision.reason_codes),
                 "file_hash": file_hash,
+                "record": normalized_payload,
             }
 
         record = validation["record"].model_dump(mode="json")
@@ -514,6 +516,7 @@ def _process_candidate(
             "file_hash": file_hash,
             "used_provider": used_provider,
             "needs_review": needs_review,
+            "record": record,
         }
         if validation_metadata:
             success_result.update(validation_metadata)
