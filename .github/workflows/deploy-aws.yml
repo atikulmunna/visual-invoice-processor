@@ -53,30 +53,27 @@ jobs:
         run: sam build
 
       - name: Deploy stack
-        run: >-
-          sam deploy
-          --stack-name invoice-processor-alpha
-          --region ap-southeast-1
-          --resolve-image-repos
-          --resolve-s3
-          --capabilities CAPABILITY_IAM
-          --no-confirm-changeset
-          --no-fail-on-empty-changeset
-          --parameter-overrides
-          PostgresParameterName=${{ vars.POSTGRES_PARAMETER_NAME }}
-          MistralParameterName=${{ vars.MISTRAL_PARAMETER_NAME }}
-          BudgetAlertEmail=${{ vars.BUDGET_ALERT_EMAIL }}
+        shell: bash
+        run: |
+          account_id=$(aws sts get-caller-identity --query Account --output text)
+          sam deploy \
+            --stack-name invoice-processor-alpha \
+            --region ap-southeast-1 \
+            --s3-bucket "invoice-processor-alpha-deploy-${account_id}-ap-southeast-1" \
+            --image-repositories \
+              "WebFunction=${account_id}.dkr.ecr.ap-southeast-1.amazonaws.com/invoice-processor-alpha-web" \
+              "WorkerFunction=${account_id}.dkr.ecr.ap-southeast-1.amazonaws.com/invoice-processor-alpha-worker" \
+            --role-arn "arn:aws:iam::${account_id}:role/invoice-processor-alpha-cloudformation-execution" \
+            --capabilities CAPABILITY_IAM \
+            --no-confirm-changeset \
+            --no-fail-on-empty-changeset \
+            --parameter-overrides \
+              PostgresParameterName=${{ vars.POSTGRES_PARAMETER_NAME }} \
+              MistralParameterName=${{ vars.MISTRAL_PARAMETER_NAME }} \
+              BudgetAlertEmail=${{ vars.BUDGET_ALERT_EMAIL }}
 
       - name: Smoke test health endpoint
         shell: bash
         run: |
           url=$(aws cloudformation describe-stacks --stack-name invoice-processor-alpha --query "Stacks[0].Outputs[?OutputKey=='DashboardUrl'].OutputValue" --output text)
           curl --fail --silent --show-error "${url}health"
-
-      - name: Retain only two Lambda images
-        shell: bash
-        run: |
-          repositories=$(aws ecr describe-repositories --query "repositories[?contains(repositoryName, 'invoice-processor-alpha')].repositoryName" --output text)
-          for repository in ${repositories}; do
-            aws ecr put-lifecycle-policy --repository-name "${repository}" --lifecycle-policy-text file://infra/ecr-lifecycle.json
-          done

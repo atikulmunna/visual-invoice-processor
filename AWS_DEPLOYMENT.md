@@ -16,7 +16,9 @@ The AWS deployment is serverless: FastAPI runs behind a Lambda Function URL, bro
 
 1. Apply `migrations/002_private_alpha.sql` in the Supabase SQL editor.
 2. Create Standard `SecureString` parameters in `ap-southeast-1` for the Supabase DSN and Mistral API key. Use the AWS-managed SSM key, not a customer-managed monthly KMS key.
-3. Bootstrap GitHub OIDC once:
+3. Bootstrap GitHub OIDC once. This creates a repository-specific deployment role,
+   a least-privilege CloudFormation execution role, two ECR repositories, and a
+   seven-day deployment-artifact bucket:
 
    ```powershell
    aws cloudformation deploy `
