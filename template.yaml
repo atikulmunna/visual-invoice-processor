@@ -104,7 +104,6 @@ Resources:
       PackageType: Image
       MemorySize: 1024
       Timeout: 30
-      ReservedConcurrentExecutions: 2
       FunctionUrlConfig:
         AuthType: NONE
         InvokeMode: BUFFERED
@@ -134,7 +133,6 @@ Resources:
       PackageType: Image
       MemorySize: 1024
       Timeout: 300
-      ReservedConcurrentExecutions: 2
       ImageConfig:
         Command: ["app.lambda_handlers.s3_handler"]
       Policies:
