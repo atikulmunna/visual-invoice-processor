@@ -3,6 +3,43 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
+
+
+def load_aws_parameter_secrets(ssm_client: Any | None = None) -> None:
+    parameter_names = {
+        target: os.getenv(parameter_env, "").strip()
+        for target, parameter_env in {
+            "POSTGRES_DSN": "POSTGRES_PARAMETER_NAME",
+            "MISTRAL_API_KEY": "MISTRAL_PARAMETER_NAME",
+        }.items()
+        if not os.getenv(target)
+    }
+    parameter_names = {target: name for target, name in parameter_names.items() if name}
+    if not parameter_names:
+        return
+
+    if ssm_client is None:
+        try:
+            import boto3
+        except ImportError as exc:  # pragma: no cover - included in the Lambda image
+            raise RuntimeError("boto3 is required to load AWS parameter secrets") from exc
+        ssm_client = boto3.client("ssm", region_name=os.getenv("AWS_REGION", "ap-southeast-1"))
+
+    response = ssm_client.get_parameters(
+        Names=sorted(set(parameter_names.values())),
+        WithDecryption=True,
+    )
+    values = {
+        item["Name"]: item["Value"]
+        for item in response.get("Parameters", [])
+        if item.get("Name") and item.get("Value")
+    }
+    missing = sorted(name for name in parameter_names.values() if name not in values)
+    if missing:
+        raise RuntimeError(f"AWS parameter secret(s) unavailable: {', '.join(missing)}")
+    for target, name in parameter_names.items():
+        os.environ[target] = values[name]
 
 
 def _parse_bool(value: str | None, default: bool = False) -> bool:

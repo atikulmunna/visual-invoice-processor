@@ -25,7 +25,7 @@ Globals:
         S3_INBOX_PREFIX: inbox/
         S3_ARCHIVE_PREFIX: archive/
         LEDGER_BACKEND: postgres
-        POSTGRES_DSN: !Sub "{{resolve:ssm-secure:${PostgresParameterName}}}"
+        POSTGRES_PARAMETER_NAME: !Ref PostgresParameterName
         POSTGRES_TABLE: ledger_records
         REVIEW_QUEUE_BACKEND: postgres
         REVIEW_QUEUE_TABLE: review_queue_items
@@ -37,7 +37,7 @@ Globals:
         MAX_PDF_PAGES: "5"
         EXTRACTION_PROVIDER: mistral
         MISTRAL_MODEL: mistral-small-latest
-        MISTRAL_API_KEY: !Sub "{{resolve:ssm-secure:${MistralParameterName}}}"
+        MISTRAL_PARAMETER_NAME: !Ref MistralParameterName
         NORMALIZATION_RULES_PATH: config/normalization_rules.json
         REVIEW_CONFIDENCE_THRESHOLD: "0.5"
         STORE_REVIEW_SCORE_THRESHOLD: "0.6"
@@ -118,6 +118,11 @@ Resources:
                 - s3:GetObject
                 - s3:PutObject
               Resource: !Sub "arn:${AWS::Partition}:s3:::invoice-processor-alpha-${AWS::AccountId}-${AWS::Region}/inbox/*"
+            - Effect: Allow
+              Action: ssm:GetParameters
+              Resource:
+                - !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/invoice-processor/alpha/postgres-dsn"
+                - !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/invoice-processor/alpha/mistral-api-key"
 
   WorkerFunction:
     Type: AWS::Serverless::Function
@@ -143,6 +148,11 @@ Resources:
             - Effect: Allow
               Action: s3:PutObject
               Resource: !Sub "arn:${AWS::Partition}:s3:::invoice-processor-alpha-${AWS::AccountId}-${AWS::Region}/archive/*"
+            - Effect: Allow
+              Action: ssm:GetParameters
+              Resource:
+                - !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/invoice-processor/alpha/postgres-dsn"
+                - !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/invoice-processor/alpha/mistral-api-key"
       Events:
         InvoiceUploaded:
           Type: S3
