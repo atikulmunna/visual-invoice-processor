@@ -90,6 +90,47 @@ class NormalizationRuleEngine:
                 return normalized
         return None
 
+    @staticmethod
+    def _clean_ocr_line(line: str) -> str:
+        without_markup = re.sub(r"<[^>]+>", " ", line)
+        without_markup = re.sub(r"[*_`|]", " ", without_markup)
+        return re.sub(r"\s+", " ", without_markup).strip()
+
+    def _extract_invoice_number_from_ocr(self, text: str) -> str | None:
+        pattern = re.compile(
+            r"\binvoice\s*(?:number|no\.?)?\s*[#:]?\s*([A-Za-z0-9][A-Za-z0-9./-]{2,})",
+            re.IGNORECASE,
+        )
+        for line in text.splitlines():
+            match = pattern.search(self._clean_ocr_line(line))
+            if match:
+                return match.group(1).strip()
+        return None
+
+    def _extract_amount_from_ocr(self, text: str, labels: tuple[str, ...]) -> float | None:
+        label_pattern = "|".join(re.escape(label) for label in labels)
+        pattern = re.compile(
+            rf"(?:{label_pattern})[^0-9\n]{{0,32}}([0-9][0-9,]*(?:\.\d{{1,2}})?)",
+            re.IGNORECASE,
+        )
+        for line in text.splitlines():
+            match = pattern.search(self._clean_ocr_line(line))
+            if match:
+                return self._safe_float(match.group(1), 0.0)
+        return None
+
+    def _extract_currency_from_ocr(self, text: str) -> str | None:
+        checks = (
+            (r"\b(?:BDT|Tk|Taka)\b|৳", "BDT"),
+            (r"\bUSD\b|\$", "USD"),
+            (r"\bEUR\b|€", "EUR"),
+            (r"\bGBP\b|£", "GBP"),
+        )
+        for pattern, currency in checks:
+            if re.search(pattern, text, re.IGNORECASE):
+                return currency
+        return None
+
     def _normalize_payment_method(self, value: Any) -> str:
         text = str(value or "").lower()
         for canonical, keywords in self.payment_method_map.items():
@@ -182,15 +223,50 @@ class NormalizationRuleEngine:
 
     def _recover_line_items_from_ocr(self, text: str) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
+        pending_description = ""
         for line in text.splitlines():
-            compact = line.strip()
+            compact = self._clean_ocr_line(line)
             if len(compact) < 8:
+                continue
+            row_pattern = (
+                r"^(?P<desc>.+?)\s*(?P<sku>\d{8,})\s+(?:Tk|BDT|৳)\s*"
+                r"(?P<unit>\d[\d,]*(?:\.\d+)?)\s+(?P<qty>\d+(?:\.\d+)?)\s+"
+                r"(?:Tk|BDT|৳)\s*(?P<total>\d[\d,]*(?:\.\d+)?)$"
+            )
+            candidates = [compact]
+            if pending_description:
+                candidates.insert(0, f"{pending_description} {compact}")
+            invoice_row = next(
+                (match for candidate in candidates if (match := re.match(row_pattern, candidate, re.IGNORECASE))),
+                None,
+            )
+            if invoice_row:
+                desc = invoice_row.group("desc").strip()
+                if not self._should_ignore_line_item(desc):
+                    rows.append(
+                        {
+                            "description": desc,
+                            "quantity": max(self._safe_float(invoice_row.group("qty"), 1.0), 0.0001),
+                            "unit_price": max(self._safe_float(invoice_row.group("unit"), 0.0), 0.0),
+                            "line_total": max(self._safe_float(invoice_row.group("total"), 0.0), 0.0),
+                            "category": None,
+                        }
+                    )
+                pending_description = ""
                 continue
             m = re.match(
                 r"^(?P<desc>.+?)\s+(?P<qty>\d+(?:\.\d+)?)\s+(?P<unit>\$?\d[\d,]*(?:\.\d+)?)\s+(?P<total>\$?\d[\d,]*(?:\.\d+)?)$",
                 compact,
             )
             if not m:
+                if (
+                    re.search(r"[A-Za-z]", compact)
+                    and not re.search(r"\b(?:Tk|BDT)\b|৳|\d{4,}", compact, re.IGNORECASE)
+                    and not self._should_ignore_line_item(compact)
+                ):
+                    pending_description = compact
+                else:
+                    pending_description = ""
                 continue
             desc = m.group("desc").strip()
             qty = self._safe_float(m.group("qty"), 1.0)
@@ -209,14 +285,38 @@ class NormalizationRuleEngine:
                     "category": None,
                 }
             )
+            pending_description = ""
         return rows
 
     def coerce_payload(self, raw: dict[str, Any]) -> dict[str, Any]:
         ocr_text = str(raw.get("_ocr_text", "") or "")
         total = self._safe_float(self._pick(raw, "total_amount", default=0.0), 0.0)
-        subtotal = self._safe_float(self._pick(raw, "subtotal_amount", default=total), total)
-        tax_amount = self._safe_float(self._pick(raw, "tax_amount", default=max(total - subtotal, 0.0)), 0.0)
-        confidence = self._safe_float(self._pick(raw, "model_confidence", default=self.default_confidence), self.default_confidence)
+        if total <= 0 and ocr_text:
+            total = self._extract_amount_from_ocr(ocr_text, ("grand total", "amount due", "total amount")) or total
+
+        subtotal = self._safe_float(self._pick(raw, "subtotal_amount", default=0.0), 0.0)
+        if subtotal <= 0 and ocr_text:
+            subtotal = self._extract_amount_from_ocr(ocr_text, ("subtotal", "sub total")) or subtotal
+
+        tax_amount = self._safe_float(self._pick(raw, "tax_amount", default=0.0), 0.0)
+        if tax_amount <= 0 and ocr_text:
+            tax_amount = self._extract_amount_from_ocr(ocr_text, ("vat", "tax amount", "sales tax", "tax")) or tax_amount
+
+        shipping_amount = self._safe_float(self._pick(raw, "shipping_amount", default=0.0), 0.0)
+        if shipping_amount <= 0 and ocr_text:
+            shipping_amount = self._extract_amount_from_ocr(
+                ocr_text,
+                ("shipping & handling", "shipping and handling", "shipping", "delivery charge"),
+            ) or shipping_amount
+
+        discount_amount = self._safe_float(self._pick(raw, "discount_amount", default=0.0), 0.0)
+        if discount_amount <= 0 and ocr_text:
+            discount_amount = self._extract_amount_from_ocr(ocr_text, ("discount", "coupon")) or discount_amount
+
+        explicit_confidence = self._pick(raw, "model_confidence")
+        confidence = self._safe_float(explicit_confidence, min(self.default_confidence, 0.6))
+        if explicit_confidence in (None, ""):
+            confidence = min(confidence, 0.6)
         confidence = max(0.0, min(confidence, 1.0))
 
         invoice_date = self._normalize_date(self._pick(raw, "invoice_date"))
@@ -227,28 +327,45 @@ class NormalizationRuleEngine:
 
         line_items = self._normalize_line_items(self._pick(raw, "line_items", default=[]), ocr_text)
         line_items = [item for item in line_items if not self._should_ignore_line_item(str(item.get("description", "")))]
+        if subtotal <= 0 and line_items:
+            subtotal = round(sum(self._safe_float(item.get("line_total"), 0.0) for item in line_items), 2)
+        if total <= 0 and subtotal > 0:
+            total = round(subtotal + tax_amount + shipping_amount - discount_amount, 2)
         line_items = self._reconcile_line_items(line_items, subtotal if subtotal > 0 else total)
 
         document_type = str(self._pick(raw, "document_type", default=self.default_document_type)).lower()
         if document_type not in {"invoice", "receipt"}:
             document_type = "invoice"
 
-        currency = str(self._pick(raw, "currency", default=self.default_currency)).upper()
+        raw_currency = self._pick(raw, "currency")
+        currency = str(raw_currency or self._extract_currency_from_ocr(ocr_text) or self.default_currency).upper()
         if len(currency) != 3:
             currency = self.default_currency
+
+        invoice_number = self._pick(raw, "invoice_number")
+        if not invoice_number and ocr_text:
+            invoice_number = self._extract_invoice_number_from_ocr(ocr_text)
+        if total <= 0 or not invoice_number:
+            confidence = min(confidence, 0.35)
+
+        payment_method = self._pick(raw, "payment_method")
+        if not payment_method and ocr_text:
+            payment_method = ocr_text
 
         return {
             "document_type": document_type,
             "vendor_name": self._normalize_vendor_name(raw),
             "vendor_tax_id": self._pick(raw, "vendor_tax_id"),
-            "invoice_number": self._pick(raw, "invoice_number"),
+            "invoice_number": invoice_number,
             "invoice_date": invoice_date,
             "due_date": self._normalize_date(self._pick(raw, "due_date")),
             "currency": currency,
             "subtotal": max(subtotal, 0.0),
             "tax_amount": max(tax_amount, 0.0),
+            "shipping_amount": max(shipping_amount, 0.0),
+            "discount_amount": max(discount_amount, 0.0),
             "total_amount": max(total, 0.0),
-            "payment_method": self._normalize_payment_method(self._pick(raw, "payment_method")),
+            "payment_method": self._normalize_payment_method(payment_method),
             "line_items": line_items,
             "model_confidence": confidence,
             "validation_score": confidence,

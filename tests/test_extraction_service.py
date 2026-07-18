@@ -44,6 +44,8 @@ def test_extract_document_success_first_try(tmp_path: Path) -> None:
     assert payload["vendor_name"] == "Test"
     assert payload["_provider"] == "auto"
     assert len(client.calls) == 1
+    assert "invoice_number" in client.calls[0][1]
+    assert "Grand Total" in client.calls[0][1]
 
 
 def test_extract_document_retries_once_on_invalid_json(tmp_path: Path) -> None:

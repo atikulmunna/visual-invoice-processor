@@ -16,14 +16,26 @@ def evaluate_business_rules(
 ) -> list[dict[str, Any]]:
     violations: list[dict[str, Any]] = []
 
-    computed_total = round(record.subtotal + record.tax_amount, 2)
+    if record.total_amount <= amount_tolerance:
+        violations.append(
+            {
+                "code": "missing_total",
+                "severity": "error",
+                "message": "invoice total_amount must be greater than zero",
+            }
+        )
+
+    computed_total = round(
+        record.subtotal + record.tax_amount + record.shipping_amount - record.discount_amount,
+        2,
+    )
     declared_total = round(record.total_amount, 2)
     if abs(computed_total - declared_total) > amount_tolerance:
         violations.append(
             {
                 "code": "amount_mismatch",
                 "severity": "error",
-                "message": "subtotal + tax does not match total_amount",
+                "message": "subtotal + tax + shipping - discount does not match total_amount",
                 "expected_total": computed_total,
                 "actual_total": declared_total,
             }
@@ -75,7 +87,7 @@ def validate_and_score(
 ) -> dict[str, Any]:
     record = validate_invoice_payload(payload)
     violations = evaluate_business_rules(record, amount_tolerance=amount_tolerance)
-    total_rules = 3
+    total_rules = 4
     score = max(0.0, 1.0 - (len(violations) / total_rules))
     is_valid = not any(v["severity"] == "error" for v in violations)
     return {

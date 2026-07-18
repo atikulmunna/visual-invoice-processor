@@ -22,8 +22,15 @@ class ExtractionError(RuntimeError):
 SYSTEM_PROMPT = "Return strict JSON only. No markdown or prose."
 
 USER_EXTRACTION_PROMPT = (
-    "Extract invoice/receipt fields into one JSON object. "
-    "Use null for unknown values."
+    "Extract this invoice or receipt into exactly one JSON object with these keys: "
+    "document_type, vendor_name, vendor_tax_id, invoice_number, invoice_date, due_date, "
+    "currency, subtotal, tax_amount, shipping_amount, discount_amount, total_amount, "
+    "payment_method, line_items, and "
+    "model_confidence. Each line_items entry must contain description, quantity, "
+    "unit_price, line_total, and category. Read labeled values exactly: prefer Grand Total "
+    "for total_amount, do not confuse an order number with an invoice number, convert currency "
+    "symbols or labels to a three-letter ISO code, and use null only when a value is genuinely "
+    "absent. Amounts and confidence must be JSON numbers, not formatted strings."
 )
 
 CORRECTIVE_PROMPT = (
@@ -50,6 +57,39 @@ def _parse_json_payload(raw_text: str) -> dict[str, Any]:
         raise ExtractionError("Model returned invalid JSON", code="invalid_json") from exc
     if not isinstance(payload, dict):
         raise ExtractionError("Model output must be a JSON object", code="invalid_json_shape")
+    return payload
+
+
+def _native_pdf_text(file_path: Path) -> str | None:
+    if file_path.suffix.lower() != ".pdf":
+        return None
+    try:
+        from pypdf import PdfReader
+
+        chunks = [page.extract_text() or "" for page in PdfReader(str(file_path)).pages]
+    except Exception:  # noqa: BLE001
+        return None
+    text = "\n".join(chunk.strip() for chunk in chunks if chunk.strip()).strip()
+    return text or None
+
+
+def _enrich_extraction_payload(
+    payload: dict[str, Any],
+    *,
+    client: VisionClient,
+    file_path: Path,
+    provider_name: str,
+) -> dict[str, Any]:
+    text_chunks: list[str] = []
+    ocr_text = getattr(client, "last_ocr_text", None)
+    if isinstance(ocr_text, str) and ocr_text.strip():
+        text_chunks.append(ocr_text.strip())
+    native_text = _native_pdf_text(file_path)
+    if native_text and all(native_text not in chunk for chunk in text_chunks):
+        text_chunks.append(native_text)
+    if text_chunks:
+        payload["_ocr_text"] = "\n\n".join(text_chunks)
+    payload["_provider"] = provider_name
     return payload
 
 
@@ -382,19 +422,21 @@ def extract_document(
     first_text = active_client.extract_json(path, active_model, USER_EXTRACTION_PROMPT)
     try:
         payload = _parse_json_payload(first_text)
-        ocr_text = getattr(active_client, "last_ocr_text", None)
-        if isinstance(ocr_text, str) and ocr_text.strip():
-            payload["_ocr_text"] = ocr_text
-        payload["_provider"] = _resolved_provider_name()
-        return payload
+        return _enrich_extraction_payload(
+            payload,
+            client=active_client,
+            file_path=path,
+            provider_name=_resolved_provider_name(),
+        )
     except ExtractionError as exc:
         if exc.code not in {"invalid_json", "invalid_json_shape"}:
             raise
 
     corrective_text = active_client.extract_json(path, active_model, CORRECTIVE_PROMPT)
     payload = _parse_json_payload(corrective_text)
-    ocr_text = getattr(active_client, "last_ocr_text", None)
-    if isinstance(ocr_text, str) and ocr_text.strip():
-        payload["_ocr_text"] = ocr_text
-    payload["_provider"] = _resolved_provider_name()
-    return payload
+    return _enrich_extraction_payload(
+        payload,
+        client=active_client,
+        file_path=path,
+        provider_name=_resolved_provider_name(),
+    )

@@ -106,3 +106,15 @@ def test_validate_and_score_returns_machine_readable_violations() -> None:
     assert "validation_score" in result
     assert isinstance(result["violations"], list)
     assert any(v["code"] == "missing_identifier" for v in result["violations"])
+
+
+def test_zero_total_is_a_validation_error() -> None:
+    payload = _valid_payload()
+    payload["subtotal"] = 0.0
+    payload["tax_amount"] = 0.0
+    payload["total_amount"] = 0.0
+
+    result = validate_and_score(payload)
+
+    assert result["is_valid"] is False
+    assert any(v["code"] == "missing_total" and v["severity"] == "error" for v in result["violations"])

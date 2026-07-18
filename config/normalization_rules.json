@@ -12,6 +12,8 @@
     "currency": ["currency", "currency_code", "invoice_currency"],
     "subtotal_amount": ["subtotal", "sub_total", "amount_before_tax", "net_amount", "item_total"],
     "tax_amount": ["tax_amount", "tax", "vat", "gst", "sales_tax", "tax_total"],
+    "shipping_amount": ["shipping_amount", "shipping", "shipping_and_handling", "delivery_charge", "freight"],
+    "discount_amount": ["discount_amount", "discount", "coupon_discount", "promotion_discount"],
     "total_amount": ["total_amount", "total", "order_total", "grand_total", "amount_paid", "amount_due", "invoice_total", "total_due"],
     "payment_method": ["payment_method", "payment_mode", "paid_via", "method", "payment_history.method"],
     "line_items": ["line_items", "items", "products", "details", "charges", "invoice_lines"],
