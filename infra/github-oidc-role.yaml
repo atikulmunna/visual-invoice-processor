@@ -159,14 +159,6 @@ Resources:
                 Effect: Allow
                 Action: logs:DescribeLogGroups
                 Resource: "*"
-              - Sid: ReadApplicationParameters
-                Effect: Allow
-                Action:
-                  - ssm:GetParameter
-                  - ssm:GetParameters
-                Resource:
-                  - !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/invoice-processor/alpha/postgres-dsn"
-                  - !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/invoice-processor/alpha/mistral-api-key"
               - Sid: ReadApplicationImages
                 Effect: Allow
                 Action:
