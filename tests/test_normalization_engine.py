@@ -84,3 +84,41 @@ def test_engine_reconciles_overcounted_line_items_to_subtotal() -> None:
     payload = engine.coerce_payload(raw)
     total = sum(item["line_total"] for item in payload["line_items"])
     assert abs(total - 12.0) < 0.01
+
+
+def test_engine_recovers_labeled_invoice_fields_from_pdf_text() -> None:
+    engine = NormalizationRuleEngine(_rules())
+    raw = {
+        "invoice_number": None,
+        "subtotal": 0,
+        "tax_amount": 0,
+        "total_amount": 0,
+        "_ocr_text": """
+Order # 1001872388
+03-03-2025
+Invoice # 1001866868
+Black Printed Ramie-Cotton Fatua 0080000104060 Tk 1,246.51 1 Tk 1,246.51
+White Printed Cotton Fatua 0080000105624 Tk 927.27 1 Tk 927.27
+Subtotal: Tk 4,722.62
+Shipping & Handling Tk 80.00
+VAT Tk 472.26
+Grand Total Tk 5,274.88
+Payment Method
+Cash on delivery
+""",
+    }
+
+    payload = engine.coerce_payload(raw)
+
+    assert payload["invoice_number"] == "1001866868"
+    assert payload["invoice_date"] == "2025-03-03"
+    assert payload["currency"] == "BDT"
+    assert payload["subtotal"] == 4722.62
+    assert payload["tax_amount"] == 472.26
+    assert payload["shipping_amount"] == 80.0
+    assert payload["discount_amount"] == 0.0
+    assert payload["total_amount"] == 5274.88
+    assert payload["payment_method"] == "cash"
+    assert payload["model_confidence"] == 0.6
+    assert len(payload["line_items"]) == 2
+    assert payload["line_items"][0]["line_total"] == 1246.51

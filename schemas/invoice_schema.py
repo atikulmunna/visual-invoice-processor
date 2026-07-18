@@ -27,6 +27,8 @@ class InvoiceRecord(BaseModel):
     currency: CurrencyCode
     subtotal: float = Field(ge=0)
     tax_amount: float = Field(ge=0)
+    shipping_amount: float = Field(default=0, ge=0)
+    discount_amount: float = Field(default=0, ge=0)
     total_amount: float = Field(ge=0)
     payment_method: Literal["card", "cash", "bank", "unknown"] = "unknown"
     line_items: list[LineItem] = Field(default_factory=list)
