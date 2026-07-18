@@ -58,13 +58,10 @@ python -m app.alpha_admin reset --username tester.one
 
 The generated password is printed once. Send it privately and do not store it in GitHub, AWS environment variables, or repository files.
 
-## Verification and cutover
+## Verification
 
 1. Open the `DashboardUrl` CloudFormation output and verify `/health` without credentials.
 2. Verify the dashboard rejects missing and invalid credentials.
 3. Sign in with a tester account and upload one small repository sample.
 4. Confirm `processing_jobs` reaches `STORED` or `REVIEW_REQUIRED`, the ledger record exists, and the source object moved from `inbox/` to `archive/`.
 5. Confirm S3 public access is blocked, lifecycle rules exist, both log groups retain seven days, and the annual budget is active.
-6. Give testers the Lambda URL, observe it alongside Render, then stop Render. The old R2 files are intentionally not copied or deleted.
-
-The old GitHub R2 polling workflow is manual-only for rollback. Do not re-enable its schedule after S3 cutover.

@@ -6,8 +6,8 @@ from app.config import load_aws_parameter_secrets
 
 load_aws_parameter_secrets()
 
-from app.monitoring_api import create_monitoring_app
-from app.serverless_worker import handle_s3_event
+from app.monitoring_api import create_monitoring_app  # noqa: E402
+from app.serverless_worker import handle_s3_event  # noqa: E402
 
 try:
     from mangum import Mangum
