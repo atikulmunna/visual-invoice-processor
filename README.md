@@ -11,13 +11,6 @@
     </a>
   </p>
 
-  <p>
-    <img src="https://img.shields.io/badge/Python-3.13-CBC5B9?style=flat-square&logo=python&logoColor=111110" alt="Python 3.13" />
-    <img src="https://img.shields.io/badge/AWS-Lambda-F15A24?style=flat-square&logo=awslambda&logoColor=white" alt="AWS Lambda" />
-    <img src="https://img.shields.io/badge/Storage-Amazon_S3-403E3A?style=flat-square&logo=amazons3&logoColor=white" alt="Amazon S3" />
-    <img src="https://img.shields.io/badge/Database-Supabase-1D1C17?style=flat-square&logo=supabase&logoColor=white" alt="Supabase" />
-    <img src="https://img.shields.io/badge/Extraction-Mistral_AI-F15A24?style=flat-square" alt="Mistral AI" />
-  </p>
 </div>
 
 ---
@@ -28,9 +21,9 @@ Ledgerly is a private-alpha invoice processing application built for a small, co
 
 <div align="center">
   <a href="https://2wuikcntsyyqfgkucq5m26vyfe0kekgl.lambda-url.ap-southeast-1.on.aws/">
-    <img src="assets/dashboard.png" alt="Ledgerly private-alpha sign-in experience" width="100%" />
+    <img src="assets/dashboard.png" alt="Ledgerly invoice processing dashboard" width="100%" />
   </a>
-  <sub>Secure entry point to the private-alpha invoice processing workspace.</sub>
+  <sub>Private-alpha workspace for direct S3 uploads, extraction results, records, and review operations.</sub>
 </div>
 
 ## Highlights
