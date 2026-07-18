@@ -27,7 +27,9 @@ The AWS deployment is serverless: FastAPI runs behind a Lambda Function URL, bro
      --region ap-southeast-1
    ```
 
-   If the account already has the GitHub Actions OIDC provider, reuse it and create only the role rather than creating a duplicate provider.
+   If the account already has the GitHub Actions OIDC provider, add
+   `ExistingGitHubOidcProviderArn=arn:aws:iam::<account-id>:oidc-provider/token.actions.githubusercontent.com`
+   to `--parameter-overrides`. The stack then creates only the repository-specific role.
 
 4. Add these GitHub repository variables:
 
@@ -62,4 +64,3 @@ The generated password is printed once. Send it privately and do not store it in
 6. Give testers the Lambda URL, observe it alongside Render, then stop Render. The old R2 files are intentionally not copied or deleted.
 
 The old GitHub R2 polling workflow is manual-only for rollback. Do not re-enable its schedule after S3 cutover.
-
