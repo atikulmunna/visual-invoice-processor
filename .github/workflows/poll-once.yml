@@ -2,8 +2,6 @@ name: Poll Once
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "*/15 * * * *"
 
 jobs:
   poll-once:

@@ -12,9 +12,17 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from pydantic import BaseModel
 
+from app.alpha_store import (
+    AlphaAuthenticationError,
+    AlphaNotFoundError,
+    AlphaQuotaError,
+    AlphaStore,
+    AlphaUser,
+)
 from app.config import Settings, load_dotenv
 from app.drive_service import is_supported_mime_type
 from app.main import process_r2_object_now
+from app.object_storage_service import ObjectStorageService
 from app.r2_service import R2Service
 from app.review_queue import dismiss_review_item, list_review_items, resolve_review_item
 
@@ -25,10 +33,32 @@ class ReviewResolveRequest(BaseModel):
     corrected_record: dict[str, Any] | None = None
 
 
-def _build_auth_dependency():
+class PresignUploadRequest(BaseModel):
+    filename: str
+    content_type: str
+    size: int
+
+
+def _build_auth_dependency(postgres_dsn: str | None = None):
     security = HTTPBasic(auto_error=False)
 
-    def _auth(credentials: HTTPBasicCredentials | None = Depends(security)) -> str:
+    def _auth(credentials: HTTPBasicCredentials | None = Depends(security)) -> str | AlphaUser:
+        if (os.getenv("ALPHA_AUTH_ENABLED") or "").strip().lower() in {"1", "true", "yes", "on"}:
+            if credentials is None or not postgres_dsn:
+                raise HTTPException(
+                    status_code=401,
+                    detail="Unauthorized",
+                    headers={"WWW-Authenticate": "Basic"},
+                )
+            try:
+                return AlphaStore(postgres_dsn).authenticate(credentials.username, credentials.password)
+            except AlphaAuthenticationError as exc:
+                raise HTTPException(
+                    status_code=401,
+                    detail="Unauthorized",
+                    headers={"WWW-Authenticate": "Basic"},
+                ) from exc
+
         username = (os.getenv("DASHBOARD_BASIC_AUTH_USERNAME") or "").strip()
         password = (os.getenv("DASHBOARD_BASIC_AUTH_PASSWORD") or "").strip()
         if not username and not password:
@@ -63,7 +93,7 @@ def create_monitoring_app(
 ) -> FastAPI:
     app = FastAPI(title="Invoice Processor Monitoring API", version="0.1.0")
     active_postgres_dsn = postgres_dsn or os.getenv("POSTGRES_DSN")
-    require_dashboard_auth = _build_auth_dependency()
+    require_dashboard_auth = _build_auth_dependency(active_postgres_dsn)
 
     @app.get("/health")
     def health() -> dict[str, str]:
@@ -179,6 +209,8 @@ def create_monitoring_app(
     ) -> dict[str, Any]:
         load_dotenv()
         settings = Settings.from_env()
+        if settings.ingestion_backend == "s3":
+            raise HTTPException(status_code=410, detail="Use /uploads/presign for S3 uploads")
         if settings.ingestion_backend != "r2":
             raise HTTPException(status_code=400, detail="Dashboard upload requires INGESTION_BACKEND=r2")
 
@@ -214,9 +246,97 @@ def create_monitoring_app(
             "processing_result": result,
         }
 
+    @app.post("/uploads/presign")
+    def presign_upload(
+        payload: PresignUploadRequest,
+        principal: str | AlphaUser = Depends(require_dashboard_auth),
+    ) -> dict[str, Any]:
+        load_dotenv()
+        settings = Settings.from_env()
+        if settings.ingestion_backend != "s3":
+            raise HTTPException(status_code=400, detail="Presigned uploads require INGESTION_BACKEND=s3")
+        if not isinstance(principal, AlphaUser):
+            raise HTTPException(status_code=403, detail="Private-alpha authentication is required")
+        if payload.size < 1 or payload.size > settings.max_upload_bytes:
+            raise HTTPException(status_code=400, detail=f"File must be between 1 and {settings.max_upload_bytes} bytes")
+        if not is_supported_mime_type(payload.content_type, settings.allowed_mime_types):
+            raise HTTPException(status_code=400, detail=f"Unsupported file type: {payload.content_type}")
+
+        original_name = Path(payload.filename).name
+        if not original_name:
+            raise HTTPException(status_code=400, detail="A filename is required")
+        job_id = str(uuid4())
+        object_key = (
+            f"{settings.s3_inbox_prefix.rstrip('/')}/{principal.id}/{job_id}/{original_name}"
+        )
+        try:
+            store = AlphaStore(active_postgres_dsn or "")
+            store.authorize_upload(
+                principal,
+                object_key=object_key,
+                original_name=original_name,
+                content_type=payload.content_type,
+                declared_size=payload.size,
+            )
+            storage = ObjectStorageService.from_settings(settings)
+            upload = storage.create_presigned_upload(
+                object_key,
+                content_type=payload.content_type,
+                max_bytes=settings.max_upload_bytes,
+                expires_seconds=300,
+            )
+        except AlphaQuotaError as exc:
+            raise HTTPException(status_code=429, detail=str(exc)) from exc
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {
+            "job_id": job_id,
+            "object_key": object_key,
+            "upload": upload,
+            "expires_in": 300,
+            "documents_remaining": max(principal.documents_remaining - 1, 0),
+        }
+
+    @app.get("/uploads/{job_id}")
+    def upload_status(
+        job_id: str,
+        principal: str | AlphaUser = Depends(require_dashboard_auth),
+    ) -> dict[str, Any]:
+        if not isinstance(principal, AlphaUser):
+            raise HTTPException(status_code=403, detail="Private-alpha authentication is required")
+        try:
+            return AlphaStore(active_postgres_dsn or "").get_job(job_id, user_id=principal.id)
+        except AlphaNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.post("/uploads/{job_id}/retry")
+    def retry_upload(
+        job_id: str,
+        principal: str | AlphaUser = Depends(require_dashboard_auth),
+    ) -> dict[str, str]:
+        if not isinstance(principal, AlphaUser):
+            raise HTTPException(status_code=403, detail="Private-alpha authentication is required")
+        load_dotenv()
+        settings = Settings.from_env()
+        store = AlphaStore(active_postgres_dsn or "")
+        try:
+            object_key = store.retry_job(job_id, user_id=principal.id)
+            ObjectStorageService.from_settings(settings).retrigger_object(object_key)
+        except AlphaQuotaError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except Exception as exc:  # noqa: BLE001
+            store.complete_job(
+                job_id,
+                status="FAILED",
+                error_code="retry_trigger_failed",
+                error_message=str(exc),
+            )
+            raise HTTPException(status_code=400, detail="Retry could not be scheduled") from exc
+        return {"job_id": job_id, "status": "AUTHORIZED"}
+
     @app.get("/dashboard", response_class=HTMLResponse)
-    def dashboard(_: str = Depends(require_dashboard_auth)) -> str:
-        return _dashboard_html()
+    def dashboard(_: str | AlphaUser = Depends(require_dashboard_auth)) -> str:
+        return _dashboard_html(os.getenv("INGESTION_BACKEND", "drive"))
 
     return app
 
@@ -605,8 +725,8 @@ def _format_currency_total_display(currency_totals: list[dict[str, Any]]) -> str
     return f"{len(currency_totals)} currencies"
 
 
-def _dashboard_html() -> str:
-    return """<!doctype html>
+def _dashboard_html(upload_mode: str = "r2") -> str:
+    html = """<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
@@ -1132,6 +1252,7 @@ def _dashboard_html() -> str:
       await loadData();
       window.alert(`${action} complete for ${documentId} (${payload.review_status})`);
     }
+    const uploadMode = '__UPLOAD_MODE__';
     async function uploadAndProcess() {
       const input = document.getElementById('uploadInput');
       const statusEl = document.getElementById('uploadStatus');
@@ -1140,9 +1261,34 @@ def _dashboard_html() -> str:
         window.alert('Choose a file first.');
         return;
       }
+      statusEl.textContent = 'Uploading and processing...';
+      if (uploadMode === 's3') {
+        const authResp = await fetch('/uploads/presign', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ filename: file.name, content_type: file.type, size: file.size })
+        });
+        const authPayload = await authResp.json();
+        if (!authResp.ok) {
+          statusEl.textContent = '';
+          window.alert(authPayload.detail || 'Upload authorization failed.');
+          return;
+        }
+        const form = new FormData();
+        for (const [key, value] of Object.entries(authPayload.upload.fields || {})) form.append(key, value);
+        form.append('file', file);
+        const s3Resp = await fetch(authPayload.upload.url, { method: 'POST', body: form });
+        if (!s3Resp.ok) {
+          statusEl.textContent = '';
+          window.alert('S3 upload failed.');
+          return;
+        }
+        statusEl.textContent = `Uploaded ${file.name}; processing has started.`;
+        input.value = '';
+        return;
+      }
       const form = new FormData();
       form.append('file', file);
-      statusEl.textContent = 'Uploading and processing...';
       const resp = await fetch('/upload', {
         method: 'POST',
         body: form
@@ -1249,3 +1395,4 @@ def _dashboard_html() -> str:
   </script>
 </body>
 </html>"""
+    return html.replace("__UPLOAD_MODE__", upload_mode)

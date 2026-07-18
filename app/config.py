@@ -32,6 +32,10 @@ class Settings:
     r2_bucket_name: str | None = None
     r2_inbox_prefix: str = "inbox/"
     r2_archive_prefix: str = "archive/"
+    s3_bucket_name: str | None = None
+    s3_region: str = "ap-southeast-1"
+    s3_inbox_prefix: str = "inbox/"
+    s3_archive_prefix: str = "archive/"
     allowed_mime_types: tuple[str, ...] = (
         "image/jpeg",
         "image/png",
@@ -46,6 +50,12 @@ class Settings:
     review_queue_backend: str = "auto"
     review_queue_table: str = "review_queue_items"
     normalization_rules_path: str = "config/normalization_rules.json"
+    alpha_auth_enabled: bool = False
+    alpha_max_users: int = 10
+    alpha_document_limit: int = 20
+    alpha_global_page_limit: int = 1000
+    max_upload_bytes: int = 5 * 1024 * 1024
+    max_pdf_pages: int = 5
 
     @property
     def google_scopes(self) -> tuple[str, ...]:
@@ -57,8 +67,8 @@ class Settings:
     @classmethod
     def from_env(cls) -> "Settings":
         ingestion_backend = os.getenv("INGESTION_BACKEND", "drive").strip().lower()
-        if ingestion_backend not in {"drive", "r2"}:
-            raise ValueError("INGESTION_BACKEND must be one of: drive, r2")
+        if ingestion_backend not in {"drive", "r2", "s3"}:
+            raise ValueError("INGESTION_BACKEND must be one of: drive, r2, s3")
 
         auth_mode = os.getenv("GOOGLE_AUTH_MODE", "service_account").strip().lower()
         if auth_mode not in {"service_account", "oauth"}:
@@ -122,6 +132,10 @@ class Settings:
             if missing:
                 raise ValueError(f"Missing required environment variable(s) for R2: {', '.join(missing)}")
 
+        s3_bucket_name = os.getenv("S3_BUCKET_NAME")
+        if ingestion_backend == "s3" and (not s3_bucket_name or not s3_bucket_name.strip()):
+            raise ValueError("S3_BUCKET_NAME is required when INGESTION_BACKEND=s3")
+
         postgres_dsn = os.getenv("POSTGRES_DSN")
         if ledger_backend == "postgres" and (not postgres_dsn or not postgres_dsn.strip()):
             raise ValueError("POSTGRES_DSN is required when LEDGER_BACKEND=postgres")
@@ -139,6 +153,10 @@ class Settings:
             r2_bucket_name=r2_bucket_name,
             r2_inbox_prefix=os.getenv("R2_INBOX_PREFIX", "inbox/"),
             r2_archive_prefix=os.getenv("R2_ARCHIVE_PREFIX", "archive/"),
+            s3_bucket_name=s3_bucket_name,
+            s3_region=os.getenv("S3_REGION", os.getenv("AWS_REGION", "ap-southeast-1")),
+            s3_inbox_prefix=os.getenv("S3_INBOX_PREFIX", "inbox/"),
+            s3_archive_prefix=os.getenv("S3_ARCHIVE_PREFIX", "archive/"),
             allowed_mime_types=allowed_mimes,
             log_level=os.getenv("LOG_LEVEL", "INFO").upper(),
             ledger_backend=ledger_backend,
@@ -151,6 +169,12 @@ class Settings:
             normalization_rules_path=os.getenv(
                 "NORMALIZATION_RULES_PATH", "config/normalization_rules.json"
             ),
+            alpha_auth_enabled=_parse_bool(os.getenv("ALPHA_AUTH_ENABLED"), False),
+            alpha_max_users=int(os.getenv("ALPHA_MAX_USERS", "10")),
+            alpha_document_limit=int(os.getenv("ALPHA_DOCUMENT_LIMIT", "20")),
+            alpha_global_page_limit=int(os.getenv("ALPHA_GLOBAL_PAGE_LIMIT", "1000")),
+            max_upload_bytes=int(os.getenv("MAX_UPLOAD_BYTES", str(5 * 1024 * 1024))),
+            max_pdf_pages=int(os.getenv("MAX_PDF_PAGES", "5")),
         )
 
 

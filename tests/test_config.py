@@ -89,3 +89,29 @@ def test_settings_r2_requires_core_r2_envs(
 
     with pytest.raises(ValueError, match="R2_ENDPOINT_URL"):
         Settings.from_env()
+
+
+def test_settings_s3_uses_native_aws_configuration(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("INGESTION_BACKEND", "s3")
+    monkeypatch.setenv("S3_BUCKET_NAME", "alpha-invoices")
+    monkeypatch.setenv("S3_REGION", "ap-southeast-1")
+    monkeypatch.setenv("LEDGER_BACKEND", "postgres")
+    monkeypatch.setenv("POSTGRES_DSN", "postgresql://user:pass@localhost:5432/db")
+    monkeypatch.delenv("GOOGLE_SERVICE_ACCOUNT_FILE", raising=False)
+    monkeypatch.delenv("DRIVE_INBOX_FOLDER_ID", raising=False)
+
+    settings = Settings.from_env()
+
+    assert settings.ingestion_backend == "s3"
+    assert settings.s3_bucket_name == "alpha-invoices"
+    assert settings.s3_region == "ap-southeast-1"
+
+
+def test_settings_s3_requires_bucket(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("INGESTION_BACKEND", "s3")
+    monkeypatch.setenv("LEDGER_BACKEND", "postgres")
+    monkeypatch.setenv("POSTGRES_DSN", "postgresql://user:pass@localhost:5432/db")
+    monkeypatch.delenv("S3_BUCKET_NAME", raising=False)
+
+    with pytest.raises(ValueError, match="S3_BUCKET_NAME"):
+        Settings.from_env()

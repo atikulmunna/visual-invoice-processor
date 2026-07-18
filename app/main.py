@@ -5,9 +5,10 @@ import hashlib
 import logging
 import os
 import re
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from uuid import uuid4
 
 from app.auth import get_google_credentials
@@ -19,6 +20,7 @@ from app.idempotency_store import DocumentClaimStore
 from app.logger import configure_logging
 from app.metrics import JsonlMetricsSink, MetricsCollector
 from app.normalization_engine import NormalizationRuleEngine
+from app.object_storage_service import ObjectStorageService
 from app.r2_service import R2Service
 from app.review_queue import (
     decide_review_status,
@@ -31,7 +33,17 @@ from app.storage_service import append_record
 from app.validation import validate_and_score
 from pydantic import ValidationError
 
-_TMP_DIR = Path("tmp")
+_TMP_DIR = (
+    Path(tempfile.gettempdir()) / "invoice-processor"
+    if os.getenv("AWS_LAMBDA_FUNCTION_NAME")
+    else Path("tmp")
+)
+
+
+class DocumentRejectedError(RuntimeError):
+    def __init__(self, message: str, code: str = "document_rejected") -> None:
+        super().__init__(message)
+        self.code = code
 
 
 def _sha256(path: Path) -> str:
@@ -47,13 +59,13 @@ def _download_candidate(settings: Settings, backend: object, candidate: dict[str
     if settings.ingestion_backend == "drive":
         assert isinstance(backend, DriveService)
         return backend.download_file(file_id=file_id, out_path=out_path)
-    assert isinstance(backend, R2Service)
+    assert isinstance(backend, (R2Service, ObjectStorageService))
     return backend.download_file(object_key=file_id, out_path=out_path)
 
 
 def _archive_candidate(settings: Settings, backend: object, candidate: dict[str, str]) -> None:
-    if settings.ingestion_backend == "r2":
-        assert isinstance(backend, R2Service)
+    if settings.ingestion_backend in {"r2", "s3"}:
+        assert isinstance(backend, (R2Service, ObjectStorageService))
         backend.move_to_archive(object_key=candidate["id"])
 
 
@@ -300,9 +312,9 @@ def run_poll_once() -> int:
         backend: object = drive
         files = drive.list_inbox_files()
     else:
-        r2 = R2Service.from_settings(settings)
-        backend = r2
-        files = r2.list_inbox_files()
+        object_storage = ObjectStorageService.from_settings(settings)
+        backend = object_storage
+        files = object_storage.list_inbox_files()
 
     logger.info(
         "Found %d candidate files in %s inbox",
@@ -363,11 +375,13 @@ def _process_candidate(
     review_threshold: float,
     store_review_score_threshold: float,
     archive_on_success: bool,
+    before_extract: Callable[[Path, str], dict[str, Any] | None] | None = None,
 ) -> dict[str, Any]:
     logger = logging.getLogger(__name__)
     metrics.increment("documents_processed_total")
     file_id = candidate["id"]
     file_name = candidate.get("name", "document")
+    _TMP_DIR.mkdir(parents=True, exist_ok=True)
     local_path = _TMP_DIR / f"{uuid4().hex}_{file_name}"
     result: dict[str, Any] = {"source_id": file_id, "status": "UNKNOWN"}
 
@@ -378,6 +392,8 @@ def _process_candidate(
         if claim.status != "claimed":
             metrics.increment("documents_duplicate_skipped_total")
             return {"source_id": file_id, "status": "SKIPPED_DUPLICATE", "file_hash": file_hash}
+
+        validation_metadata = before_extract(local_path, file_hash) if before_extract else None
 
         document_id = str(uuid4())
         result["document_id"] = document_id
@@ -490,7 +506,7 @@ def _process_candidate(
             file_id,
             append_result.get("status"),
         )
-        return {
+        success_result = {
             "source_id": file_id,
             "document_id": document_id,
             "status": "STORED",
@@ -499,11 +515,35 @@ def _process_candidate(
             "used_provider": used_provider,
             "needs_review": needs_review,
         }
+        if validation_metadata:
+            success_result.update(validation_metadata)
+        return success_result
 
+    except DocumentRejectedError as exc:
+        metrics.increment("documents_failed_total")
+        payload = {
+            "job_id": candidate.get("job_id"),
+            "document_id": str(uuid4()),
+            "drive_file_id": file_id,
+            "file_hash": _sha256(local_path) if local_path.exists() else "",
+            "status": "REJECTED",
+            "error_code": exc.code,
+            "error_message": str(exc),
+        }
+        dead_letter.write_failure(payload)
+        if local_path.exists():
+            claim_store.mark_status(file_id, payload["file_hash"], "REJECTED")
+        return {
+            "source_id": file_id,
+            "status": "REJECTED",
+            "error_code": exc.code,
+            "error_message": str(exc),
+        }
     except ExtractionError as exc:
         metrics.increment("documents_failed_total")
         dead_letter.write_failure(
             {
+                "job_id": candidate.get("job_id"),
                 "document_id": str(uuid4()),
                 "drive_file_id": file_id,
                 "file_hash": _sha256(local_path) if local_path.exists() else "",
@@ -520,6 +560,7 @@ def _process_candidate(
         metrics.increment("documents_failed_total")
         dead_letter.write_failure(
             {
+                "job_id": candidate.get("job_id"),
                 "document_id": str(uuid4()),
                 "drive_file_id": file_id,
                 "file_hash": _sha256(local_path) if local_path.exists() else "",

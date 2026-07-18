@@ -1,0 +1,15 @@
+.git
+.github
+.pytest_cache
+.env
+.tokens
+__pycache__
+*.pyc
+data
+eval
+logs
+review_queue
+tests
+tmp
+assets
+
