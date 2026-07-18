@@ -9,7 +9,7 @@ The AWS deployment is serverless: FastAPI runs behind a Lambda Function URL, bro
 - Maximum 10 active testers, 20 authorized documents each, 5 MB and 5 pages per document.
 - Global maximum of 1,000 page-processing attempts.
 - S3 deletes abandoned inbox objects after one day and archives after 30 days.
-- Lambda concurrency is capped at two for both web and worker functions.
+- Lambda reserved concurrency is intentionally omitted because low-quota AWS accounts must retain at least 10 unreserved executions. Private-alpha authentication and per-user document/page quotas provide the workload guardrail; if the account concurrency quota is increased later, a reservation of two can be restored for each function.
 - No VPC, NAT Gateway, database, load balancer, custom domain, or provisioned concurrency is created.
 
 ## One-time setup
