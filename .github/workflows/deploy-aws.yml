@@ -60,9 +60,8 @@ jobs:
             --stack-name invoice-processor-alpha \
             --region ap-southeast-1 \
             --s3-bucket "invoice-processor-alpha-deploy-${account_id}-ap-southeast-1" \
-            --image-repositories \
-              "WebFunction=${account_id}.dkr.ecr.ap-southeast-1.amazonaws.com/invoice-processor-alpha-web" \
-              "WorkerFunction=${account_id}.dkr.ecr.ap-southeast-1.amazonaws.com/invoice-processor-alpha-worker" \
+            --image-repositories "WebFunction=${account_id}.dkr.ecr.ap-southeast-1.amazonaws.com/invoice-processor-alpha-web" \
+            --image-repositories "WorkerFunction=${account_id}.dkr.ecr.ap-southeast-1.amazonaws.com/invoice-processor-alpha-worker" \
             --role-arn "arn:aws:iam::${account_id}:role/invoice-processor-alpha-cloudformation-execution" \
             --capabilities CAPABILITY_IAM \
             --no-confirm-changeset \
