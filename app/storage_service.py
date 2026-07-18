@@ -126,7 +126,7 @@ class PostgresStorageService:
             import psycopg
         except ImportError as exc:
             raise RuntimeError("psycopg package is required for PostgreSQL backend") from exc
-        return psycopg.connect(self._dsn)
+        return psycopg.connect(self._dsn, prepare_threshold=None)
 
     def _ensure_schema(self) -> None:
         with self._connect() as conn:

@@ -109,7 +109,7 @@ class AlphaStore:
             import psycopg
         except ImportError as exc:
             raise RuntimeError("psycopg is required for private-alpha state") from exc
-        return psycopg.connect(self._dsn)
+        return psycopg.connect(self._dsn, prepare_threshold=None)
 
     def create_user(
         self,
