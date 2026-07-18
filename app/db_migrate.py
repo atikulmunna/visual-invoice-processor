@@ -4,7 +4,7 @@ import argparse
 import os
 from pathlib import Path
 
-from dotenv import load_dotenv
+from app.config import load_dotenv
 
 
 DEFAULT_MIGRATIONS_DIR = Path(__file__).resolve().parents[1] / "migrations"
