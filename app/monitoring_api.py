@@ -9,7 +9,7 @@ from typing import Any
 from uuid import uuid4
 
 from fastapi import Cookie, Depends, FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from pydantic import BaseModel
 
@@ -42,6 +42,7 @@ class PresignUploadRequest(BaseModel):
 
 SESSION_COOKIE_NAME = "invoice_alpha_session"
 SESSION_MAX_AGE_SECONDS = 7 * 24 * 60 * 60
+SITE_ICON_PATH = Path(__file__).resolve().parents[1] / "assets" / "icon.png"
 
 
 def _build_auth_dependency(postgres_dsn: str | None = None):
@@ -105,6 +106,14 @@ def create_monitoring_app(
     app = FastAPI(title="Invoice Processor Monitoring API", version="0.1.0")
     active_postgres_dsn = postgres_dsn or os.getenv("POSTGRES_DSN")
     require_dashboard_auth = _build_auth_dependency(active_postgres_dsn)
+
+    @app.get("/assets/icon.png", include_in_schema=False)
+    def site_icon() -> FileResponse:
+        return FileResponse(
+            SITE_ICON_PATH,
+            media_type="image/png",
+            headers={"Cache-Control": "public, max-age=86400"},
+        )
 
     @app.get("/health")
     def health() -> dict[str, str]:
@@ -795,6 +804,7 @@ def _login_html(error: str | None = None) -> str:
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Sign in · Ledgerly</title>
+  <link rel="icon" type="image/png" href="/assets/icon.png" />
   <style>
     :root {{
       --ink-950: #111110;
@@ -849,7 +859,7 @@ def _login_html(error: str | None = None) -> str:
       bottom: -110px;
       width: 260px;
       height: 260px;
-      border: 54px solid rgba(241, 90, 36, 0.85);
+      border: 54px solid rgba(241, 90, 36, 0.28);
       border-radius: 50%;
       pointer-events: none;
     }}
@@ -857,15 +867,13 @@ def _login_html(error: str | None = None) -> str:
     .mark {{
       width: 44px;
       height: 44px;
-      display: grid;
-      place-items: center;
+      display: block;
+      flex: 0 0 auto;
       border-radius: 12px;
-      background: var(--accent);
-      color: #161410;
-      font-size: 1.1rem;
-      font-weight: 900;
-      letter-spacing: -0.06em;
+      overflow: hidden;
+      background: rgba(17, 17, 16, 0.3);
     }}
+    .mark img {{ width: 100%; height: 100%; display: block; object-fit: contain; }}
     .brand strong {{ display: block; font-size: 1rem; }}
     .brand span {{ color: rgba(244, 239, 230, 0.56); font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.13em; }}
     .story-copy {{ position: relative; z-index: 1; max-width: 470px; margin: 72px 0; }}
@@ -921,7 +929,7 @@ def _login_html(error: str | None = None) -> str:
 <body>
   <main class="shell">
     <section class="story">
-      <div class="brand"><span class="mark">L</span><div><strong>Ledgerly</strong><span>Invoice intelligence</span></div></div>
+      <div class="brand"><span class="mark"><img src="/assets/icon.png" alt="" /></span><div><strong>Ledgerly</strong></div></div>
       <div class="story-copy"><p class="eyebrow">Private alpha</p><h1>Every invoice, understood.</h1><p>Upload documents directly to encrypted storage and turn them into structured, reviewable records in one secure workspace.</p></div>
       <div class="secure">Protected by encrypted sessions and private storage</div>
     </section>
@@ -950,6 +958,7 @@ def _dashboard_html(upload_mode: str = "r2", principal: str | AlphaUser = "Opera
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Invoice Operations Dashboard · Ledgerly</title>
+  <link rel="icon" type="image/png" href="/assets/icon.png" />
   <style>
     :root {
       --c-light: #c1c1c1;
@@ -1211,16 +1220,14 @@ def _dashboard_html(upload_mode: str = "r2", principal: str | AlphaUser = "Opera
     .brand-mark {
       width: 42px;
       height: 42px;
-      display: grid;
-      place-items: center;
+      display: block;
+      flex: 0 0 auto;
       border-radius: 12px;
-      background: var(--accent);
-      color: var(--ink-950);
-      font-weight: 900;
-      font-size: 1.08rem;
-      letter-spacing: -0.06em;
-      box-shadow: 0 10px 24px rgba(241, 90, 36, 0.22);
+      overflow: hidden;
+      background: rgba(17, 17, 16, 0.32);
+      box-shadow: 0 10px 24px rgba(0, 0, 0, 0.2);
     }
+    .brand-mark img { width: 100%; height: 100%; display: block; object-fit: contain; }
     .brand-copy strong { display: block; font-size: 0.98rem; letter-spacing: -0.02em; }
     .brand-copy span { color: rgba(203, 197, 185, 0.62); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.14em; }
     .side-nav { display: grid; gap: 7px; margin-top: 44px; }
@@ -1449,7 +1456,7 @@ def _dashboard_html(upload_mode: str = "r2", principal: str | AlphaUser = "Opera
   <div class="app-shell">
     <aside class="sidebar">
       <a class="brand" href="#upload" aria-label="Ledgerly home">
-        <span class="brand-mark">L</span>
+        <span class="brand-mark"><img src="/assets/icon.png" alt="" /></span>
         <span class="brand-copy"><strong>Ledgerly</strong><span>Invoice intelligence</span></span>
       </a>
       <nav class="side-nav" aria-label="Workspace navigation">
