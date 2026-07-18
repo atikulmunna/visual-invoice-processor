@@ -6,10 +6,18 @@ Parameters:
     Type: String
   GitHubRepository:
     Type: String
+  ExistingGitHubOidcProviderArn:
+    Type: String
+    Default: ""
+    Description: Reuse this IAM OIDC provider ARN when GitHub Actions is already configured in the account
+
+Conditions:
+  CreateGitHubOidcProvider: !Equals [!Ref ExistingGitHubOidcProviderArn, ""]
 
 Resources:
   GitHubOidcProvider:
     Type: AWS::IAM::OIDCProvider
+    Condition: CreateGitHubOidcProvider
     Properties:
       Url: https://token.actions.githubusercontent.com
       ClientIdList: [sts.amazonaws.com]
@@ -24,7 +32,10 @@ Resources:
         Statement:
           - Effect: Allow
             Principal:
-              Federated: !Ref GitHubOidcProvider
+              Federated: !If
+                - CreateGitHubOidcProvider
+                - !Ref GitHubOidcProvider
+                - !Ref ExistingGitHubOidcProviderArn
             Action: sts:AssumeRoleWithWebIdentity
             Condition:
               StringEquals:
