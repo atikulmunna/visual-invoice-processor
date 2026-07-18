@@ -1,0 +1,223 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: Private-alpha serverless invoice processor
+
+Parameters:
+  PostgresParameterName:
+    Type: String
+    Description: Name of the SSM SecureString containing POSTGRES_DSN
+  MistralParameterName:
+    Type: String
+    Description: Name of the SSM SecureString containing MISTRAL_API_KEY
+  BudgetAlertEmail:
+    Type: String
+    Description: Email address for annual AWS budget notifications
+
+Globals:
+  Function:
+    Architectures: [x86_64]
+    Environment:
+      Variables:
+        LOG_LEVEL: INFO
+        INGESTION_BACKEND: s3
+        S3_BUCKET_NAME: !Sub "invoice-processor-alpha-${AWS::AccountId}-${AWS::Region}"
+        S3_REGION: !Ref AWS::Region
+        S3_INBOX_PREFIX: inbox/
+        S3_ARCHIVE_PREFIX: archive/
+        LEDGER_BACKEND: postgres
+        POSTGRES_DSN: !Sub "{{resolve:ssm-secure:${PostgresParameterName}}}"
+        POSTGRES_TABLE: ledger_records
+        REVIEW_QUEUE_BACKEND: postgres
+        REVIEW_QUEUE_TABLE: review_queue_items
+        ALPHA_AUTH_ENABLED: "true"
+        ALPHA_MAX_USERS: "10"
+        ALPHA_DOCUMENT_LIMIT: "20"
+        ALPHA_GLOBAL_PAGE_LIMIT: "1000"
+        MAX_UPLOAD_BYTES: "5242880"
+        MAX_PDF_PAGES: "5"
+        EXTRACTION_PROVIDER: mistral
+        MISTRAL_MODEL: mistral-small-latest
+        MISTRAL_API_KEY: !Sub "{{resolve:ssm-secure:${MistralParameterName}}}"
+        NORMALIZATION_RULES_PATH: config/normalization_rules.json
+        REVIEW_CONFIDENCE_THRESHOLD: "0.5"
+        STORE_REVIEW_SCORE_THRESHOLD: "0.6"
+
+Resources:
+  InvoiceBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "invoice-processor-alpha-${AWS::AccountId}-${AWS::Region}"
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      CorsConfiguration:
+        CorsRules:
+          - AllowedHeaders: ["*"]
+            AllowedMethods: [POST]
+            AllowedOrigins: ["*"]
+            ExposedHeaders: [ETag]
+            MaxAge: 300
+      LifecycleConfiguration:
+        Rules:
+          - Id: DeleteAbandonedInboxObjects
+            Prefix: inbox/
+            Status: Enabled
+            ExpirationInDays: 1
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 1
+          - Id: DeleteArchivedDocuments
+            Prefix: archive/
+            Status: Enabled
+            ExpirationInDays: 30
+
+  InvoiceBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref InvoiceBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: "*"
+            Action: s3:*
+            Resource:
+              - !GetAtt InvoiceBucket.Arn
+              - !Sub "${InvoiceBucket.Arn}/*"
+            Condition:
+              Bool:
+                aws:SecureTransport: "false"
+
+  WebFunction:
+    Type: AWS::Serverless::Function
+    Metadata:
+      DockerContext: .
+      Dockerfile: Dockerfile
+      DockerTag: web
+    Properties:
+      PackageType: Image
+      MemorySize: 1024
+      Timeout: 30
+      ReservedConcurrentExecutions: 2
+      FunctionUrlConfig:
+        AuthType: NONE
+        InvokeMode: BUFFERED
+      ImageConfig:
+        Command: ["app.lambda_handlers.web_handler"]
+      Policies:
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action:
+                - s3:GetObject
+                - s3:PutObject
+              Resource: !Sub "arn:${AWS::Partition}:s3:::invoice-processor-alpha-${AWS::AccountId}-${AWS::Region}/inbox/*"
+
+  WorkerFunction:
+    Type: AWS::Serverless::Function
+    Metadata:
+      DockerContext: .
+      Dockerfile: Dockerfile
+      DockerTag: worker
+    Properties:
+      PackageType: Image
+      MemorySize: 1024
+      Timeout: 300
+      ReservedConcurrentExecutions: 2
+      ImageConfig:
+        Command: ["app.lambda_handlers.s3_handler"]
+      Policies:
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action:
+                - s3:GetObject
+                - s3:DeleteObject
+              Resource: !Sub "arn:${AWS::Partition}:s3:::invoice-processor-alpha-${AWS::AccountId}-${AWS::Region}/inbox/*"
+            - Effect: Allow
+              Action: s3:PutObject
+              Resource: !Sub "arn:${AWS::Partition}:s3:::invoice-processor-alpha-${AWS::AccountId}-${AWS::Region}/archive/*"
+      Events:
+        InvoiceUploaded:
+          Type: S3
+          Properties:
+            Bucket: !Ref InvoiceBucket
+            Events: s3:ObjectCreated:*
+            Filter:
+              S3Key:
+                Rules:
+                  - Name: prefix
+                    Value: inbox/
+
+  WebLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${WebFunction}"
+      RetentionInDays: 7
+
+  WorkerLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${WorkerFunction}"
+      RetentionInDays: 7
+
+  AnnualCostBudget:
+    Type: AWS::Budgets::Budget
+    Properties:
+      Budget:
+        BudgetName: invoice-processor-alpha-annual
+        BudgetLimit:
+          Amount: 15
+          Unit: USD
+        BudgetType: COST
+        TimeUnit: ANNUALLY
+      NotificationsWithSubscribers:
+        - Notification:
+            ComparisonOperator: GREATER_THAN
+            NotificationType: ACTUAL
+            Threshold: 50
+            ThresholdType: PERCENTAGE
+          Subscribers:
+            - Address: !Ref BudgetAlertEmail
+              SubscriptionType: EMAIL
+        - Notification:
+            ComparisonOperator: GREATER_THAN
+            NotificationType: ACTUAL
+            Threshold: 80
+            ThresholdType: PERCENTAGE
+          Subscribers:
+            - Address: !Ref BudgetAlertEmail
+              SubscriptionType: EMAIL
+        - Notification:
+            ComparisonOperator: GREATER_THAN
+            NotificationType: ACTUAL
+            Threshold: 100
+            ThresholdType: PERCENTAGE
+          Subscribers:
+            - Address: !Ref BudgetAlertEmail
+              SubscriptionType: EMAIL
+        - Notification:
+            ComparisonOperator: GREATER_THAN
+            NotificationType: FORECASTED
+            Threshold: 100
+            ThresholdType: PERCENTAGE
+          Subscribers:
+            - Address: !Ref BudgetAlertEmail
+              SubscriptionType: EMAIL
+
+Outputs:
+  DashboardUrl:
+    Description: Private-alpha dashboard URL
+    Value: !GetAtt WebFunctionUrl.FunctionUrl
+  InvoiceBucketName:
+    Value: !Ref InvoiceBucket

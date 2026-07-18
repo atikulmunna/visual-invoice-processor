@@ -1,0 +1,9 @@
+pydantic>=2.8,<3
+psycopg[binary]>=3.2,<4
+boto3>=1.35,<2
+fastapi>=0.116,<1
+mangum>=0.19,<1
+requests>=2.32,<3
+pypdf>=5,<7
+python-multipart>=0.0.9,<1
+typing_extensions>=4.11,<5

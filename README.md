@@ -23,6 +23,7 @@ Live dashboard:
 - [Environment Variables](#environment-variables)
 - [Run Locally](#run-locally)
 - [Deploy On Render](#deploy-on-render)
+- [Deploy Private Alpha On AWS](#deploy-private-alpha-on-aws)
 - [GitHub Actions Automation](#github-actions-automation)
 - [Supabase Analytics Views](#supabase-analytics-views)
 - [Golden Set Evaluation](#golden-set-evaluation)
@@ -324,6 +325,20 @@ Important notes:
 - `/health` remains open for Render health checks, while the dashboard/API routes can be protected with HTTP Basic auth.
 - Dashboard uploads require `INGESTION_BACKEND=r2` and a valid R2 configuration, because the file is uploaded to the `inbox/` prefix and processed immediately from there.
 - After changing Render environment variables, redeploy the latest commit so auth, thresholds, and upload behavior are applied consistently.
+
+## Deploy Private Alpha On AWS
+
+The low-cost private-alpha deployment uses Lambda, native S3, Supabase Postgres, and individual tester credentials. It has no always-on compute charge. New files use direct presigned S3 uploads and S3 events; existing Cloudflare R2 files remain untouched.
+
+Key controls:
+
+- 10 active testers with 20 authorized documents each
+- 5 MB and 5 pages per document
+- 1,000 page-processing attempts globally
+- Mistral-only extraction with provider fallback disabled
+- 30-day archive retention and an annual USD 15 AWS budget
+
+Apply [`migrations/002_private_alpha.sql`](migrations/002_private_alpha.sql), then follow [`AWS_DEPLOYMENT.md`](AWS_DEPLOYMENT.md) for SSM secrets, GitHub OIDC, deployment, tester creation, verification, and cutover.
 
 ## GitHub Actions Automation
 
