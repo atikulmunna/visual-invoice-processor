@@ -63,12 +63,6 @@ class Settings:
     google_service_account_file: str | None = None
     google_oauth_client_secret_file: str | None = None
     google_oauth_token_file: str = ".tokens/google_token.json"
-    r2_endpoint_url: str | None = None
-    r2_access_key_id: str | None = None
-    r2_secret_access_key: str | None = None
-    r2_bucket_name: str | None = None
-    r2_inbox_prefix: str = "inbox/"
-    r2_archive_prefix: str = "archive/"
     s3_bucket_name: str | None = None
     s3_region: str = "ap-southeast-1"
     s3_inbox_prefix: str = "inbox/"
@@ -104,8 +98,8 @@ class Settings:
     @classmethod
     def from_env(cls) -> "Settings":
         ingestion_backend = os.getenv("INGESTION_BACKEND", "drive").strip().lower()
-        if ingestion_backend not in {"drive", "r2", "s3"}:
-            raise ValueError("INGESTION_BACKEND must be one of: drive, r2, s3")
+        if ingestion_backend not in {"drive", "s3"}:
+            raise ValueError("INGESTION_BACKEND must be one of: drive, s3")
 
         auth_mode = os.getenv("GOOGLE_AUTH_MODE", "service_account").strip().lower()
         if auth_mode not in {"service_account", "oauth"}:
@@ -151,24 +145,6 @@ class Settings:
         if ingestion_backend == "drive" and (not drive_inbox_folder_id or not drive_inbox_folder_id.strip()):
             raise ValueError("DRIVE_INBOX_FOLDER_ID is required when INGESTION_BACKEND=drive")
 
-        r2_endpoint_url = os.getenv("R2_ENDPOINT_URL")
-        r2_access_key_id = os.getenv("R2_ACCESS_KEY_ID")
-        r2_secret_access_key = os.getenv("R2_SECRET_ACCESS_KEY")
-        r2_bucket_name = os.getenv("R2_BUCKET_NAME")
-        if ingestion_backend == "r2":
-            missing = [
-                key
-                for key, value in {
-                    "R2_ENDPOINT_URL": r2_endpoint_url,
-                    "R2_ACCESS_KEY_ID": r2_access_key_id,
-                    "R2_SECRET_ACCESS_KEY": r2_secret_access_key,
-                    "R2_BUCKET_NAME": r2_bucket_name,
-                }.items()
-                if not value or not value.strip()
-            ]
-            if missing:
-                raise ValueError(f"Missing required environment variable(s) for R2: {', '.join(missing)}")
-
         s3_bucket_name = os.getenv("S3_BUCKET_NAME")
         if ingestion_backend == "s3" and (not s3_bucket_name or not s3_bucket_name.strip()):
             raise ValueError("S3_BUCKET_NAME is required when INGESTION_BACKEND=s3")
@@ -184,12 +160,6 @@ class Settings:
             google_service_account_file=service_account_file,
             google_oauth_client_secret_file=oauth_secret_file,
             google_oauth_token_file=oauth_token_file,
-            r2_endpoint_url=r2_endpoint_url,
-            r2_access_key_id=r2_access_key_id,
-            r2_secret_access_key=r2_secret_access_key,
-            r2_bucket_name=r2_bucket_name,
-            r2_inbox_prefix=os.getenv("R2_INBOX_PREFIX", "inbox/"),
-            r2_archive_prefix=os.getenv("R2_ARCHIVE_PREFIX", "archive/"),
             s3_bucket_name=s3_bucket_name,
             s3_region=os.getenv("S3_REGION", os.getenv("AWS_REGION", "ap-southeast-1")),
             s3_inbox_prefix=os.getenv("S3_INBOX_PREFIX", "inbox/"),

@@ -9,7 +9,7 @@ from app.drive_service import is_supported_mime_type
 
 
 class ObjectStorageService:
-    """S3-compatible document storage for native S3 and Cloudflare R2."""
+    """Document storage backed by Amazon S3."""
 
     def __init__(
         self,
@@ -44,39 +44,21 @@ class ObjectStorageService:
         except ImportError as exc:
             raise RuntimeError("boto3 is required for object storage") from exc
 
-        if settings.ingestion_backend == "s3":
-            if not settings.s3_bucket_name:
-                raise ValueError("S3_BUCKET_NAME must be configured")
-            client = boto3.client(
-                "s3",
-                region_name=settings.s3_region,
-                endpoint_url=f"https://s3.{settings.s3_region}.amazonaws.com",
-                config=Config(s3={"addressing_style": "virtual"}),
-            )
-            return cls(
-                client,
-                bucket=settings.s3_bucket_name,
-                inbox_prefix=settings.s3_inbox_prefix,
-                archive_prefix=settings.s3_archive_prefix,
-                allowed_mime_types=settings.allowed_mime_types,
-            )
-
-        if settings.ingestion_backend != "r2":
-            raise ValueError("Object storage requires INGESTION_BACKEND=s3 or r2")
-        if not settings.r2_bucket_name:
-            raise ValueError("R2_BUCKET_NAME must be configured")
+        if settings.ingestion_backend != "s3":
+            raise ValueError("Object storage requires INGESTION_BACKEND=s3")
+        if not settings.s3_bucket_name:
+            raise ValueError("S3_BUCKET_NAME must be configured")
         client = boto3.client(
             "s3",
-            endpoint_url=settings.r2_endpoint_url,
-            aws_access_key_id=settings.r2_access_key_id,
-            aws_secret_access_key=settings.r2_secret_access_key,
-            region_name="auto",
+            region_name=settings.s3_region,
+            endpoint_url=f"https://s3.{settings.s3_region}.amazonaws.com",
+            config=Config(s3={"addressing_style": "virtual"}),
         )
         return cls(
             client,
-            bucket=settings.r2_bucket_name,
-            inbox_prefix=settings.r2_inbox_prefix,
-            archive_prefix=settings.r2_archive_prefix,
+            bucket=settings.s3_bucket_name,
+            inbox_prefix=settings.s3_inbox_prefix,
+            archive_prefix=settings.s3_archive_prefix,
             allowed_mime_types=settings.allowed_mime_types,
         )
 
@@ -115,13 +97,6 @@ class ObjectStorageService:
         output_path.parent.mkdir(parents=True, exist_ok=True)
         self._s3.download_file(self._bucket, object_key, str(output_path))
         return output_path
-
-    def upload_bytes(self, object_key: str, content: bytes, *, content_type: str | None = None) -> str:
-        extra_args: dict[str, Any] = {}
-        if content_type:
-            extra_args["ContentType"] = content_type
-        self._s3.put_object(Bucket=self._bucket, Key=object_key, Body=content, **extra_args)
-        return object_key
 
     def create_presigned_upload(
         self,

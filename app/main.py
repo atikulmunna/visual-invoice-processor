@@ -21,7 +21,6 @@ from app.logger import configure_logging
 from app.metrics import JsonlMetricsSink, MetricsCollector
 from app.normalization_engine import NormalizationRuleEngine
 from app.object_storage_service import ObjectStorageService
-from app.r2_service import R2Service
 from app.review_queue import (
     decide_review_status,
     list_review_items,
@@ -59,13 +58,13 @@ def _download_candidate(settings: Settings, backend: object, candidate: dict[str
     if settings.ingestion_backend == "drive":
         assert isinstance(backend, DriveService)
         return backend.download_file(file_id=file_id, out_path=out_path)
-    assert isinstance(backend, (R2Service, ObjectStorageService))
+    assert isinstance(backend, ObjectStorageService)
     return backend.download_file(object_key=file_id, out_path=out_path)
 
 
 def _archive_candidate(settings: Settings, backend: object, candidate: dict[str, str]) -> None:
-    if settings.ingestion_backend in {"r2", "s3"}:
-        assert isinstance(backend, (R2Service, ObjectStorageService))
+    if settings.ingestion_backend == "s3":
+        assert isinstance(backend, ObjectStorageService)
         backend.move_to_archive(object_key=candidate["id"])
 
 
@@ -579,49 +578,6 @@ def _process_candidate(
     finally:
         if local_path.exists():
             local_path.unlink(missing_ok=True)
-
-
-def process_r2_object_now(candidate: dict[str, str]) -> dict[str, Any]:
-    load_dotenv()
-    settings = Settings.from_env()
-    configure_logging(settings.log_level)
-    if settings.ingestion_backend != "r2":
-        raise ValueError("Immediate upload processing requires INGESTION_BACKEND=r2")
-
-    r2 = R2Service.from_settings(settings)
-    _TMP_DIR.mkdir(parents=True, exist_ok=True)
-    claim_store = DocumentClaimStore()
-    dead_letter = DeadLetterStore()
-    metrics = MetricsCollector()
-    metrics_sink = JsonlMetricsSink()
-    normalization_engine = NormalizationRuleEngine.from_path(settings.normalization_rules_path)
-    extraction_provider = os.getenv("EXTRACTION_PROVIDER", "auto")
-    extraction_model = os.getenv("EXTRACTION_MODEL", "auto")
-    worker_id = os.getenv("WORKER_ID", "dashboard-upload")
-    review_threshold = float(os.getenv("REVIEW_CONFIDENCE_THRESHOLD", "0.5"))
-    store_review_score_threshold = float(os.getenv("STORE_REVIEW_SCORE_THRESHOLD", "0.6"))
-
-    result = _process_candidate(
-        candidate=candidate,
-        settings=settings,
-        backend=r2,
-        claim_store=claim_store,
-        dead_letter=dead_letter,
-        metrics=metrics,
-        normalization_engine=normalization_engine,
-        extraction_provider=extraction_provider,
-        extraction_model=extraction_model,
-        worker_id=worker_id,
-        review_threshold=review_threshold,
-        store_review_score_threshold=store_review_score_threshold,
-        archive_on_success=True,
-    )
-
-    snapshot = metrics.snapshot()
-    for key, value in snapshot.items():
-        if isinstance(value, int):
-            metrics_sink.emit({"metric": key, "value": value, "stage": "dashboard_upload"})
-    return result
 
 
 def run_review_list(queue_dir: str) -> int:

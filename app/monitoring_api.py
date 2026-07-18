@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from fastapi import Cookie, Depends, FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import Cookie, Depends, FastAPI, Form, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from pydantic import BaseModel
@@ -22,9 +22,7 @@ from app.alpha_store import (
 )
 from app.config import Settings, load_dotenv
 from app.drive_service import is_supported_mime_type
-from app.main import process_r2_object_now
 from app.object_storage_service import ObjectStorageService
-from app.r2_service import R2Service
 from app.review_queue import dismiss_review_item, list_review_items, resolve_review_item
 
 
@@ -271,50 +269,6 @@ def create_monitoring_app(
         except Exception as exc:  # noqa: BLE001
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    @app.post("/upload")
-    async def upload_and_process(
-        file: UploadFile = File(...),
-        _: str = Depends(require_dashboard_auth),
-    ) -> dict[str, Any]:
-        load_dotenv()
-        settings = Settings.from_env()
-        if settings.ingestion_backend == "s3":
-            raise HTTPException(status_code=410, detail="Use /uploads/presign for S3 uploads")
-        if settings.ingestion_backend != "r2":
-            raise HTTPException(status_code=400, detail="Dashboard upload requires INGESTION_BACKEND=r2")
-
-        content_type = file.content_type or "application/octet-stream"
-        if not is_supported_mime_type(content_type, settings.allowed_mime_types):
-            raise HTTPException(status_code=400, detail=f"Unsupported file type: {content_type}")
-
-        original_name = Path(file.filename or f"upload-{uuid4().hex}.bin").name
-        content = await file.read()
-        if not content:
-            raise HTTPException(status_code=400, detail="Uploaded file is empty")
-
-        inbox_prefix = settings.r2_inbox_prefix.rstrip("/")
-        object_key = f"{inbox_prefix}/{uuid4().hex}_{original_name}"
-
-        try:
-            r2_service = R2Service.from_settings(settings)
-            r2_service.upload_bytes(object_key, content, content_type=content_type)
-            result = process_r2_object_now(
-                {
-                    "id": object_key,
-                    "name": original_name,
-                    "mimeType": content_type,
-                    "size": str(len(content)),
-                }
-            )
-        except Exception as exc:  # noqa: BLE001
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-        return {
-            "status": "ok",
-            "uploaded_object_key": object_key,
-            "processing_result": result,
-        }
-
     @app.post("/uploads/presign")
     def presign_upload(
         payload: PresignUploadRequest,
@@ -405,7 +359,7 @@ def create_monitoring_app(
 
     @app.get("/dashboard", response_class=HTMLResponse)
     def dashboard(principal: str | AlphaUser = Depends(require_dashboard_auth)) -> str:
-        return _dashboard_html(os.getenv("INGESTION_BACKEND", "drive"), principal)
+        return _dashboard_html(principal)
 
     return app
 
@@ -951,7 +905,7 @@ def _login_html(error: str | None = None) -> str:
 </html>"""
 
 
-def _dashboard_html(upload_mode: str = "r2", principal: str | AlphaUser = "Operator") -> str:
+def _dashboard_html(principal: str | AlphaUser = "Operator") -> str:
     html = """<!doctype html>
 <html lang="en">
 <head>
@@ -1786,7 +1740,6 @@ def _dashboard_html(upload_mode: str = "r2", principal: str | AlphaUser = "Opera
       await loadData();
       window.alert(`${action} complete for ${documentId} (${payload.review_status})`);
     }
-    const uploadMode = '__UPLOAD_MODE__';
     const terminalJobStatuses = new Set(['STORED', 'REVIEW_REQUIRED', 'DUPLICATE', 'REJECTED', 'FAILED']);
     const wait = (milliseconds) => new Promise(resolve => window.setTimeout(resolve, milliseconds));
 
@@ -1941,42 +1894,27 @@ def _dashboard_html(upload_mode: str = "r2", principal: str | AlphaUser = "Opera
       setPipeline('authorize');
       setUploadMessage('Authorizing a private upload…');
       try {
-        if (uploadMode === 's3') {
-          const authResp = await fetch('/uploads/presign', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ filename: file.name, content_type: detectContentType(file), size: file.size })
-          });
-          const authPayload = await authResp.json();
-          if (!authResp.ok) throw new Error(authPayload.detail || 'Upload authorization failed.');
-          const remaining = document.getElementById('documentsRemaining');
-          if (remaining && authPayload.documents_remaining != null) remaining.textContent = authPayload.documents_remaining;
-          setPipeline('upload');
-          setUploadMessage(`Uploading ${file.name} directly to encrypted S3…`);
-          const form = new FormData();
-          for (const [key, value] of Object.entries(authPayload.upload.fields || {})) form.append(key, value);
-          form.append('file', file);
-          const s3Resp = await fetch(authPayload.upload.url, { method: 'POST', body: form });
-          if (!s3Resp.ok) throw new Error('The direct S3 upload failed. Please try again.');
-          setPipeline('process');
-          setUploadMessage(`Upload complete. Starting extraction for ${file.name}…`);
-          input.value = '';
-          selectedUploadFile = null;
-          await waitForJob(authPayload.job_id, file.name);
-          return;
-        }
+        const authResp = await fetch('/uploads/presign', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ filename: file.name, content_type: detectContentType(file), size: file.size })
+        });
+        const authPayload = await authResp.json();
+        if (!authResp.ok) throw new Error(authPayload.detail || 'Upload authorization failed.');
+        const remaining = document.getElementById('documentsRemaining');
+        if (remaining && authPayload.documents_remaining != null) remaining.textContent = authPayload.documents_remaining;
+        setPipeline('upload');
+        setUploadMessage(`Uploading ${file.name} directly to encrypted S3…`);
         const form = new FormData();
+        for (const [key, value] of Object.entries(authPayload.upload.fields || {})) form.append(key, value);
         form.append('file', file);
-        const response = await fetch('/upload', { method: 'POST', body: form });
-        const payload = await response.json();
-        if (!response.ok) throw new Error(payload.detail || 'Upload failed.');
-        const processing = payload.processing_result || {};
-        renderJobResult({ id: processing.document_id, original_name: file.name, status: processing.status, result: processing });
-        setPipeline('complete');
-        setUploadMessage(`${file.name} finished with status ${processing.status || 'completed'}.`, 'success');
+        const s3Resp = await fetch(authPayload.upload.url, { method: 'POST', body: form });
+        if (!s3Resp.ok) throw new Error('The direct S3 upload failed. Please try again.');
+        setPipeline('process');
+        setUploadMessage(`Upload complete. Starting extraction for ${file.name}…`);
         input.value = '';
         selectedUploadFile = null;
-        await loadData();
+        await waitForJob(authPayload.job_id, file.name);
       } catch (error) {
         setUploadMessage(error.message || 'The upload could not be completed.', 'error');
         setPipeline('idle');
@@ -2082,9 +2020,7 @@ def _dashboard_html(upload_mode: str = "r2", principal: str | AlphaUser = "Opera
     else:
         alpha_user = str(principal or "Operator")
         documents_remaining = "—"
-    safe_upload_mode = upload_mode if upload_mode in {"s3", "r2"} else "disabled"
     return (
-        html.replace("__UPLOAD_MODE__", safe_upload_mode)
-        .replace("__ALPHA_USER__", html_lib.escape(alpha_user))
+        html.replace("__ALPHA_USER__", html_lib.escape(alpha_user))
         .replace("__DOCUMENTS_REMAINING__", documents_remaining)
     )
