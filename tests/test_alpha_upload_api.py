@@ -73,6 +73,19 @@ def test_presign_and_owner_scoped_status(monkeypatch: Any) -> None:
     assert status.json()["status"] == "AUTHORIZED"
 
 
+def test_alpha_dashboard_shows_user_quota_and_result_workspace(monkeypatch: Any) -> None:
+    _configure(monkeypatch)
+    client = TestClient(create_monitoring_app(postgres_dsn="postgresql://example"))
+
+    response = client.get("/dashboard", auth=("tester.one", "A-strong-alpha-password"))
+
+    assert response.status_code == 200
+    assert '<div class="alpha-user">tester.one</div>' in response.text
+    assert '<span id="documentsRemaining">17</span>' in response.text
+    assert 'id="resultPanel"' in response.text
+    assert "terminalJobStatuses" in response.text
+
+
 def test_presign_rejects_unsupported_and_oversized_files(monkeypatch: Any) -> None:
     _configure(monkeypatch)
     client = TestClient(create_monitoring_app(postgres_dsn="postgresql://example"))
