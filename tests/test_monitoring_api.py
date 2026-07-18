@@ -68,6 +68,7 @@ def test_monitoring_endpoints_expose_stats_backlog_and_failures(tmp_path: Path, 
     app = create_monitoring_app(metrics_path=metrics, dead_letter_path=dead, review_queue_dir=queue)
     client = TestClient(app)
 
+    icon = client.get("/assets/icon.png")
     health = client.get("/health")
     root = client.get("/", follow_redirects=False)
     stats = client.get("/stats")
@@ -78,6 +79,9 @@ def test_monitoring_endpoints_expose_stats_backlog_and_failures(tmp_path: Path, 
     dashboard = client.get("/dashboard")
     dashboard_data = client.get("/dashboard/data")
 
+    assert icon.status_code == 200
+    assert icon.headers["content-type"] == "image/png"
+    assert icon.content.startswith(b"\x89PNG\r\n\x1a\n")
     assert health.status_code == 200
     assert health.json()["status"] == "ok"
     assert root.status_code == 307
@@ -97,6 +101,8 @@ def test_monitoring_endpoints_expose_stats_backlog_and_failures(tmp_path: Path, 
     assert review_history.json()["count"] == 0
     assert dashboard.status_code == 200
     assert "Invoice Operations Dashboard" in dashboard.text
+    assert '<link rel="icon" type="image/png" href="/assets/icon.png" />' in dashboard.text
+    assert '<span class="brand-mark"><img src="/assets/icon.png" alt="" /></span>' in dashboard.text
     assert 'id="uploadInput"' in dashboard.text
     assert 'id="activityFeed"' in dashboard.text
     assert 'id="recentSearch"' in dashboard.text
