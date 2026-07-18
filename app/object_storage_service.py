@@ -40,13 +40,19 @@ class ObjectStorageService:
     def from_settings(cls, settings: Settings) -> "ObjectStorageService":
         try:
             import boto3
+            from botocore.config import Config
         except ImportError as exc:
             raise RuntimeError("boto3 is required for object storage") from exc
 
         if settings.ingestion_backend == "s3":
             if not settings.s3_bucket_name:
                 raise ValueError("S3_BUCKET_NAME must be configured")
-            client = boto3.client("s3", region_name=settings.s3_region)
+            client = boto3.client(
+                "s3",
+                region_name=settings.s3_region,
+                endpoint_url=f"https://s3.{settings.s3_region}.amazonaws.com",
+                config=Config(s3={"addressing_style": "virtual"}),
+            )
             return cls(
                 client,
                 bucket=settings.s3_bucket_name,
