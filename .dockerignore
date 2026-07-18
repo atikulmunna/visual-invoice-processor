@@ -11,5 +11,5 @@ logs
 review_queue
 tests
 tmp
-assets
-
+assets/*
+!assets/icon.png
