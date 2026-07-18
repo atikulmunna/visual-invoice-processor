@@ -559,7 +559,7 @@ def _resolved_file_hashes(postgres_dsn: str | None) -> set[str]:
         return set()
 
     try:
-        with psycopg.connect(postgres_dsn) as conn:
+        with psycopg.connect(postgres_dsn, prepare_threshold=None) as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """
@@ -600,7 +600,7 @@ def _query_dashboard_data(postgres_dsn: str | None, *, limit: int) -> dict[str, 
         return payload
 
     try:
-        with psycopg.connect(postgres_dsn) as conn:
+        with psycopg.connect(postgres_dsn, prepare_threshold=None) as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """
