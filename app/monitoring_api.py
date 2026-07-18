@@ -8,8 +8,8 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi import Cookie, Depends, FastAPI, File, Form, HTTPException, UploadFile
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from pydantic import BaseModel
 
@@ -40,25 +40,35 @@ class PresignUploadRequest(BaseModel):
     size: int
 
 
+SESSION_COOKIE_NAME = "invoice_alpha_session"
+SESSION_MAX_AGE_SECONDS = 7 * 24 * 60 * 60
+
+
 def _build_auth_dependency(postgres_dsn: str | None = None):
     security = HTTPBasic(auto_error=False)
 
-    def _auth(credentials: HTTPBasicCredentials | None = Depends(security)) -> str | AlphaUser:
+    def _auth(
+        credentials: HTTPBasicCredentials | None = Depends(security),
+        session_token: str | None = Cookie(default=None, alias=SESSION_COOKIE_NAME),
+    ) -> str | AlphaUser:
         if (os.getenv("ALPHA_AUTH_ENABLED") or "").strip().lower() in {"1", "true", "yes", "on"}:
-            if credentials is None or not postgres_dsn:
+            if not postgres_dsn:
                 raise HTTPException(
                     status_code=401,
                     detail="Unauthorized",
-                    headers={"WWW-Authenticate": "Basic"},
                 )
+            store = AlphaStore(postgres_dsn)
+            if session_token:
+                try:
+                    return store.authenticate_session(session_token)
+                except AlphaAuthenticationError:
+                    pass
+            if credentials is None:
+                raise HTTPException(status_code=401, detail="Unauthorized")
             try:
-                return AlphaStore(postgres_dsn).authenticate(credentials.username, credentials.password)
+                return store.authenticate(credentials.username, credentials.password)
             except AlphaAuthenticationError as exc:
-                raise HTTPException(
-                    status_code=401,
-                    detail="Unauthorized",
-                    headers={"WWW-Authenticate": "Basic"},
-                ) from exc
+                raise HTTPException(status_code=401, detail="Unauthorized") from exc
 
         username = (os.getenv("DASHBOARD_BASIC_AUTH_USERNAME") or "").strip()
         password = (os.getenv("DASHBOARD_BASIC_AUTH_PASSWORD") or "").strip()
@@ -101,8 +111,57 @@ def create_monitoring_app(
         return {"status": "ok"}
 
     @app.get("/", include_in_schema=False)
-    def root(_: str = Depends(require_dashboard_auth)) -> RedirectResponse:
+    def root() -> RedirectResponse:
+        if (os.getenv("ALPHA_AUTH_ENABLED") or "").strip().lower() in {"1", "true", "yes", "on"}:
+            return RedirectResponse(url="/login", status_code=307)
         return RedirectResponse(url="/dashboard", status_code=307)
+
+    @app.get("/login", response_class=HTMLResponse, include_in_schema=False)
+    def login_page(
+        session_token: str | None = Cookie(default=None, alias=SESSION_COOKIE_NAME),
+    ) -> Response:
+        if session_token and active_postgres_dsn:
+            try:
+                AlphaStore(active_postgres_dsn).authenticate_session(session_token)
+                return RedirectResponse(url="/dashboard", status_code=307)
+            except AlphaAuthenticationError:
+                pass
+        return HTMLResponse(_login_html())
+
+    @app.post("/login", response_class=HTMLResponse, include_in_schema=False)
+    def create_login_session(
+        username: str = Form(...),
+        password: str = Form(...),
+    ) -> Response:
+        if not active_postgres_dsn:
+            return HTMLResponse(_login_html("Authentication is not configured."), status_code=503)
+        store = AlphaStore(active_postgres_dsn)
+        try:
+            user = store.authenticate(username, password)
+        except AlphaAuthenticationError:
+            return HTMLResponse(_login_html("The username or password is incorrect."), status_code=401)
+        token = store.create_session(user)
+        response = RedirectResponse(url="/dashboard", status_code=303)
+        response.set_cookie(
+            key=SESSION_COOKIE_NAME,
+            value=token,
+            max_age=SESSION_MAX_AGE_SECONDS,
+            httponly=True,
+            secure=True,
+            samesite="lax",
+            path="/",
+        )
+        return response
+
+    @app.post("/logout", include_in_schema=False)
+    def logout(
+        session_token: str | None = Cookie(default=None, alias=SESSION_COOKIE_NAME),
+    ) -> RedirectResponse:
+        if session_token and active_postgres_dsn:
+            AlphaStore(active_postgres_dsn).delete_session(session_token)
+        response = RedirectResponse(url="/login", status_code=303)
+        response.delete_cookie(SESSION_COOKIE_NAME, path="/", secure=True, samesite="lax")
+        return response
 
     @app.get("/stats")
     def stats(_: str = Depends(require_dashboard_auth)) -> dict[str, Any]:
@@ -726,6 +785,164 @@ def _format_currency_total_display(currency_totals: list[dict[str, Any]]) -> str
     return f"{len(currency_totals)} currencies"
 
 
+def _login_html(error: str | None = None) -> str:
+    error_markup = ""
+    if error:
+        error_markup = f'<div class="error" role="alert">{html_lib.escape(error)}</div>'
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Sign in · Ledgerly</title>
+  <style>
+    :root {{
+      --ink-950: #111110;
+      --ink-900: #1d1c17;
+      --graphite: #403e3a;
+      --stone: #cbc5b9;
+      --paper: #f4efe6;
+      --accent: #f15a24;
+      --accent-bright: #ff6b32;
+      --danger: #ff8b75;
+    }}
+    * {{ box-sizing: border-box; }}
+    html, body {{ min-height: 100%; }}
+    body {{
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+      color: var(--paper);
+      background:
+        radial-gradient(circle at 78% 8%, rgba(241, 90, 36, 0.15), transparent 30rem),
+        radial-gradient(circle at 12% 90%, rgba(203, 197, 185, 0.06), transparent 28rem),
+        var(--ink-950);
+      font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }}
+    .shell {{
+      width: min(980px, 100%);
+      min-height: 600px;
+      display: grid;
+      grid-template-columns: 1.08fr 0.92fr;
+      overflow: hidden;
+      border: 1px solid rgba(203, 197, 185, 0.14);
+      border-radius: 24px;
+      background: var(--ink-900);
+      box-shadow: 0 34px 90px rgba(0, 0, 0, 0.42);
+    }}
+    .story {{
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      padding: clamp(34px, 6vw, 64px);
+      background:
+        linear-gradient(145deg, rgba(203, 197, 185, 0.05), transparent 52%),
+        var(--graphite);
+    }}
+    .story::after {{
+      content: "";
+      position: absolute;
+      right: -70px;
+      bottom: -110px;
+      width: 260px;
+      height: 260px;
+      border: 54px solid rgba(241, 90, 36, 0.85);
+      border-radius: 50%;
+      pointer-events: none;
+    }}
+    .brand {{ position: relative; z-index: 1; display: flex; align-items: center; gap: 12px; }}
+    .mark {{
+      width: 44px;
+      height: 44px;
+      display: grid;
+      place-items: center;
+      border-radius: 12px;
+      background: var(--accent);
+      color: #161410;
+      font-size: 1.1rem;
+      font-weight: 900;
+      letter-spacing: -0.06em;
+    }}
+    .brand strong {{ display: block; font-size: 1rem; }}
+    .brand span {{ color: rgba(244, 239, 230, 0.56); font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.13em; }}
+    .story-copy {{ position: relative; z-index: 1; max-width: 470px; margin: 72px 0; }}
+    .eyebrow {{ margin: 0 0 15px; color: var(--accent); font-size: 0.7rem; font-weight: 750; text-transform: uppercase; letter-spacing: 0.16em; }}
+    h1 {{ margin: 0; font-size: clamp(2.3rem, 5vw, 4.4rem); line-height: 0.98; letter-spacing: -0.06em; }}
+    .story-copy p:last-child {{ max-width: 410px; margin: 22px 0 0; color: rgba(244, 239, 230, 0.65); font-size: 0.92rem; line-height: 1.65; }}
+    .secure {{ position: relative; z-index: 1; color: rgba(244, 239, 230, 0.48); font-size: 0.72rem; }}
+    .secure::before {{ content: ""; display: inline-block; width: 7px; height: 7px; margin-right: 8px; border-radius: 50%; background: #8fbf91; }}
+    .login {{ display: flex; flex-direction: column; justify-content: center; padding: clamp(34px, 6vw, 64px); }}
+    .login h2 {{ margin: 0; font-size: 1.65rem; letter-spacing: -0.04em; }}
+    .login-intro {{ margin: 9px 0 30px; color: rgba(203, 197, 185, 0.58); font-size: 0.82rem; line-height: 1.6; }}
+    label {{ display: block; margin: 0 0 8px; color: rgba(203, 197, 185, 0.66); font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.11em; }}
+    input {{
+      width: 100%;
+      height: 48px;
+      margin-bottom: 19px;
+      padding: 0 14px;
+      border: 1px solid rgba(203, 197, 185, 0.18);
+      border-radius: 10px;
+      background: rgba(17, 17, 16, 0.52);
+      color: var(--paper);
+      font: inherit;
+      transition: border-color 150ms ease, box-shadow 150ms ease;
+    }}
+    input:focus {{ outline: 0; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(241, 90, 36, 0.13); }}
+    button {{
+      width: 100%;
+      height: 49px;
+      margin-top: 4px;
+      border: 0;
+      border-radius: 10px;
+      background: var(--accent);
+      color: #161410;
+      font: 750 0.84rem/1 Inter, ui-sans-serif, sans-serif;
+      cursor: pointer;
+      transition: background 150ms ease, transform 150ms ease;
+    }}
+    button:hover {{ background: var(--accent-bright); transform: translateY(-1px); }}
+    button:focus-visible {{ outline: 3px solid rgba(241, 90, 36, 0.32); outline-offset: 3px; }}
+    .error {{ margin: -8px 0 20px; padding: 11px 12px; border: 1px solid rgba(255, 139, 117, 0.25); border-radius: 9px; background: rgba(255, 139, 117, 0.08); color: var(--danger); font-size: 0.76rem; }}
+    .help {{ margin: 20px 0 0; color: rgba(203, 197, 185, 0.42); font-size: 0.7rem; text-align: center; line-height: 1.5; }}
+    @media (max-width: 760px) {{
+      body {{ padding: 0; place-items: stretch; }}
+      .shell {{ min-height: 100vh; grid-template-columns: 1fr; border: 0; border-radius: 0; }}
+      .story {{ min-height: 285px; padding: 28px; }}
+      .story-copy {{ margin: 46px 0 22px; }}
+      .story-copy p:last-child {{ display: none; }}
+      .secure {{ display: none; }}
+      .login {{ padding: 38px 28px 48px; }}
+    }}
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <section class="story">
+      <div class="brand"><span class="mark">L</span><div><strong>Ledgerly</strong><span>Invoice intelligence</span></div></div>
+      <div class="story-copy"><p class="eyebrow">Private alpha</p><h1>Every invoice, understood.</h1><p>Upload documents directly to encrypted storage and turn them into structured, reviewable records in one secure workspace.</p></div>
+      <div class="secure">Protected by encrypted sessions and private storage</div>
+    </section>
+    <section class="login">
+      <h2>Welcome back</h2>
+      <p class="login-intro">Sign in with the private-alpha credentials provided to you.</p>
+      {error_markup}
+      <form method="post" action="/login">
+        <label for="username">Username</label>
+        <input id="username" name="username" type="text" autocomplete="username" required autofocus />
+        <label for="password">Password</label>
+        <input id="password" name="password" type="password" autocomplete="current-password" required />
+        <button type="submit">Enter workspace</button>
+      </form>
+      <p class="help">Access is limited to approved testers. Sessions expire automatically after seven days.</p>
+    </section>
+  </main>
+</body>
+</html>"""
+
+
 def _dashboard_html(upload_mode: str = "r2", principal: str | AlphaUser = "Operator") -> str:
     html = """<!doctype html>
 <html lang="en">
@@ -1032,6 +1249,9 @@ def _dashboard_html(upload_mode: str = "r2", principal: str | AlphaUser = "Opera
     .live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--success); box-shadow: 0 0 0 4px rgba(143, 191, 145, 0.11); }
     .alpha-user { margin: 12px 0 3px; font-weight: 650; color: var(--paper); overflow-wrap: anywhere; }
     .alpha-quota { color: rgba(203, 197, 185, 0.58); font-size: 0.76rem; }
+    .logout-form { margin-top: 13px; }
+    .logout-btn { padding: 0; border: 0; background: transparent; color: rgba(203, 197, 185, 0.52); font-size: 0.72rem; cursor: pointer; }
+    .logout-btn:hover { color: var(--accent); }
     .main { min-width: 0; padding: 0 34px 48px; }
     .topbar {
       min-height: 82px;
@@ -1242,6 +1462,7 @@ def _dashboard_html(upload_mode: str = "r2", principal: str | AlphaUser = "Opera
         <div class="alpha-label"><span class="live-dot"></span>Private alpha</div>
         <div class="alpha-user">__ALPHA_USER__</div>
         <div class="alpha-quota"><span id="documentsRemaining">__DOCUMENTS_REMAINING__</span> document credits remain</div>
+        <form class="logout-form" method="post" action="/logout"><button class="logout-btn" type="submit">Sign out</button></form>
       </div>
     </aside>
 

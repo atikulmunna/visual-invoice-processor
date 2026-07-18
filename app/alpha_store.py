@@ -7,6 +7,7 @@ import json
 import os
 import secrets
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -193,6 +194,58 @@ class AlphaStore:
         if row is None or not bool(row[5]) or not verify_password(password, row[2]):
             raise AlphaAuthenticationError("Invalid credentials")
         return AlphaUser(str(row[0]), row[1], int(row[3]), int(row[4]), bool(row[5]))
+
+    @staticmethod
+    def _session_token_hash(token: str) -> str:
+        if not token or len(token) > 256:
+            raise AlphaAuthenticationError("Invalid session")
+        return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+    def create_session(self, user: AlphaUser, *, lifetime: timedelta = timedelta(days=7)) -> str:
+        token = secrets.token_urlsafe(32)
+        token_hash = self._session_token_hash(token)
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM public.alpha_sessions WHERE expires_at_utc <= NOW()")
+                cur.execute(
+                    """
+                    INSERT INTO public.alpha_sessions(token_hash, user_id, expires_at_utc)
+                    VALUES (%s, %s, NOW() + %s)
+                    """,
+                    (token_hash, user.id, lifetime),
+                )
+            conn.commit()
+        return token
+
+    def authenticate_session(self, token: str) -> AlphaUser:
+        token_hash = self._session_token_hash(token)
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT u.id, u.username, u.document_limit, u.documents_used, u.is_active
+                    FROM public.alpha_sessions AS s
+                    JOIN public.alpha_users AS u ON u.id = s.user_id
+                    WHERE s.token_hash = %s
+                      AND s.expires_at_utc > NOW()
+                      AND u.is_active = true
+                    """,
+                    (token_hash,),
+                )
+                row = cur.fetchone()
+        if row is None:
+            raise AlphaAuthenticationError("Invalid session")
+        return AlphaUser(str(row[0]), row[1], int(row[2]), int(row[3]), bool(row[4]))
+
+    def delete_session(self, token: str) -> None:
+        try:
+            token_hash = self._session_token_hash(token)
+        except AlphaAuthenticationError:
+            return
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM public.alpha_sessions WHERE token_hash = %s", (token_hash,))
+            conn.commit()
 
     def authorize_upload(
         self,
