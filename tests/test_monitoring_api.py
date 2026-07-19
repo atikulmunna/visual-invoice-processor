@@ -99,6 +99,8 @@ def test_monitoring_endpoints_expose_stats_backlog_and_failures(tmp_path: Path, 
     assert review_history.json()["count"] == 0
     assert dashboard.status_code == 200
     assert "Invoice Operations Dashboard" in dashboard.text
+    assert "light palette supplied by the product owner" in dashboard.text
+    assert "--ink-950: #f7f4ee" in dashboard.text
     assert '<link rel="icon" type="image/png" href="/assets/icon.png" />' in dashboard.text
     assert '<span class="brand-mark"><img src="/assets/icon.png" alt="" /></span>' in dashboard.text
     assert 'id="uploadInput"' in dashboard.text

@@ -128,7 +128,8 @@ def test_alpha_login_creates_secure_session_and_logout_clears_it(monkeypatch: An
     assert '<link rel="icon" type="image/png" href="/assets/icon.png" />' in login_page.text
     assert '<img src="/assets/icon.png" alt="" />' in login_page.text
     assert "Invoice intelligence" not in login_page.text
-    assert "rgba(241, 90, 36, 0.28)" in login_page.text
+    assert "rgba(241, 90, 36, 0.16)" in login_page.text
+    assert "--ink-950: #f7f4ee" in login_page.text
     assert login.status_code == 303
     assert login.headers["location"] == "/dashboard"
     assert "httponly" in login.headers["set-cookie"].lower()
