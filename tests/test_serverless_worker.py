@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from io import BytesIO
 from pathlib import Path
 
 import pytest
+from pypdf import PdfWriter
 
 from app.main import DocumentRejectedError
 from app.serverless_worker import inspect_document
@@ -28,3 +30,26 @@ def test_inspect_rejects_size_and_signature(tmp_path: Path) -> None:
         inspect_document(empty, max_bytes=100, max_pdf_pages=5)
     with pytest.raises(DocumentRejectedError, match="signature"):
         inspect_document(bad, max_bytes=100, max_pdf_pages=5)
+
+
+def test_inspect_accepts_pdf_with_leading_ascii_whitespace(tmp_path: Path) -> None:
+    buffer = BytesIO()
+    writer = PdfWriter()
+    writer.add_blank_page(width=100, height=100)
+    writer.write(buffer)
+    pdf = tmp_path / "leading-newline.pdf"
+    pdf.write_bytes(b"\n" + buffer.getvalue())
+
+    assert inspect_document(pdf, max_bytes=10_000, max_pdf_pages=5) == ("application/pdf", 1)
+
+
+def test_inspect_rejects_pdf_with_non_whitespace_prefix(tmp_path: Path) -> None:
+    buffer = BytesIO()
+    writer = PdfWriter()
+    writer.add_blank_page(width=100, height=100)
+    writer.write(buffer)
+    pdf = tmp_path / "prefixed.pdf"
+    pdf.write_bytes(b"x" + buffer.getvalue())
+
+    with pytest.raises(DocumentRejectedError, match="signature"):
+        inspect_document(pdf, max_bytes=10_000, max_pdf_pages=5)

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+from io import BytesIO
 from pathlib import Path
 from typing import Any
 from urllib.parse import unquote_plus
@@ -14,6 +15,9 @@ from app.metrics import MetricsCollector
 from app.normalization_engine import NormalizationRuleEngine
 from app.object_storage_service import ObjectStorageService
 
+PDF_LEADING_WHITESPACE_LIMIT = 16
+PDF_LEADING_WHITESPACE = b" \t\n\f\r"
+
 
 def inspect_document(path: Path, *, max_bytes: int, max_pdf_pages: int) -> tuple[str, int]:
     size = path.stat().st_size
@@ -23,14 +27,20 @@ def inspect_document(path: Path, *, max_bytes: int, max_pdf_pages: int) -> tuple
             code="invalid_file_size",
         )
     with path.open("rb") as fh:
-        header = fh.read(12)
-    if header.startswith(b"%PDF-"):
+        header = fh.read(32)
+    normalized_pdf_header = header.lstrip(PDF_LEADING_WHITESPACE)
+    leading_whitespace = len(header) - len(normalized_pdf_header)
+    if (
+        leading_whitespace <= PDF_LEADING_WHITESPACE_LIMIT
+        and normalized_pdf_header.startswith(b"%PDF-")
+    ):
         try:
             from pypdf import PdfReader
         except ImportError as exc:
             raise RuntimeError("pypdf is required to validate PDF page limits") from exc
         try:
-            page_count = len(PdfReader(str(path)).pages)
+            pdf_bytes = path.read_bytes()[leading_whitespace:]
+            page_count = len(PdfReader(BytesIO(pdf_bytes)).pages)
         except Exception as exc:  # noqa: BLE001
             raise DocumentRejectedError("The uploaded PDF is invalid", code="invalid_pdf") from exc
         if page_count < 1 or page_count > max_pdf_pages:
