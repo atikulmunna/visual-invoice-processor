@@ -1,0 +1,43 @@
+name: Supabase Keepalive
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Every third day at 05:20 UTC. Supabase pauses free-plan projects after
+    # about 7 days of inactivity, so a single missed run is still safe.
+    - cron: "20 5 */3 * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: supabase-keepalive
+  cancel-in-progress: false
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      POSTGRES_DSN: ${{ secrets.POSTGRES_DSN }}
+      SUPABASE_URL: ${{ vars.SUPABASE_URL }}
+      SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install ping dependencies
+        run: pip install "psycopg[binary]>=3.2,<4" "requests>=2.32,<3"
+
+      - name: Validate required secrets
+        run: |
+          if [ -z "${POSTGRES_DSN}" ]; then
+            echo "POSTGRES_DSN secret is required for the Supabase keepalive ping."
+            exit 1
+          fi
+
+      - name: Ping Supabase
+        run: python -u -m app.keepalive
