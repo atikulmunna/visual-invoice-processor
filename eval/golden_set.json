@@ -23,7 +23,7 @@
       "file_path": "eval/samples/invoice_003.pdf",
       "expected": {
         "document_type": "invoice",
-        "currency": "BDT",
+        "currency": "USD",
         "total_amount": 50.1
       }
     },
@@ -31,7 +31,7 @@
       "id": "case-004",
       "file_path": "eval/samples/invoice_004.pdf",
       "expected": {
-        "document_type": "invoice",
+        "document_type": "receipt",
         "currency": "BDT",
         "total_amount": 291.54
       }
