@@ -320,9 +320,9 @@ def _provider_model(provider: str, fallback_model_name: str) -> str:
     if fallback_model_name and fallback_model_name != "auto":
         return fallback_model_name
     defaults = {
-        "mistral": os.getenv("MISTRAL_MODEL", "pixtral-large-latest"),
-        "openrouter": os.getenv("OPENROUTER_MODEL", "mistralai/pixtral-12b"),
-        "groq": os.getenv("GROQ_MODEL", "meta-llama/llama-4-scout-17b-16e-instruct"),
+        "mistral": os.getenv("MISTRAL_MODEL", "mistral-small-latest"),
+        "openrouter": os.getenv("OPENROUTER_MODEL", "mistralai/mistral-medium-3.1"),
+        "groq": os.getenv("GROQ_MODEL", "qwen/qwen3.6-27b"),
         "openai": os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
         "gemini": os.getenv("GEMINI_MODEL", "gemini-1.5-pro"),
     }

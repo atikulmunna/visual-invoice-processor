@@ -29,7 +29,7 @@ jobs:
       NORMALIZATION_RULES_PATH: config/normalization_rules.json
       EXTRACTION_PROVIDER: auto
       EXTRACTION_PROVIDER_ORDER: mistral,openrouter,groq
-      MISTRAL_MODEL: pixtral-large-latest
+      MISTRAL_MODEL: mistral-small-latest
       MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
       GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}

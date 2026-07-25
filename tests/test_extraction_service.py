@@ -83,8 +83,8 @@ def test_multi_provider_client_falls_back_to_next_provider(tmp_path: Path) -> No
     file_path.write_bytes(b"img")
     client = MultiProviderVisionClient(
         providers=[
-            ("mistral", _AlwaysFailClient(), "pixtral-large-latest"),
-            ("openrouter", _FakeVisionClient(outputs=['{"vendor_name":"Fallback"}']), "mistralai/pixtral-12b"),
+            ("mistral", _AlwaysFailClient(), "mistral-small-latest"),
+            ("openrouter", _FakeVisionClient(outputs=['{"vendor_name":"Fallback"}']), "mistralai/mistral-medium-3.1"),
         ]
     )
 
