@@ -1,17 +1,8 @@
-<div align="center">
-  <img src="assets/icon.png" alt="Ledgerly icon" width="112" />
+# Ledgerly Invoice Processor
 
-  <h1>Ledgerly Invoice Processor</h1>
+**Turn invoices and receipts into structured, reviewable records through a secure serverless workflow.**
 
-  <p><strong>Turn invoices and receipts into structured, reviewable records through a secure serverless workflow.</strong></p>
-
-  <p>
-    <a href="https://2wuikcntsyyqfgkucq5m26vyfe0kekgl.lambda-url.ap-southeast-1.on.aws/">
-      <img src="https://img.shields.io/badge/OPEN_LIVE_DEMO-F15A24?style=for-the-badge&logoColor=white" alt="Open live demo" />
-    </a>
-  </p>
-
-</div>
+[![Open live demo](https://img.shields.io/badge/OPEN_LIVE_DEMO-F15A24?style=for-the-badge&logoColor=white)](https://2wuikcntsyyqfgkucq5m26vyfe0kekgl.lambda-url.ap-southeast-1.on.aws/)
 
 ---
 

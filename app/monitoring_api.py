@@ -884,7 +884,7 @@ def _login_html(error: str | None = None) -> str:
   <main class="shell">
     <section class="story">
       <div class="brand"><span class="mark"><img src="/assets/icon.png" alt="" /></span><div><strong>Ledgerly</strong></div></div>
-      <div class="story-copy"><p class="eyebrow">Private alpha</p><h1>Every invoice, understood.</h1><p>Upload documents directly to encrypted storage and turn them into structured, reviewable records in one secure workspace.</p></div>
+      <div class="story-copy"><p class="eyebrow">Private alpha</p><p>Upload documents directly to encrypted storage and turn them into structured, reviewable records in one secure workspace.</p></div>
       <div class="secure">Protected by encrypted sessions and private storage</div>
     </section>
     <section class="login">
