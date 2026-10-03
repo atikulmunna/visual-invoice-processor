@@ -101,9 +101,6 @@ def process_s3_object(
 
     metrics = MetricsCollector()
     normalization_engine = NormalizationRuleEngine.from_path(active_settings.normalization_rules_path)
-    provider = os.getenv("EXTRACTION_PROVIDER", "mistral").strip().lower()
-    if provider == "auto":
-        provider = "mistral"
     candidate = {
         "id": object_key,
         "name": job["original_name"],
@@ -120,7 +117,7 @@ def process_s3_object(
         dead_letter=active_store,
         metrics=metrics,
         normalization_engine=normalization_engine,
-        extraction_provider=provider,
+        extraction_provider="openrouter",
         extraction_model=os.getenv("EXTRACTION_MODEL", "auto"),
         worker_id=f"lambda:{job_id}",
         review_threshold=float(os.getenv("REVIEW_CONFIDENCE_THRESHOLD", "0.5")),

@@ -328,7 +328,7 @@ def run_poll_once() -> int:
     metrics_sink = JsonlMetricsSink()
     normalization_engine = NormalizationRuleEngine.from_path(settings.normalization_rules_path)
 
-    extraction_provider = os.getenv("EXTRACTION_PROVIDER", "auto")
+    extraction_provider = "openrouter"
     extraction_model = os.getenv("EXTRACTION_MODEL", "auto")
     worker_id = os.getenv("WORKER_ID", "poll-once")
     review_threshold = float(os.getenv("REVIEW_CONFIDENCE_THRESHOLD", "0.5"))

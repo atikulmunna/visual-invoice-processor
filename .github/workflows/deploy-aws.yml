@@ -82,7 +82,6 @@ jobs:
             --no-fail-on-empty-changeset \
             --parameter-overrides \
               PostgresParameterName=${{ vars.POSTGRES_PARAMETER_NAME }} \
-              MistralParameterName=${{ vars.MISTRAL_PARAMETER_NAME }} \
               BudgetAlertEmail=${{ vars.BUDGET_ALERT_EMAIL }}
 
       - name: Smoke test health endpoint

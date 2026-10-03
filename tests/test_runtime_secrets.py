@@ -27,25 +27,25 @@ class _FakeSsmClient:
 
 def test_load_aws_parameter_secrets(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("POSTGRES_DSN", raising=False)
-    monkeypatch.delenv("MISTRAL_API_KEY", raising=False)
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     monkeypatch.setenv("POSTGRES_PARAMETER_NAME", "/app/postgres")
-    monkeypatch.setenv("MISTRAL_PARAMETER_NAME", "/app/mistral")
-    client = _FakeSsmClient({"/app/postgres": "postgresql://example", "/app/mistral": "key"})
+    monkeypatch.setenv("OPENROUTER_PARAMETER_NAME", "/app/openrouter")
+    client = _FakeSsmClient({"/app/postgres": "postgresql://example", "/app/openrouter": "key"})
 
     load_aws_parameter_secrets(client)
 
     assert os.environ["POSTGRES_DSN"] == "postgresql://example"
-    assert os.environ["MISTRAL_API_KEY"] == "key"
+    assert os.environ["OPENROUTER_API_KEY"] == "key"
     assert client.calls == [
-        {"Names": ["/app/mistral", "/app/postgres"], "WithDecryption": True}
+        {"Names": ["/app/openrouter", "/app/postgres"], "WithDecryption": True}
     ]
 
 
 def test_load_aws_parameter_secrets_reports_missing(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("POSTGRES_DSN", raising=False)
-    monkeypatch.delenv("MISTRAL_API_KEY", raising=False)
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     monkeypatch.setenv("POSTGRES_PARAMETER_NAME", "/app/postgres")
-    monkeypatch.delenv("MISTRAL_PARAMETER_NAME", raising=False)
+    monkeypatch.delenv("OPENROUTER_PARAMETER_NAME", raising=False)
 
     with pytest.raises(RuntimeError, match="/app/postgres"):
         load_aws_parameter_secrets(_FakeSsmClient({}))

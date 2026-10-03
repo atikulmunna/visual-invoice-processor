@@ -21,7 +21,7 @@ Ledgerly is a private-alpha invoice processing application built for a small, co
 
 - Direct browser-to-S3 uploads using short-lived presigned policies
 - Event-driven processing with separate web and worker Lambda functions
-- Mistral-powered extraction with native PDF text enrichment
+- Low-cost extraction through OpenRouter (Gemini 2.5 Flash Lite by default) with native PDF text enrichment
 - Normalization and recovery for invoice numbers, amounts, currencies, dates, and line items
 - Schema validation, business-rule checks, confidence scoring, and human review routing
 - Searchable records, activity feed, processing status, and review tools in one responsive dashboard
@@ -37,7 +37,7 @@ flowchart LR
     WEB -->|Five-minute policy| USER
     USER -->|Direct upload| INBOX[(Private S3 inbox)]
     INBOX -->|Object-created event| WORKER[Processing Lambda]
-    WORKER --> EXTRACT[Mistral extraction]
+    WORKER --> EXTRACT[OpenRouter extraction]
     EXTRACT --> NORMALIZE[Normalize and validate]
     NORMALIZE -->|Accepted| DB[(Supabase Postgres)]
     NORMALIZE -->|Needs attention| REVIEW[Review queue]
@@ -66,7 +66,7 @@ Document bytes bypass the web Lambda. The browser uploads directly to S3, reduci
 | Web application | FastAPI, Mangum, AWS Lambda | Authentication, dashboard, upload authorization, job status |
 | Object storage | Amazon S3 | Private inbox, event trigger, short-lived archive |
 | Processing | Python 3.13, AWS Lambda | File inspection, extraction pipeline, validation |
-| AI extraction | Mistral AI | Invoice and receipt field extraction |
+| AI extraction | OpenRouter | Invoice and receipt field extraction |
 | Database | Supabase Postgres | Users, sessions, jobs, records, reviews, analytics |
 | Infrastructure | AWS SAM, CloudFormation | Repeatable serverless provisioning |
 | Delivery | GitHub Actions, GitHub OIDC | Tests, image build, deployment, health check |
@@ -118,7 +118,7 @@ Dockerfile                  Lambda container image
 - Python 3.13
 - An AWS account and private S3 bucket
 - A Supabase Postgres project
-- A Mistral API key
+- An OpenRouter API key
 
 ### Setup
 
@@ -139,8 +139,7 @@ S3_REGION=ap-southeast-1
 LEDGER_BACKEND=postgres
 POSTGRES_DSN=postgresql://...
 
-EXTRACTION_PROVIDER=mistral
-MISTRAL_API_KEY=...
+OPENROUTER_API_KEY=...
 ```
 
 Apply the ordered database migrations:

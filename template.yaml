@@ -6,9 +6,6 @@ Parameters:
   PostgresParameterName:
     Type: String
     Description: Name of the SSM SecureString containing POSTGRES_DSN
-  MistralParameterName:
-    Type: String
-    Description: Name of the SSM SecureString containing MISTRAL_API_KEY
   BudgetAlertEmail:
     Type: String
     Description: Email address for annual AWS budget notifications
@@ -35,9 +32,6 @@ Globals:
         ALPHA_GLOBAL_PAGE_LIMIT: "1000"
         MAX_UPLOAD_BYTES: "5242880"
         MAX_PDF_PAGES: "5"
-        EXTRACTION_PROVIDER: mistral
-        MISTRAL_MODEL: mistral-small-latest
-        MISTRAL_PARAMETER_NAME: !Ref MistralParameterName
         NORMALIZATION_RULES_PATH: config/normalization_rules.json
         REVIEW_CONFIDENCE_THRESHOLD: "0.5"
         STORE_REVIEW_SCORE_THRESHOLD: "0.6"
@@ -121,7 +115,6 @@ Resources:
               Action: ssm:GetParameters
               Resource:
                 - !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/invoice-processor/alpha/postgres-dsn"
-                - !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/invoice-processor/alpha/mistral-api-key"
 
   WorkerFunction:
     Type: AWS::Serverless::Function
@@ -135,6 +128,11 @@ Resources:
       Timeout: 300
       ImageConfig:
         Command: ["app.lambda_handlers.s3_handler"]
+      Environment:
+        Variables:
+          OPENROUTER_PARAMETER_NAME: /invoice-processor/alpha/openrouter-api-key
+          OPENROUTER_MODEL: google/gemini-2.5-flash-lite
+          OPENROUTER_MAX_TOKENS: "2000"
       Policies:
         - Version: "2012-10-17"
           Statement:
@@ -150,7 +148,7 @@ Resources:
               Action: ssm:GetParameters
               Resource:
                 - !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/invoice-processor/alpha/postgres-dsn"
-                - !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/invoice-processor/alpha/mistral-api-key"
+                - !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/invoice-processor/alpha/openrouter-api-key"
       Events:
         InvoiceUploaded:
           Type: S3
