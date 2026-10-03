@@ -380,6 +380,7 @@ def _process_candidate(
     metrics.increment("documents_processed_total")
     file_id = candidate["id"]
     file_name = candidate.get("name", "document")
+    org_id = candidate.get("org_id")
     _TMP_DIR.mkdir(parents=True, exist_ok=True)
     local_path = _TMP_DIR / f"{uuid4().hex}_{file_name}"
     result: dict[str, Any] = {"source_id": file_id, "status": "UNKNOWN"}
@@ -418,6 +419,7 @@ def _process_candidate(
                     "normalized_record": normalized_payload,
                     "used_provider": used_provider,
                 },
+                org_id=org_id,
             )
             dead_letter.write_failure(
                 {
@@ -458,6 +460,7 @@ def _process_candidate(
                     "violations": validation["violations"],
                     "used_provider": used_provider,
                 },
+                org_id=org_id,
             )
             dead_letter.write_failure(
                 {
@@ -494,6 +497,7 @@ def _process_candidate(
             "processed_at_utc": datetime.now(timezone.utc).isoformat(),
             "needs_review": needs_review,
             "used_provider": used_provider,
+            "org_id": org_id,
         }
         append_result = append_record(record=record, metadata=metadata)
         claim_store.mark_status(file_id, file_hash, "STORED")

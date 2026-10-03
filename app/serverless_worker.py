@@ -110,6 +110,7 @@ def process_s3_object(
         "mimeType": job["content_type"],
         "size": str(job["declared_size"]),
         "job_id": job_id,
+        "org_id": job["org_id"],
     }
     result = _process_candidate(
         candidate=candidate,

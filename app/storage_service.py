@@ -141,6 +141,7 @@ class PostgresStorageService:
                         record_json JSONB NOT NULL,
                         metadata_json JSONB NOT NULL,
                         processed_at_utc TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                        org_id UUID,
                         UNIQUE (drive_file_id, file_hash)
                     )
                     """
@@ -158,9 +159,9 @@ class PostgresStorageService:
                 cur.execute(
                     f"""
                     INSERT INTO {self._table}
-                        (drive_file_id, file_hash, status, record_json, metadata_json, processed_at_utc)
+                        (drive_file_id, file_hash, status, record_json, metadata_json, processed_at_utc, org_id)
                     VALUES
-                        (%s, %s, %s, %s::jsonb, %s::jsonb, NOW())
+                        (%s, %s, %s, %s::jsonb, %s::jsonb, NOW(), %s)
                     ON CONFLICT (drive_file_id, file_hash) DO NOTHING
                     RETURNING id
                     """,
@@ -170,6 +171,7 @@ class PostgresStorageService:
                         metadata.get("status", "STORED"),
                         json.dumps(record, ensure_ascii=True),
                         json.dumps(metadata, ensure_ascii=True),
+                        metadata.get("org_id"),
                     ),
                 )
                 row = cur.fetchone()
