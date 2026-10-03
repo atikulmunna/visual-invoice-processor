@@ -2,9 +2,59 @@ from __future__ import annotations
 
 import json
 import re
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from typing import Any
+
+# Symbols and words a model or a document may use instead of an ISO code. Ambiguous
+# labels such as "Rs" (INR, PKR, LKR, NPR) are left out rather than guessed.
+_CURRENCY_ALIASES = {
+    "US$": "USD",
+    "$": "USD",
+    "DOLLAR": "USD",
+    "DOLLARS": "USD",
+    "EURO": "EUR",
+    "EUROS": "EUR",
+    "€": "EUR",
+    "POUND": "GBP",
+    "POUNDS": "GBP",
+    "£": "GBP",
+    "TK": "BDT",
+    "TK.": "BDT",
+    "TAKA": "BDT",
+    "৳": "BDT",
+    "₹": "INR",
+}
+
+# Currency markers counted in uppercased document text. "$" and "Tk" count only next to
+# an amount, so a stray symbol does not decide the currency.
+_CURRENCY_MARKERS = {
+    "USD": (r"\bUSD\b", r"\bUS\$", r"(?<![A-Z])\$\s*\d", r"\bDOLLARS?\b"),
+    "EUR": (r"\bEUR\b", r"€", r"\bEUROS?\b"),
+    "GBP": (r"\bGBP\b", r"£", r"\bPOUNDS?\b"),
+    "BDT": (r"\bBDT\b", r"৳", r"\bTAKA\b", r"(?<![A-Z])TK\.?\s*\d"),
+    "INR": (r"\bINR\b", r"₹"),
+}
+
+# Day-first before month-first, matching Bangladeshi and most non-US documents.
+_DATE_FORMATS = (
+    "%Y-%m-%d",
+    "%Y/%m/%d",
+    "%d-%m-%Y",
+    "%d/%m/%Y",
+    "%d.%m.%Y",
+    "%m/%d/%Y",
+    "%d-%m-%y",
+    "%d/%m/%y",
+    "%B %d, %Y",
+    "%b %d, %Y",
+    "%B %d %Y",
+    "%b %d %Y",
+    "%d %B %Y",
+    "%d %b %Y",
+    "%d %b, %Y",
+    "%d-%b-%Y",
+)
 
 
 class NormalizationRuleEngine:
@@ -17,7 +67,8 @@ class NormalizationRuleEngine:
             str(x).lower() for x in rules.get("line_item_ignore_keywords", [])
         ]
         self.amount_tolerance: float = float(rules.get("amount_tolerance", 0.01))
-        self.default_currency: str = str(rules.get("default_currency", "BDT")).upper()
+        # Fallback when the caller supplies no organization base currency (evaluation, local runs).
+        self.base_currency: str | None = self._normalize_currency_code(rules.get("base_currency"))
         self.default_document_type: str = str(rules.get("default_document_type", "invoice")).lower()
         self.default_confidence: float = float(rules.get("default_confidence", 0.8))
 
@@ -67,15 +118,9 @@ class NormalizationRuleEngine:
         if not value:
             return None
         text = str(value).strip()
-        formats = (
-            "%Y-%m-%d",
-            "%d-%m-%Y",
-            "%d/%m/%Y",
-            "%m/%d/%Y",
-            "%B %d, %Y",
-            "%b %d, %Y",
-        )
-        for fmt in formats:
+        if re.match(r"\d{4}-\d{2}-\d{2}[T ]", text):
+            text = text[:10]
+        for fmt in _DATE_FORMATS:
             try:
                 return datetime.strptime(text, fmt).strftime("%Y-%m-%d")
             except ValueError:
@@ -119,17 +164,26 @@ class NormalizationRuleEngine:
                 return self._safe_float(match.group(1), 0.0)
         return None
 
-    def _extract_currency_from_ocr(self, text: str) -> str | None:
-        checks = (
-            (r"\b(?:BDT|Tk|Taka)\b|৳", "BDT"),
-            (r"\bUSD\b|\$", "USD"),
-            (r"\bEUR\b|€", "EUR"),
-            (r"\bGBP\b|£", "GBP"),
-        )
-        for pattern, currency in checks:
-            if re.search(pattern, text, re.IGNORECASE):
-                return currency
-        return None
+    @staticmethod
+    def _normalize_currency_code(value: Any) -> str | None:
+        text = str(value or "").strip().upper()
+        if not text:
+            return None
+        if text in _CURRENCY_ALIASES:
+            return _CURRENCY_ALIASES[text]
+        return text if re.fullmatch(r"[A-Z]{3}", text) else None
+
+    @staticmethod
+    def _infer_currency_from_text(text: str) -> str | None:
+        """The currency whose markers appear most often, or None when absent or tied."""
+        upper = text.upper()
+        counts = {
+            code: sum(len(re.findall(pattern, upper)) for pattern in patterns)
+            for code, patterns in _CURRENCY_MARKERS.items()
+        }
+        best = max(counts.values())
+        leaders = [code for code, count in counts.items() if count == best]
+        return leaders[0] if best > 0 and len(leaders) == 1 else None
 
     def _normalize_payment_method(self, value: Any) -> str:
         text = str(value or "").lower()
@@ -138,14 +192,13 @@ class NormalizationRuleEngine:
                 return canonical
         return "unknown"
 
-    def _normalize_vendor_name(self, raw: dict[str, Any]) -> str:
-        value = self._pick(raw, "vendor_name", default="Unknown Vendor")
+    def _normalize_vendor_name(self, raw: dict[str, Any]) -> str | None:
+        value = self._pick(raw, "vendor_name")
         if isinstance(value, dict):
-            name = value.get("name")
-            if isinstance(name, str) and name.strip():
-                return name.strip()
-            return "Unknown Vendor"
-        return str(value).strip() or "Unknown Vendor"
+            value = value.get("name")
+        if value is None:
+            return None
+        return str(value).strip() or None
 
     def _normalize_line_items(self, raw: Any, ocr_text: str) -> list[dict[str, Any]]:
         items: list[dict[str, Any]] = []
@@ -288,7 +341,13 @@ class NormalizationRuleEngine:
             pending_description = ""
         return rows
 
-    def coerce_payload(self, raw: dict[str, Any]) -> dict[str, Any]:
+    def coerce_payload(self, raw: dict[str, Any], *, base_currency: str | None = None) -> dict[str, Any]:
+        """Map a raw extraction onto the invoice schema.
+
+        Values the document does not show stay empty (None) so validation can send the
+        document to review. The one exception is currency, which falls back to the
+        organization's base currency and is flagged with currency_assumed.
+        """
         ocr_text = str(raw.get("_ocr_text", "") or "")
         total = self._safe_float(self._pick(raw, "total_amount", default=0.0), 0.0)
         if total <= 0 and ocr_text:
@@ -322,8 +381,6 @@ class NormalizationRuleEngine:
         invoice_date = self._normalize_date(self._pick(raw, "invoice_date"))
         if not invoice_date and ocr_text:
             invoice_date = self._extract_date_from_ocr(ocr_text)
-        if not invoice_date:
-            invoice_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
         line_items = self._normalize_line_items(self._pick(raw, "line_items", default=[]), ocr_text)
         line_items = [item for item in line_items if not self._should_ignore_line_item(str(item.get("description", "")))]
@@ -337,10 +394,14 @@ class NormalizationRuleEngine:
         if document_type not in {"invoice", "receipt"}:
             document_type = "invoice"
 
-        raw_currency = self._pick(raw, "currency")
-        currency = str(raw_currency or self._extract_currency_from_ocr(ocr_text) or self.default_currency).upper()
-        if len(currency) != 3:
-            currency = self.default_currency
+        currency = self._normalize_currency_code(self._pick(raw, "currency")) or self._infer_currency_from_text(
+            ocr_text
+        )
+        currency_assumed = False
+        if currency is None:
+            # Like a ledger's base currency: an explicit organization setting, flagged as assumed.
+            currency = self._normalize_currency_code(base_currency) or self.base_currency
+            currency_assumed = currency is not None
 
         invoice_number = self._pick(raw, "invoice_number")
         if not invoice_number and ocr_text:
@@ -360,6 +421,7 @@ class NormalizationRuleEngine:
             "invoice_date": invoice_date,
             "due_date": self._normalize_date(self._pick(raw, "due_date")),
             "currency": currency,
+            "currency_assumed": currency_assumed,
             "subtotal": max(subtotal, 0.0),
             "tax_amount": max(tax_amount, 0.0),
             "shipping_amount": max(shipping_amount, 0.0),

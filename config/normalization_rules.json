@@ -1,5 +1,5 @@
 {
-  "default_currency": "BDT",
+  "base_currency": "BDT",
   "default_document_type": "invoice",
   "default_confidence": 0.8,
   "amount_tolerance": 0.01,
@@ -9,7 +9,7 @@
     "invoice_number": ["invoice_number", "invoice_id", "order_id", "receipt_number", "reference_number", "invoice_no", "bill_no", "receipt_no", "document_number"],
     "invoice_date": ["invoice_date", "order_date", "invoice_created_at", "date", "payment_date", "date_paid", "issued_date", "bill_date", "transaction_date"],
     "due_date": ["due_date", "payment_due_date", "due_on"],
-    "currency": ["currency", "currency_code", "invoice_currency"],
+    "currency": ["currency", "currency_code", "invoice_currency", "currency_symbol"],
     "subtotal_amount": ["subtotal", "sub_total", "amount_before_tax", "net_amount", "item_total"],
     "tax_amount": ["tax_amount", "tax", "vat", "gst", "sales_tax", "tax_total"],
     "shipping_amount": ["shipping_amount", "shipping", "shipping_and_handling", "delivery_charge", "freight"],

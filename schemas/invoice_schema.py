@@ -25,6 +25,7 @@ class InvoiceRecord(BaseModel):
     invoice_date: date
     due_date: date | None = None
     currency: CurrencyCode
+    currency_assumed: bool = False
     subtotal: float = Field(ge=0)
     tax_amount: float = Field(ge=0)
     shipping_amount: float = Field(default=0, ge=0)

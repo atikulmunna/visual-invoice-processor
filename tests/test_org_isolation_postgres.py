@@ -132,11 +132,13 @@ def test_migration_backfills_existing_rows_into_personal_organizations(tmp_path:
                 "INSERT INTO document_claims(file_hash, source_id, status) VALUES ('legacy-hash', 'drive-legacy', 'STORED')"
             )
 
-        assert apply_migrations(database) == ["005_organizations.sql"]
+        assert apply_migrations(database) == ["005_organizations.sql", "006_org_base_currency.sql"]
 
         with psycopg.connect(database) as conn:
             orgs = dict(conn.execute("SELECT id, name FROM organizations").fetchall())
             assert orgs == {user_a: "tester.a", user_b: "tester.b"}
+            currencies = {row[0] for row in conn.execute("SELECT base_currency FROM organizations").fetchall()}
+            assert currencies == {"BDT"}
             owners = conn.execute("SELECT org_id, user_id, role FROM memberships ORDER BY role").fetchall()
             assert sorted(owners) == sorted([(user_a, user_a, "owner"), (user_b, user_b, "owner")])
             records = dict(conn.execute("SELECT drive_file_id, org_id FROM ledger_records").fetchall())
@@ -356,3 +358,78 @@ def test_worker_processes_identical_files_independently_per_organization(
             ).fetchall()
         )
     assert owners == {key_one: one.org_id, key_two: two.org_id}
+
+
+def test_base_currency_is_validated_and_listed(dsn: str) -> None:
+    store = AlphaStore(dsn)
+    owner = _user(store, "currency")
+
+    assert store.set_base_currency(owner.org_id, "usd") == "USD"
+    assert {org.id: org.base_currency for org in store.list_organizations()}[owner.org_id] == "USD"
+    for bad in ("US", "US1", "dollar"):
+        with pytest.raises(ValueError):
+            store.set_base_currency(owner.org_id, bad)
+    with pytest.raises(AlphaNotFoundError):
+        store.set_base_currency(str(uuid4()), "EUR")
+
+
+def test_worker_uses_each_organization_base_currency_and_never_invents_fields(
+    pg_env: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.config import Settings
+    from app.serverless_worker import process_s3_object
+
+    no_currency: dict[str, Any] = {
+        "document_type": "invoice",
+        "vendor_name": "Acme Supplies",
+        "invoice_number": "INV-90",
+        "invoice_date": "2026-03-04",
+        "subtotal": 100,
+        "tax_amount": 0,
+        "total_amount": 100,
+        "model_confidence": 0.95,
+        "line_items": [],
+        "_provider": "fake",
+    }
+    outputs = [
+        dict(no_currency),
+        dict(no_currency),
+        {**no_currency, "vendor_name": None, "invoice_date": None},
+    ]
+    monkeypatch.setattr("app.main.extract_document", lambda **_: outputs.pop(0))
+
+    store = AlphaStore(pg_env)
+    bdt_org, usd_org = _user(store, "bdt"), _user(store, "usd")
+    store.set_base_currency(usd_org.org_id, "USD")
+    settings = Settings.from_env()
+    _, key_bdt = _upload(store, bdt_org)
+    _, key_usd = _upload(store, usd_org)
+    _, key_blank = _upload(store, usd_org, name="blank.png")
+
+    # Distinct bytes per upload so in-org deduplication does not interfere.
+    results = []
+    for index, key in enumerate((key_bdt, key_usd, key_blank)):
+        storage = _FakeObjectStorage()
+        storage.content = _FakeObjectStorage.content + bytes([index])
+        results.append(process_s3_object(key, store=store, storage=storage, settings=settings))
+
+    assert [result["status"] for result in results] == ["STORED", "STORED", "REVIEW_REQUIRED"]
+    assert results[2]["reason_codes"] == ["missing_vendor", "missing_invoice_date"]
+    with psycopg.connect(pg_env) as conn:
+        stored = dict(
+            conn.execute(
+                """
+                SELECT drive_file_id, record_json ->> 'currency' || ' assumed=' || (record_json ->> 'currency_assumed')
+                FROM ledger_records WHERE drive_file_id = ANY(%s)
+                """,
+                ([key_bdt, key_usd],),
+            ).fetchall()
+        )
+        reviewed = conn.execute(
+            "SELECT reason_codes, metadata_json -> 'normalized_record' ->> 'vendor_name' FROM review_queue_items "
+            "WHERE metadata_json ->> 'source_file_id' = %s",
+            (key_blank,),
+        ).fetchone()
+    assert stored == {key_bdt: "BDT assumed=true", key_usd: "USD assumed=true"}
+    assert reviewed == (["missing_vendor", "missing_invoice_date"], None)

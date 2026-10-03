@@ -4,7 +4,6 @@ import argparse
 import hashlib
 import logging
 import os
-import re
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -29,7 +28,7 @@ from app.review_queue import (
 )
 from app.replay import replay_failures
 from app.storage_service import append_record
-from app.validation import validate_and_score
+from app.validation import review_reason_codes, validate_and_score
 from pydantic import ValidationError
 
 _TMP_DIR = (
@@ -66,237 +65,6 @@ def _archive_candidate(settings: Settings, backend: object, candidate: dict[str,
     if settings.ingestion_backend == "s3":
         assert isinstance(backend, ObjectStorageService)
         backend.move_to_archive(object_key=candidate["id"])
-
-
-def _pick(data: dict[str, Any], *keys: str, default: Any = None) -> Any:
-    for key in keys:
-        if key in data and data[key] not in (None, ""):
-            return data[key]
-    return default
-
-
-def _normalize_date(value: Any) -> str | None:
-    if not value:
-        return None
-    text = str(value).strip()
-    for fmt in ("%Y-%m-%d", "%d-%m-%Y", "%d/%m/%Y", "%m/%d/%Y"):
-        try:
-            return datetime.strptime(text, fmt).strftime("%Y-%m-%d")
-        except ValueError:
-            continue
-    return None
-
-
-def _extract_date_from_ocr_text(text: str) -> str | None:
-    candidates = re.findall(r"\b(\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|\d{4}[/-]\d{1,2}[/-]\d{1,2})\b", text)
-    for candidate in candidates:
-        normalized = _normalize_date(candidate)
-        if normalized:
-            return normalized
-    return None
-
-
-def _normalize_payment_method(value: Any) -> str:
-    text = str(value or "").strip().lower()
-    if "card" in text:
-        return "card"
-    if "cash" in text:
-        return "cash"
-    if "bank" in text or "transfer" in text:
-        return "bank"
-    return "unknown"
-
-
-def _safe_float(value: Any, default: float = 0.0) -> float:
-    if value is None or value == "":
-        return default
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return default
-
-
-def _normalize_line_items(raw: Any) -> list[dict[str, Any]]:
-    if not isinstance(raw, list):
-        return []
-    items: list[dict[str, Any]] = []
-    for item in raw:
-        if not isinstance(item, dict):
-            continue
-        quantity = _safe_float(_pick(item, "quantity", "qty"), 1.0)
-        unit_price = _safe_float(_pick(item, "unit_price", "price"), 0.0)
-        line_total = _safe_float(_pick(item, "line_total", "total"), quantity * unit_price)
-        items.append(
-            {
-                "description": str(_pick(item, "description", "name", "title", default="item")).strip(),
-                "quantity": max(quantity, 0.0001),
-                "unit_price": max(unit_price, 0.0),
-                "line_total": max(line_total, 0.0),
-                "category": _pick(item, "category"),
-            }
-        )
-    return items
-
-
-def _line_items_have_amounts(items: list[dict[str, Any]]) -> bool:
-    return any(_safe_float(item.get("line_total"), 0.0) > 0 for item in items)
-
-
-def _extract_line_items_from_ocr_text(text: str) -> list[dict[str, Any]]:
-    items: list[dict[str, Any]] = []
-    for line in text.splitlines():
-        compact = line.strip()
-        if len(compact) < 8:
-            continue
-        # Common line format: "<desc> <qty> <unit_price> <line_total>"
-        m = re.match(
-            r"^(?P<desc>.+?)\s+(?P<qty>\d+(?:\.\d+)?)\s+(?P<unit>\d[\d,]*(?:\.\d+)?)\s+(?P<total>\d[\d,]*(?:\.\d+)?)$",
-            compact,
-        )
-        if not m:
-            # Fallback: "<desc> ... <line_total>"
-            m2 = re.match(r"^(?P<desc>.+?)\s+(?P<total>\d[\d,]*(?:\.\d+)?)$", compact)
-            if not m2:
-                continue
-            desc = m2.group("desc").strip()
-            total = _safe_float(m2.group("total").replace(",", ""), 0.0)
-            if total <= 0:
-                continue
-            items.append(
-                {
-                    "description": desc,
-                    "quantity": 1.0,
-                    "unit_price": total,
-                    "line_total": total,
-                    "category": None,
-                }
-            )
-            continue
-
-        desc = m.group("desc").strip()
-        qty = _safe_float(m.group("qty"), 1.0)
-        unit = _safe_float(m.group("unit").replace(",", ""), 0.0)
-        total = _safe_float(m.group("total").replace(",", ""), qty * unit)
-        if total <= 0:
-            continue
-        items.append(
-            {
-                "description": desc,
-                "quantity": max(qty, 0.0001),
-                "unit_price": max(unit, 0.0),
-                "line_total": max(total, 0.0),
-                "category": None,
-            }
-        )
-    return items
-
-
-def _normalize_currency_code(value: Any) -> str | None:
-    text = str(value or "").strip()
-    if not text:
-        return None
-    upper = text.upper()
-    aliases = {
-        "USD": "USD",
-        "US$": "USD",
-        "$": "USD",
-        "DOLLAR": "USD",
-        "DOLLARS": "USD",
-        "EUR": "EUR",
-        "EURO": "EUR",
-        "EUROS": "EUR",
-        "€": "EUR",
-        "GBP": "GBP",
-        "POUND": "GBP",
-        "POUNDS": "GBP",
-        "£": "GBP",
-        "BDT": "BDT",
-        "TK": "BDT",
-        "TAKA": "BDT",
-        "৳": "BDT",
-        "INR": "INR",
-        "RS": "INR",
-        "₹": "INR",
-    }
-    if upper in aliases:
-        return aliases[upper]
-    if re.fullmatch(r"[A-Z]{3}", upper):
-        return upper
-    return None
-
-
-def _infer_currency(raw: dict[str, Any], ocr_text: str) -> str:
-    explicit = _pick(raw, "currency", "currency_code", "currency_symbol")
-    normalized = _normalize_currency_code(explicit)
-    if normalized:
-        return normalized
-
-    corpus = " ".join(
-        part
-        for part in [
-            str(explicit or ""),
-            str(_pick(raw, "vendor_name", "vendor", "merchant_name", default="") or ""),
-            str(_pick(raw, "invoice_number", "order_id", "invoice_id", default="") or ""),
-            ocr_text,
-        ]
-        if part
-    )
-    upper = corpus.upper()
-
-    patterns: list[tuple[str, tuple[str, ...]]] = [
-        ("USD", (r"\bUSD\b", r"\bUS\$\b", r"(?<![A-Z])\$(?=\s*\d)", r"\bDOLLARS?\b")),
-        ("EUR", (r"\bEUR\b", r"€", r"\bEUROS?\b")),
-        ("GBP", (r"\bGBP\b", r"£", r"\bPOUNDS?\b")),
-        ("BDT", (r"\bBDT\b", r"৳", r"\bTAKA\b", r"(?<![A-Z])TK(?=\s*[\d.])")),
-        ("INR", (r"\bINR\b", r"₹", r"\bRUPEES?\b")),
-    ]
-    for code, code_patterns in patterns:
-        if any(re.search(pattern, upper) for pattern in code_patterns):
-            return code
-
-    return "BDT"
-
-
-def _coerce_extraction_payload(raw: dict[str, Any]) -> dict[str, Any]:
-    ocr_text = str(_pick(raw, "_ocr_text", default="") or "")
-    total = _safe_float(_pick(raw, "total_amount", "total", "order_total", "grand_total"), 0.0)
-    subtotal = _safe_float(_pick(raw, "subtotal", "sub_total"), total)
-    tax_amount = _safe_float(_pick(raw, "tax_amount", "tax", "vat"), max(total - subtotal, 0.0))
-
-    confidence = _safe_float(_pick(raw, "model_confidence", "confidence", "confidence_score"), 0.8)
-    confidence = max(0.0, min(confidence, 1.0))
-
-    normalized_date = _normalize_date(_pick(raw, "invoice_date", "order_date", "date"))
-    if not normalized_date and ocr_text:
-        normalized_date = _extract_date_from_ocr_text(ocr_text)
-
-    line_items = _normalize_line_items(_pick(raw, "line_items", "items", "products", default=[]))
-    if (not line_items or not _line_items_have_amounts(line_items)) and ocr_text:
-        recovered = _extract_line_items_from_ocr_text(ocr_text)
-        if recovered:
-            line_items = recovered
-
-    payload = {
-        "document_type": str(_pick(raw, "document_type", default="invoice")).lower(),
-        "vendor_name": _pick(raw, "vendor_name", "vendor", "merchant_name", default="Unknown Vendor"),
-        "vendor_tax_id": _pick(raw, "vendor_tax_id", "tax_id", "vat_id"),
-        "invoice_number": _pick(raw, "invoice_number", "order_id", "invoice_id"),
-        "invoice_date": normalized_date or datetime.now(
-            timezone.utc
-        ).strftime("%Y-%m-%d"),
-        "due_date": _normalize_date(_pick(raw, "due_date")),
-        "currency": _infer_currency(raw, ocr_text),
-        "subtotal": max(subtotal, 0.0),
-        "tax_amount": max(tax_amount, 0.0),
-        "total_amount": max(total, 0.0),
-        "payment_method": _normalize_payment_method(_pick(raw, "payment_method")),
-        "line_items": line_items,
-        "model_confidence": confidence,
-        "validation_score": confidence,
-    }
-    if payload["document_type"] not in {"invoice", "receipt"}:
-        payload["document_type"] = "invoice"
-    return payload
 
 
 def run_poll_once() -> int:
@@ -404,13 +172,17 @@ def _process_candidate(
         )
         used_provider = str(extracted.get("_provider", "unknown"))
         logger.info("Extraction provider=%s source_id=%s", used_provider, file_id)
-        normalized_payload = normalization_engine.coerce_payload(extracted)
+        normalized_payload = normalization_engine.coerce_payload(
+            extracted,
+            base_currency=candidate.get("base_currency"),
+        )
         try:
             validation = validate_and_score(normalized_payload)
         except ValidationError as exc:
+            reason_codes = review_reason_codes(normalized_payload, exc)
             route_to_review_queue(
                 document_id=document_id,
-                reason_codes=["schema_validation_failed"],
+                reason_codes=reason_codes,
                 metadata={
                     "source_file_id": file_id,
                     "file_hash": file_hash,
@@ -427,19 +199,19 @@ def _process_candidate(
                     "drive_file_id": file_id,
                     "file_hash": file_hash,
                     "status": "REVIEW_REQUIRED",
-                    "error_code": "schema_validation_failed",
+                    "error_code": ",".join(reason_codes),
                     "error_message": str(exc),
                     "used_provider": used_provider,
                 }
             )
             claim_store.mark_status(file_id, file_hash, "REVIEW_REQUIRED")
             metrics.increment("documents_review_total")
-            logger.info("Document %s sent to review due to schema mismatch", document_id)
+            logger.info("Document %s sent to review: %s", document_id, ", ".join(reason_codes))
             return {
                 "source_id": file_id,
                 "document_id": document_id,
                 "status": "REVIEW_REQUIRED",
-                "reason_codes": ["schema_validation_failed"],
+                "reason_codes": reason_codes,
                 "file_hash": file_hash,
                 "record": normalized_payload,
             }

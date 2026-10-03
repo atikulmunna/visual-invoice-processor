@@ -468,13 +468,17 @@ def resolve_review_item(
     from datetime import datetime, timezone
 
     from app.storage_service import append_record
-    from app.validation import validate_and_score
+    from app.validation import REQUIRED_FIELDS, missing_required_fields, validate_and_score
 
     review_item = load_review_item(document_id=document_id, queue_dir=queue_dir, org_id=org_id)
     if review_item.get("status") != "REVIEW_REQUIRED":
         raise ValueError(f"Review item {document_id} is not active; current status={review_item.get('status')}")
 
     record = _load_resolution_record(review_item, record_path, record_override)
+    missing = missing_required_fields(record)
+    if missing:
+        labels = ", ".join(REQUIRED_FIELDS[field][1] for field in missing)
+        raise ValueError(f"Fill in the {labels} before approving this document")
     validation = validate_and_score(record)
     resolved_record = validation["record"].model_dump(mode="json")
     resolved_record["validation_score"] = validation["validation_score"]
