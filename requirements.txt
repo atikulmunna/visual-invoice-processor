@@ -11,4 +11,5 @@ python-multipart>=0.0.9,<1
 mangum>=0.19,<1
 pypdf>=5,<7
 pytest>=8.2,<9
+httpx>=0.28,<1
 typing_extensions>=4.11,<5
