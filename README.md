@@ -171,12 +171,36 @@ python -m app.alpha_admin reset --username tester.one
 
 Generated passwords are shown once. Do not commit them or store them in deployment variables.
 
+### Organizations
+
+Every job, ledger record, review item, and duplicate check belongs to an organization. Each tester gets a personal organization when the account is created, and every request is scoped to the organization of the signed-in session. Testers in different organizations never see each other's documents, and identical files uploaded by two organizations are processed independently.
+
+```powershell
+python -m app.alpha_admin org-create --name "Acme Traders" --owner tester.one
+python -m app.alpha_admin org-add-member --org-id <org-id> --username tester.two --role member
+python -m app.alpha_admin org-remove-member --org-id <org-id> --username tester.two
+python -m app.alpha_admin org-list
+```
+
+Records created before organizations existed that cannot be traced to an upload stay unowned and hidden. To assign them to an organization:
+
+```powershell
+python -m app.alpha_admin org-adopt-unowned --org-id <org-id>
+```
+
 ## Testing
 
 Run the unit and API suite:
 
 ```powershell
 pytest -q
+```
+
+The tenant-isolation suite runs against a real PostgreSQL server when `TEST_POSTGRES_DSN` points at one whose role can create databases. Each run creates and drops its own database. CI runs it against a Postgres service container before every deployment.
+
+```powershell
+$env:TEST_POSTGRES_DSN = "postgresql://postgres:postgres@localhost:5432/postgres"
+pytest -q tests/test_org_isolation_postgres.py
 ```
 
 Run static checks:

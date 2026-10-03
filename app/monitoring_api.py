@@ -43,6 +43,20 @@ SESSION_MAX_AGE_SECONDS = 7 * 24 * 60 * 60
 SITE_ICON_PATH = Path(__file__).resolve().parents[1] / "assets" / "icon.png"
 
 
+def _org_scope(principal: str | AlphaUser) -> str | None:
+    """Organization that bounds every query for this request.
+
+    Tester accounts are always scoped to their active organization. A plain string
+    principal comes from basic or anonymous auth on a single-operator deployment,
+    which has no tenants and sees everything.
+    """
+    if isinstance(principal, AlphaUser):
+        if not principal.org_id:
+            raise HTTPException(status_code=403, detail="No organization is available for this account")
+        return principal.org_id
+    return None
+
+
 def _build_auth_dependency(postgres_dsn: str | None = None):
     security = HTTPBasic(auto_error=False)
 
@@ -170,27 +184,36 @@ def create_monitoring_app(
         response.delete_cookie(SESSION_COOKIE_NAME, path="/", secure=True, samesite="lax")
         return response
 
+    # The local JSONL metrics and dead-letter logs are not tenant-aware, so only an
+    # unscoped operator reads them.
+    def _metric_events(org_id: str | None) -> list[dict[str, Any]]:
+        return _read_jsonl(metrics_path) if org_id is None else []
+
+    def _dead_letters(org_id: str | None, resolved_hashes: set[str]) -> list[dict[str, Any]]:
+        return _active_dead_letters(dead_letter_path, resolved_hashes) if org_id is None else []
+
     @app.get("/stats")
-    def stats(_: str = Depends(require_dashboard_auth)) -> dict[str, Any]:
-        metric_events = _read_jsonl(metrics_path)
-        resolved_hashes = _resolved_file_hashes(active_postgres_dsn)
-        dead_letters = _active_dead_letters(dead_letter_path, resolved_hashes)
-        queue_size = _active_review_queue_size(review_queue_dir, resolved_hashes)
-        counters = _aggregate_metrics(metric_events)
+    def stats(principal: str | AlphaUser = Depends(require_dashboard_auth)) -> dict[str, Any]:
+        org_id = _org_scope(principal)
+        resolved_hashes = _resolved_file_hashes(active_postgres_dsn, org_id=org_id)
+        dead_letters = _dead_letters(org_id, resolved_hashes)
+        review_items = _active_review_items(review_queue_dir, resolved_hashes, org_id=org_id)
+        counters = _aggregate_metrics(_metric_events(org_id))
         counters["dead_letter_total"] = len(dead_letters)
-        counters["review_queue_total"] = queue_size
+        counters["review_queue_total"] = len(review_items)
         return counters
 
     @app.get("/failures")
-    def failures(limit: int = 50, _: str = Depends(require_dashboard_auth)) -> dict[str, Any]:
-        items = _read_jsonl(dead_letter_path)
+    def failures(limit: int = 50, principal: str | AlphaUser = Depends(require_dashboard_auth)) -> dict[str, Any]:
+        items = _read_jsonl(dead_letter_path) if _org_scope(principal) is None else []
         return {"count": len(items), "items": items[-limit:]}
 
     @app.get("/backlog")
-    def backlog(_: str = Depends(require_dashboard_auth)) -> dict[str, Any]:
-        resolved_hashes = _resolved_file_hashes(active_postgres_dsn)
-        queue_size = _active_review_queue_size(review_queue_dir, resolved_hashes)
-        dead_letters = len(_active_dead_letters(dead_letter_path, resolved_hashes))
+    def backlog(principal: str | AlphaUser = Depends(require_dashboard_auth)) -> dict[str, Any]:
+        org_id = _org_scope(principal)
+        resolved_hashes = _resolved_file_hashes(active_postgres_dsn, org_id=org_id)
+        queue_size = len(_active_review_items(review_queue_dir, resolved_hashes, org_id=org_id))
+        dead_letters = len(_dead_letters(org_id, resolved_hashes))
         return {
             "review_queue_total": queue_size,
             "dead_letter_total": dead_letters,
@@ -198,13 +221,17 @@ def create_monitoring_app(
         }
 
     @app.get("/dashboard/data")
-    def dashboard_data(limit: int = 20, _: str = Depends(require_dashboard_auth)) -> dict[str, Any]:
-        data = _query_dashboard_data(active_postgres_dsn, limit=limit)
-        resolved_hashes = _resolved_file_hashes(active_postgres_dsn)
-        review_items = _active_review_items(review_queue_dir, resolved_hashes)
-        review_history = _review_history_items(review_queue_dir, limit=limit)
-        dead_letters = _active_dead_letters(dead_letter_path, resolved_hashes)
-        data["review_queue_total"] = _active_review_queue_size(review_queue_dir, resolved_hashes)
+    def dashboard_data(
+        limit: int = 20,
+        principal: str | AlphaUser = Depends(require_dashboard_auth),
+    ) -> dict[str, Any]:
+        org_id = _org_scope(principal)
+        data = _query_dashboard_data(active_postgres_dsn, limit=limit, org_id=org_id)
+        resolved_hashes = _resolved_file_hashes(active_postgres_dsn, org_id=org_id)
+        review_items = _active_review_items(review_queue_dir, resolved_hashes, org_id=org_id)
+        review_history = _review_history_items(review_queue_dir, limit=limit, org_id=org_id)
+        dead_letters = _dead_letters(org_id, resolved_hashes)
+        data["review_queue_total"] = len(review_items)
         data["dead_letter_total"] = len(dead_letters)
         data["activity_feed"] = _activity_feed_items(
             recent_records=data.get("recent_records", []),
@@ -216,22 +243,27 @@ def create_monitoring_app(
         return data
 
     @app.get("/review-items")
-    def review_items(_: str = Depends(require_dashboard_auth)) -> dict[str, Any]:
-        resolved_hashes = _resolved_file_hashes(active_postgres_dsn)
-        items = _active_review_items(review_queue_dir, resolved_hashes)
+    def review_items(principal: str | AlphaUser = Depends(require_dashboard_auth)) -> dict[str, Any]:
+        org_id = _org_scope(principal)
+        resolved_hashes = _resolved_file_hashes(active_postgres_dsn, org_id=org_id)
+        items = _active_review_items(review_queue_dir, resolved_hashes, org_id=org_id)
         return {"count": len(items), "items": items}
 
     @app.get("/review-history")
-    def review_history(limit: int = 20, _: str = Depends(require_dashboard_auth)) -> dict[str, Any]:
-        items = _review_history_items(review_queue_dir, limit=limit)
+    def review_history(
+        limit: int = 20,
+        principal: str | AlphaUser = Depends(require_dashboard_auth),
+    ) -> dict[str, Any]:
+        items = _review_history_items(review_queue_dir, limit=limit, org_id=_org_scope(principal))
         return {"count": len(items), "items": items}
 
     @app.post("/review-items/{document_id}/resolve")
     def review_resolve(
         document_id: str,
         payload: ReviewResolveRequest | None = None,
-        _: str = Depends(require_dashboard_auth),
+        principal: str | AlphaUser = Depends(require_dashboard_auth),
     ) -> dict[str, Any]:
+        org_id = _org_scope(principal)
         try:
             action = (payload.action if payload else "approve").strip().lower()
             if action == "approve":
@@ -240,6 +272,7 @@ def create_monitoring_app(
                     queue_dir=review_queue_dir,
                     record_override=payload.corrected_record if payload else None,
                     note=payload.note if payload else None,
+                    org_id=org_id,
                 )
             elif action == "reject":
                 result = dismiss_review_item(
@@ -247,6 +280,7 @@ def create_monitoring_app(
                     queue_dir=review_queue_dir,
                     resolution_status="REJECTED",
                     note=payload.note if payload else None,
+                    org_id=org_id,
                 )
             elif action == "duplicate":
                 result = dismiss_review_item(
@@ -254,6 +288,7 @@ def create_monitoring_app(
                     queue_dir=review_queue_dir,
                     resolution_status="RESOLVED_DUPLICATE_MANUAL",
                     note=payload.note if payload else None,
+                    org_id=org_id,
                 )
             else:
                 raise ValueError(f"Unsupported review action: {action}")
@@ -280,6 +315,7 @@ def create_monitoring_app(
             raise HTTPException(status_code=400, detail="Presigned uploads require INGESTION_BACKEND=s3")
         if not isinstance(principal, AlphaUser):
             raise HTTPException(status_code=403, detail="Private-alpha authentication is required")
+        _org_scope(principal)
         if payload.size < 1 or payload.size > settings.max_upload_bytes:
             raise HTTPException(status_code=400, detail=f"File must be between 1 and {settings.max_upload_bytes} bytes")
         if not is_supported_mime_type(payload.content_type, settings.allowed_mime_types):
@@ -327,8 +363,9 @@ def create_monitoring_app(
     ) -> dict[str, Any]:
         if not isinstance(principal, AlphaUser):
             raise HTTPException(status_code=403, detail="Private-alpha authentication is required")
+        org_id = _org_scope(principal)
         try:
-            return AlphaStore(active_postgres_dsn or "").get_job(job_id, user_id=principal.id)
+            return AlphaStore(active_postgres_dsn or "").get_job(job_id, org_id=org_id)
         except AlphaNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
@@ -339,14 +376,17 @@ def create_monitoring_app(
     ) -> dict[str, str]:
         if not isinstance(principal, AlphaUser):
             raise HTTPException(status_code=403, detail="Private-alpha authentication is required")
+        org_id = _org_scope(principal)
         load_dotenv()
         settings = Settings.from_env()
         store = AlphaStore(active_postgres_dsn or "")
         try:
-            object_key = store.retry_job(job_id, user_id=principal.id)
-            ObjectStorageService.from_settings(settings).retrigger_object(object_key)
+            object_key = store.retry_job(job_id, org_id=org_id)
         except AlphaQuotaError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
+        # Only a job already verified to belong to this organization can be marked failed below.
+        try:
+            ObjectStorageService.from_settings(settings).retrigger_object(object_key)
         except Exception as exc:  # noqa: BLE001
             store.complete_job(
                 job_id,
@@ -383,31 +423,14 @@ def _review_queue_size(path: str | Path) -> int:
     return len([x for x in p.glob("*.json") if x.is_file()])
 
 
-def _active_review_queue_size(path: str | Path, resolved_hashes: set[str]) -> int:
-    p = Path(path)
-    if not p.exists():
-        return 0
-    total = 0
-    for file_path in p.glob("*.json"):
-        if not file_path.is_file():
-            continue
-        try:
-            payload = json.loads(file_path.read_text(encoding="utf-8"))
-        except Exception:  # noqa: BLE001
-            continue
-        if payload.get("status") != "REVIEW_REQUIRED":
-            continue
-        metadata = payload.get("metadata", {}) if isinstance(payload.get("metadata"), dict) else {}
-        file_hash = str(metadata.get("file_hash", "") or "")
-        if file_hash and file_hash in resolved_hashes:
-            continue
-        total += 1
-    return total
-
-
-def _active_review_items(path: str | Path, resolved_hashes: set[str]) -> list[dict[str, Any]]:
+def _active_review_items(
+    path: str | Path,
+    resolved_hashes: set[str],
+    *,
+    org_id: str | None = None,
+) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
-    for payload in list_review_items(queue_dir=path):
+    for payload in list_review_items(queue_dir=path, org_id=org_id):
         if payload.get("status") != "REVIEW_REQUIRED":
             continue
         metadata = payload.get("metadata", {}) if isinstance(payload.get("metadata"), dict) else {}
@@ -435,9 +458,14 @@ def _active_review_items(path: str | Path, resolved_hashes: set[str]) -> list[di
     return items
 
 
-def _review_history_items(path: str | Path, *, limit: int = 20) -> list[dict[str, Any]]:
+def _review_history_items(
+    path: str | Path,
+    *,
+    limit: int = 20,
+    org_id: str | None = None,
+) -> list[dict[str, Any]]:
     history: list[dict[str, Any]] = []
-    for payload in list_review_items(queue_dir=path):
+    for payload in list_review_items(queue_dir=path, org_id=org_id):
         status = str(payload.get("status", "") or "")
         if status == "REVIEW_REQUIRED":
             continue
@@ -573,7 +601,13 @@ def _active_dead_letters(path: str | Path, resolved_hashes: set[str]) -> list[di
     return list(latest_by_key.values())
 
 
-def _resolved_file_hashes(postgres_dsn: str | None) -> set[str]:
+def _org_where(org_id: str | None, *, prefix: str = "where") -> tuple[str, tuple[Any, ...]]:
+    if org_id is None:
+        return "", ()
+    return f"{prefix} org_id = %s", (org_id,)
+
+
+def _resolved_file_hashes(postgres_dsn: str | None, *, org_id: str | None = None) -> set[str]:
     if not postgres_dsn:
         return set()
     try:
@@ -584,19 +618,26 @@ def _resolved_file_hashes(postgres_dsn: str | None) -> set[str]:
     try:
         with psycopg.connect(postgres_dsn, prepare_threshold=None) as conn:
             with conn.cursor() as cur:
+                org_sql, org_params = _org_where(org_id, prefix="and")
                 cur.execute(
-                    """
+                    f"""
                     select distinct file_hash
                     from public.ledger_records
-                    where status in ('STORED', 'ARCHIVED')
-                    """
+                    where status in ('STORED', 'ARCHIVED') {org_sql}
+                    """,
+                    org_params,
                 )
                 return {str(row[0]) for row in cur.fetchall() if row and row[0]}
     except Exception:  # noqa: BLE001
         return set()
 
 
-def _query_dashboard_data(postgres_dsn: str | None, *, limit: int) -> dict[str, Any]:
+def _query_dashboard_data(
+    postgres_dsn: str | None,
+    *,
+    limit: int,
+    org_id: str | None = None,
+) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "kpis": {
             "records_total": 0,
@@ -622,17 +663,20 @@ def _query_dashboard_data(postgres_dsn: str | None, *, limit: int) -> dict[str, 
         payload["error"] = "psycopg not installed"
         return payload
 
+    where, params = _org_where(org_id)
     try:
         with psycopg.connect(postgres_dsn, prepare_threshold=None) as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    """
+                    f"""
                     select
                       count(*)::int as records_total,
                       count(*) filter (where row_status = 'STORED')::int as stored_total,
                       count(*) filter (where needs_review = true)::int as needs_review_total
                     from public.ledger_records_flat
-                    """
+                    {where}
+                    """,
+                    params,
                 )
                 row = cur.fetchone()
                 if row:
@@ -644,12 +688,14 @@ def _query_dashboard_data(postgres_dsn: str | None, *, limit: int) -> dict[str, 
                     }
 
                 cur.execute(
-                    """
+                    f"""
                     select coalesce(currency, 'NA') as currency, coalesce(sum(total_amount), 0)::float as total_amount_sum
                     from public.ledger_records_flat
+                    {where}
                     group by 1
                     order by total_amount_sum desc, currency asc
-                    """
+                    """,
+                    params,
                 )
                 payload["currency_totals"] = [
                     {"currency": r[0], "total_amount_sum": r[1]}
@@ -658,12 +704,20 @@ def _query_dashboard_data(postgres_dsn: str | None, *, limit: int) -> dict[str, 
                 payload["kpis"]["total_amount_display"] = _format_currency_total_display(payload["currency_totals"])
 
                 cur.execute(
-                    """
-                    select processing_date::text, records_total::int, stored_total::int, needs_review_total::int, coalesce(total_amount_sum,0)::float
-                    from public.ledger_daily_summary
-                    order by processing_date desc
+                    f"""
+                    select
+                      date_trunc('day', processed_at_utc)::date::text as processing_date,
+                      count(*)::int as records_total,
+                      count(*) filter (where row_status = 'STORED')::int as stored_total,
+                      count(*) filter (where needs_review = true)::int as needs_review_total,
+                      coalesce(sum(total_amount), 0)::float as total_amount_sum
+                    from public.ledger_records_flat
+                    {where}
+                    group by 1
+                    order by 1 desc
                     limit 14
-                    """
+                    """,
+                    params,
                 )
                 payload["daily_summary"] = [
                     {
@@ -677,13 +731,15 @@ def _query_dashboard_data(postgres_dsn: str | None, *, limit: int) -> dict[str, 
                 ]
 
                 cur.execute(
-                    """
+                    f"""
                     select coalesce(vendor_name, 'Unknown') as vendor_name, count(*)::int as invoices, coalesce(sum(total_amount), 0)::float as total_spend
                     from public.ledger_records_flat
+                    {where}
                     group by 1
                     order by total_spend desc
                     limit 10
-                    """
+                    """,
+                    params,
                 )
                 payload["vendor_spend"] = [
                     {"vendor_name": r[0], "invoices": r[1], "total_spend": r[2]}
@@ -691,19 +747,21 @@ def _query_dashboard_data(postgres_dsn: str | None, *, limit: int) -> dict[str, 
                 ]
 
                 cur.execute(
-                    """
+                    f"""
                     select coalesce(used_provider, 'unknown') as used_provider, count(*)::int as records_total
                     from public.ledger_records_flat
+                    {where}
                     group by 1
                     order by records_total desc
-                    """
+                    """,
+                    params,
                 )
                 payload["provider_mix"] = [
                     {"used_provider": r[0], "records_total": r[1]} for r in cur.fetchall()
                 ]
 
                 cur.execute(
-                    """
+                    f"""
                     select
                       processed_at_utc::text,
                       coalesce(document_id, '') as document_id,
@@ -715,10 +773,11 @@ def _query_dashboard_data(postgres_dsn: str | None, *, limit: int) -> dict[str, 
                       coalesce(used_provider, 'unknown') as used_provider,
                       coalesce(needs_review, false) as needs_review
                     from public.ledger_records_flat
+                    {where}
                     order by processed_at_utc desc
                     limit %s
                     """,
-                    (limit,),
+                    (*params, limit),
                 )
                 payload["recent_records"] = [
                     {

@@ -43,6 +43,44 @@ def _queue_backend(queue_dir: str | Path) -> str:
     return "filesystem"
 
 
+_SELECT_COLUMNS = """
+    document_id,
+    status,
+    reason_codes,
+    metadata_json,
+    source_file_moved_to,
+    created_at_utc,
+    resolved_at_utc,
+    resolved_record,
+    storage_result,
+    resolution_note,
+    org_id
+"""
+
+
+def _row_to_item(row: Any) -> dict[str, Any]:
+    return {
+        "document_id": row[0],
+        "status": row[1],
+        "reason_codes": row[2] or [],
+        "metadata": row[3] or {},
+        "source_file_moved_to": row[4],
+        "created_at_utc": row[5].isoformat() if row[5] else None,
+        "resolved_at_utc": row[6].isoformat() if row[6] else None,
+        "resolved_record": row[7],
+        "storage_result": row[8],
+        "resolution_note": row[9],
+        "org_id": str(row[10]) if row[10] else None,
+    }
+
+
+def _org_clause(org_id: str | None, *, prefix: str) -> tuple[str, tuple[Any, ...]]:
+    """SQL filter for an organization; None means the caller is an unscoped operator."""
+    if org_id is None:
+        return "", ()
+    return f" {prefix} org_id = %s", (org_id,)
+
+
 class PostgresReviewQueueStore:
     def __init__(self, dsn: str, table_name: str = "review_queue_items") -> None:
         self._dsn = dsn
@@ -71,7 +109,8 @@ class PostgresReviewQueueStore:
                         resolved_at_utc TIMESTAMPTZ,
                         resolved_record JSONB,
                         storage_result JSONB,
-                        resolution_note TEXT
+                        resolution_note TEXT,
+                        org_id UUID
                     )
                     """
                 )
@@ -84,6 +123,7 @@ class PostgresReviewQueueStore:
         reason_codes: list[str],
         moved_file: str | None,
         metadata: dict[str, Any] | None,
+        org_id: str | None = None,
     ) -> dict[str, Any]:
         created_at = datetime.now(timezone.utc).isoformat()
         with self._connect() as conn:
@@ -91,15 +131,17 @@ class PostgresReviewQueueStore:
                 cur.execute(
                     f"""
                     INSERT INTO {self._table}
-                        (document_id, status, reason_codes, metadata_json, source_file_moved_to, created_at_utc)
+                        (document_id, status, reason_codes, metadata_json, source_file_moved_to,
+                         created_at_utc, org_id)
                     VALUES
-                        (%s, %s, %s::jsonb, %s::jsonb, %s, %s)
+                        (%s, %s, %s::jsonb, %s::jsonb, %s, %s, %s)
                     ON CONFLICT (document_id) DO UPDATE SET
                         status = EXCLUDED.status,
                         reason_codes = EXCLUDED.reason_codes,
                         metadata_json = EXCLUDED.metadata_json,
                         source_file_moved_to = EXCLUDED.source_file_moved_to,
-                        created_at_utc = EXCLUDED.created_at_utc
+                        created_at_utc = EXCLUDED.created_at_utc,
+                        org_id = EXCLUDED.org_id
                     """,
                     (
                         document_id,
@@ -108,6 +150,7 @@ class PostgresReviewQueueStore:
                         json.dumps(metadata or {}, ensure_ascii=True),
                         moved_file,
                         created_at,
+                        org_id,
                     ),
                 )
             conn.commit()
@@ -118,83 +161,40 @@ class PostgresReviewQueueStore:
             "created_at_utc": created_at,
             "source_file_moved_to": moved_file,
             "metadata": metadata or {},
+            "org_id": org_id,
         }
 
-    def list_items(self) -> list[dict[str, Any]]:
+    def list_items(self, org_id: str | None = None) -> list[dict[str, Any]]:
+        org_sql, org_params = _org_clause(org_id, prefix="WHERE")
         with self._connect() as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     f"""
-                    SELECT
-                        document_id,
-                        status,
-                        reason_codes,
-                        metadata_json,
-                        source_file_moved_to,
-                        created_at_utc,
-                        resolved_at_utc,
-                        resolved_record,
-                        storage_result,
-                        resolution_note
-                    FROM {self._table}
+                    SELECT {_SELECT_COLUMNS}
+                    FROM {self._table}{org_sql}
                     ORDER BY created_at_utc ASC
-                    """
+                    """,
+                    org_params,
                 )
                 rows = cur.fetchall()
-        items: list[dict[str, Any]] = []
-        for row in rows:
-            items.append(
-                {
-                    "document_id": row[0],
-                    "status": row[1],
-                    "reason_codes": row[2] or [],
-                    "metadata": row[3] or {},
-                    "source_file_moved_to": row[4],
-                    "created_at_utc": row[5].isoformat() if row[5] else None,
-                    "resolved_at_utc": row[6].isoformat() if row[6] else None,
-                    "resolved_record": row[7],
-                    "storage_result": row[8],
-                    "resolution_note": row[9],
-                }
-            )
-        return items
+        return [_row_to_item(row) for row in rows]
 
-    def load_item(self, document_id: str) -> dict[str, Any]:
+    def load_item(self, document_id: str, org_id: str | None = None) -> dict[str, Any]:
+        org_sql, org_params = _org_clause(org_id, prefix="AND")
         with self._connect() as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     f"""
-                    SELECT
-                        document_id,
-                        status,
-                        reason_codes,
-                        metadata_json,
-                        source_file_moved_to,
-                        created_at_utc,
-                        resolved_at_utc,
-                        resolved_record,
-                        storage_result,
-                        resolution_note
+                    SELECT {_SELECT_COLUMNS}
                     FROM {self._table}
-                    WHERE document_id = %s
+                    WHERE document_id = %s{org_sql}
                     """,
-                    (document_id,),
+                    (document_id, *org_params),
                 )
                 row = cur.fetchone()
         if row is None:
             raise FileNotFoundError(f"Review item not found: {document_id}")
-        return {
-            "document_id": row[0],
-            "status": row[1],
-            "reason_codes": row[2] or [],
-            "metadata": row[3] or {},
-            "source_file_moved_to": row[4],
-            "created_at_utc": row[5].isoformat() if row[5] else None,
-            "resolved_at_utc": row[6].isoformat() if row[6] else None,
-            "resolved_record": row[7],
-            "storage_result": row[8],
-            "resolution_note": row[9],
-        }
+        return _row_to_item(row)
 
     def mark_resolved(
         self,
@@ -204,8 +204,10 @@ class PostgresReviewQueueStore:
         resolved_record: dict[str, Any] | None,
         storage_result: dict[str, Any] | None,
         note: str | None,
+        org_id: str | None = None,
     ) -> dict[str, Any]:
         resolved_at = datetime.now(timezone.utc).isoformat()
+        org_sql, org_params = _org_clause(org_id, prefix="AND")
         with self._connect() as conn:
             with conn.cursor() as cur:
                 cur.execute(
@@ -217,7 +219,7 @@ class PostgresReviewQueueStore:
                         resolved_record = %s::jsonb,
                         storage_result = %s::jsonb,
                         resolution_note = %s
-                    WHERE document_id = %s
+                    WHERE document_id = %s{org_sql}
                     """,
                     (
                         resolution_status,
@@ -226,12 +228,13 @@ class PostgresReviewQueueStore:
                         json.dumps(storage_result, ensure_ascii=True) if storage_result is not None else "null",
                         note,
                         document_id,
+                        *org_params,
                     ),
                 )
                 if cur.rowcount == 0:
                     raise FileNotFoundError(f"Review item not found: {document_id}")
             conn.commit()
-        return self.load_item(document_id)
+        return self.load_item(document_id, org_id=org_id)
 
 
 def _postgres_store() -> PostgresReviewQueueStore:
@@ -268,6 +271,7 @@ def route_to_review_queue(
     queue_dir: str | Path = "review_queue",
     source_file: str | Path | None = None,
     metadata: dict[str, Any] | None = None,
+    org_id: str | None = None,
 ) -> dict[str, Any]:
     moved_file = None
     backend = _queue_backend(queue_dir)
@@ -290,6 +294,7 @@ def route_to_review_queue(
             reason_codes=reason_codes,
             moved_file=moved_file,
             metadata=metadata,
+            org_id=org_id,
         )
 
     record = {
@@ -298,6 +303,7 @@ def route_to_review_queue(
         "reason_codes": reason_codes,
         "created_at_utc": datetime.now(timezone.utc).isoformat(),
         "source_file_moved_to": moved_file,
+        "org_id": org_id,
     }
     if metadata:
         record["metadata"] = metadata
@@ -307,9 +313,17 @@ def route_to_review_queue(
     return record
 
 
-def list_review_items(queue_dir: str | Path = "review_queue") -> list[dict[str, Any]]:
+def _in_org(payload: dict[str, Any], org_id: str | None) -> bool:
+    return org_id is None or payload.get("org_id") == org_id
+
+
+def list_review_items(
+    queue_dir: str | Path = "review_queue",
+    *,
+    org_id: str | None = None,
+) -> list[dict[str, Any]]:
     if _queue_backend(queue_dir) == "postgres":
-        return _postgres_store().list_items()
+        return _postgres_store().list_items(org_id=org_id)
 
     target_dir = Path(queue_dir)
     if not target_dir.exists():
@@ -323,19 +337,34 @@ def list_review_items(queue_dir: str | Path = "review_queue") -> list[dict[str, 
             payload = json.loads(record_file.read_text(encoding="utf-8"))
         except json.JSONDecodeError:
             continue
+        if not _in_org(payload, org_id):
+            continue
         payload["_record_path"] = str(record_file)
         items.append(payload)
     return items
 
 
-def load_review_item(document_id: str, queue_dir: str | Path = "review_queue") -> dict[str, Any]:
-    if _queue_backend(queue_dir) == "postgres":
-        return _postgres_store().load_item(document_id)
+def _review_record_file(queue_dir: str | Path, document_id: str) -> Path:
+    if not document_id or Path(document_id).name != document_id:
+        raise FileNotFoundError(f"Review item not found: {document_id}")
+    return Path(queue_dir) / f"{document_id}.json"
 
-    record_file = Path(queue_dir) / f"{document_id}.json"
+
+def load_review_item(
+    document_id: str,
+    queue_dir: str | Path = "review_queue",
+    *,
+    org_id: str | None = None,
+) -> dict[str, Any]:
+    if _queue_backend(queue_dir) == "postgres":
+        return _postgres_store().load_item(document_id, org_id=org_id)
+
+    record_file = _review_record_file(queue_dir, document_id)
     if not record_file.exists():
         raise FileNotFoundError(f"Review item not found: {document_id}")
     payload = json.loads(record_file.read_text(encoding="utf-8"))
+    if not _in_org(payload, org_id):
+        raise FileNotFoundError(f"Review item not found: {document_id}")
     payload["_record_path"] = str(record_file)
     return payload
 
@@ -348,6 +377,7 @@ def mark_review_resolved(
     resolved_record: dict[str, Any] | None,
     storage_result: dict[str, Any] | None,
     note: str | None = None,
+    org_id: str | None = None,
 ) -> dict[str, Any]:
     if _queue_backend(queue_dir) == "postgres":
         return _postgres_store().mark_resolved(
@@ -356,13 +386,16 @@ def mark_review_resolved(
             resolved_record=resolved_record,
             storage_result=storage_result,
             note=note,
+            org_id=org_id,
         )
 
-    record_file = Path(queue_dir) / f"{document_id}.json"
+    record_file = _review_record_file(queue_dir, document_id)
     if not record_file.exists():
         raise FileNotFoundError(f"Review item not found: {document_id}")
 
     payload = json.loads(record_file.read_text(encoding="utf-8"))
+    if not _in_org(payload, org_id):
+        raise FileNotFoundError(f"Review item not found: {document_id}")
     payload["status"] = resolution_status
     payload["resolved_at_utc"] = datetime.now(timezone.utc).isoformat()
     payload["resolved_record"] = resolved_record
@@ -380,6 +413,7 @@ def dismiss_review_item(
     queue_dir: str | Path = "review_queue",
     resolution_status: str,
     note: str | None = None,
+    org_id: str | None = None,
 ) -> dict[str, Any]:
     if resolution_status not in {"REJECTED", "RESOLVED_DUPLICATE_MANUAL"}:
         raise ValueError(f"Unsupported dismissal status: {resolution_status}")
@@ -391,6 +425,7 @@ def dismiss_review_item(
         resolved_record=None,
         storage_result={"status": "dismissed", "action": resolution_status},
         note=note,
+        org_id=org_id,
     )
     return {
         "review_item": updated,
@@ -428,13 +463,14 @@ def resolve_review_item(
     record_path: str | None = None,
     record_override: dict[str, Any] | None = None,
     note: str | None = None,
+    org_id: str | None = None,
 ) -> dict[str, Any]:
     from datetime import datetime, timezone
 
     from app.storage_service import append_record
     from app.validation import validate_and_score
 
-    review_item = load_review_item(document_id=document_id, queue_dir=queue_dir)
+    review_item = load_review_item(document_id=document_id, queue_dir=queue_dir, org_id=org_id)
     if review_item.get("status") != "REVIEW_REQUIRED":
         raise ValueError(f"Review item {document_id} is not active; current status={review_item.get('status')}")
 
@@ -459,6 +495,7 @@ def resolve_review_item(
         "needs_review": False,
         "used_provider": metadata.get("used_provider", "manual_review"),
         "resolution_source": "manual_review",
+        "org_id": review_item.get("org_id"),
     }
 
     append_result = append_record(record=resolved_record, metadata=append_metadata)
@@ -470,6 +507,7 @@ def resolve_review_item(
         resolved_record=resolved_record,
         storage_result=append_result,
         note=note,
+        org_id=org_id,
     )
     return {
         "review_item": updated,

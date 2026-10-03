@@ -8,7 +8,6 @@ from app.monitoring_api import (
     _active_dead_letters,
     _activity_feed_items,
     _active_review_items,
-    _active_review_queue_size,
     _format_currency_total_display,
     _review_history_items,
     create_monitoring_app,
@@ -158,7 +157,6 @@ def test_active_backlog_filters_resolved_hashes(tmp_path: Path) -> None:
 
     resolved = {"hash-a"}
     assert len(_active_dead_letters(dead, resolved)) == 1
-    assert _active_review_queue_size(review, resolved) == 1
     assert len(_active_review_items(review, resolved)) == 1
 
 
@@ -235,12 +233,14 @@ def test_review_resolve_endpoint_uses_shared_resolution_flow(tmp_path: Path, mon
         record_path: str | None = None,
         record_override: dict | None = None,
         note: str | None = None,
+        org_id: str | None = None,
     ) -> dict[str, object]:
         called["document_id"] = document_id
         called["queue_dir"] = str(queue_dir)
         called["record_path"] = record_path
         called["record_override"] = record_override
         called["note"] = note
+        called["org_id"] = org_id
         return {
             "storage_result": {"status": "appended", "row_id": 10},
             "review_item": {"status": "RESOLVED_STORED"},
@@ -261,6 +261,7 @@ def test_review_resolve_endpoint_uses_shared_resolution_flow(tmp_path: Path, mon
     assert called["document_id"] == "doc-2"
     assert called["note"] == "approved"
     assert called["record_override"] == {"vendor_name": "Gamma", "total_amount": 45.0}
+    assert called["org_id"] is None
 
 
 def test_review_action_endpoint_supports_duplicate_and_reject(tmp_path: Path, monkeypatch) -> None:
@@ -291,7 +292,9 @@ def test_review_action_endpoint_supports_duplicate_and_reject(tmp_path: Path, mo
         queue_dir: str | Path,
         resolution_status: str,
         note: str | None = None,
+        org_id: str | None = None,
     ) -> dict[str, object]:
+        assert org_id is None
         dismiss_calls.append((document_id, resolution_status, note))
         return {
             "storage_result": {"status": "dismissed", "action": resolution_status},
