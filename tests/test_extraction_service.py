@@ -1,126 +1,170 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 from app.extraction_service import (
+    CORRECTIVE_PROMPT,
+    DEFAULT_MODEL,
+    USER_EXTRACTION_PROMPT,
     ExtractionError,
-    MultiProviderVisionClient,
+    OpenRouterClient,
     extract_document,
 )
 
 
 class _FakeVisionClient:
+    provider_name = "openrouter"
+
     def __init__(self, outputs: list[str]) -> None:
-        self._outputs = outputs
+        self.outputs = outputs
         self.calls: list[tuple[str, str]] = []
 
     def extract_json(self, file_path: Path, model_name: str, prompt: str) -> str:
         self.calls.append((model_name, prompt))
-        if not self._outputs:
-            raise RuntimeError("No outputs configured")
-        return self._outputs.pop(0)
+        return self.outputs.pop(0)
 
 
-class _FakeVisionClientWithOcr(_FakeVisionClient):
-    def __init__(self, outputs: list[str], ocr_text: str) -> None:
-        super().__init__(outputs=outputs)
-        self.last_ocr_text = ocr_text
+class _FakeResponse:
+    def __init__(self, status_code: int, payload: dict[str, Any]) -> None:
+        self.status_code = status_code
+        self._payload = payload
+        self.text = str(payload)
+
+    def json(self) -> dict[str, Any]:
+        return self._payload
 
 
-class _AlwaysFailClient:
-    def extract_json(self, file_path: Path, model_name: str, prompt: str) -> str:
-        _ = (file_path, model_name, prompt)
-        raise RuntimeError("provider down")
+def _image(tmp_path: Path) -> Path:
+    file_path = tmp_path / "receipt.jpg"
+    file_path.write_bytes(b"\xff\xd8\xff fake image")
+    return file_path
 
 
-def test_extract_document_success_first_try(tmp_path: Path) -> None:
-    file_path = tmp_path / "doc.jpg"
-    file_path.write_bytes(b"img")
+def test_extract_document_success_first_try(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.delenv("OPENROUTER_MODEL", raising=False)
     client = _FakeVisionClient(outputs=['{"vendor_name":"Test","total_amount":12.5}'])
 
-    payload = extract_document(file_path=file_path, model_name="gpt-4o-mini", client=client)
+    payload = extract_document(_image(tmp_path), client=client)
+
     assert payload["vendor_name"] == "Test"
-    assert payload["_provider"] == "auto"
+    assert payload["_provider"] == "openrouter"
+    assert client.calls == [(DEFAULT_MODEL, USER_EXTRACTION_PROMPT)]
+
+
+def test_markdown_fenced_json_is_repaired_without_a_second_call(tmp_path: Path) -> None:
+    client = _FakeVisionClient(outputs=['Here you go:\n```json\n{"vendor_name":"Fenced"}\n```'])
+
+    payload = extract_document(_image(tmp_path), client=client)
+
+    assert payload["vendor_name"] == "Fenced"
     assert len(client.calls) == 1
-    assert "invoice_number" in client.calls[0][1]
-    assert "Grand Total" in client.calls[0][1]
 
 
-def test_extract_document_retries_once_on_invalid_json(tmp_path: Path) -> None:
-    file_path = tmp_path / "doc.png"
-    file_path.write_bytes(b"img")
-    client = _FakeVisionClient(
-        outputs=[
-            "not json",
-            '{"vendor_name":"Recovered","total_amount":100.0}',
-        ]
-    )
+def test_unrepairable_output_retries_once_with_full_instructions(tmp_path: Path) -> None:
+    client = _FakeVisionClient(outputs=["not json at all", '{"vendor_name":"Retry"}'])
 
-    payload = extract_document(file_path=file_path, model_name="gpt-4o-mini", client=client)
-    assert payload["vendor_name"] == "Recovered"
-    assert len(client.calls) == 2
+    payload = extract_document(_image(tmp_path), client=client)
+
+    assert payload["vendor_name"] == "Retry"
+    assert client.calls[1][1] == f"{USER_EXTRACTION_PROMPT} {CORRECTIVE_PROMPT}"
 
 
 def test_extract_document_fails_after_corrective_retry(tmp_path: Path) -> None:
-    file_path = tmp_path / "doc.pdf"
-    file_path.write_bytes(b"%PDF")
     client = _FakeVisionClient(outputs=["nope", "still nope"])
 
     with pytest.raises(ExtractionError, match="invalid JSON"):
-        extract_document(file_path=file_path, client=client)
-    assert len(client.calls) == 2
+        extract_document(_image(tmp_path), client=client)
 
 
 def test_extract_document_missing_file_raises() -> None:
     with pytest.raises(ExtractionError, match="File not found"):
-        extract_document("missing.jpg", client=_FakeVisionClient(outputs=['{}']))
+        extract_document("missing.jpg", client=_FakeVisionClient(outputs=["{}"]))
 
 
-def test_multi_provider_client_falls_back_to_next_provider(tmp_path: Path) -> None:
-    file_path = tmp_path / "doc.jpg"
-    file_path.write_bytes(b"img")
-    client = MultiProviderVisionClient(
-        providers=[
-            ("mistral", _AlwaysFailClient(), "mistral-small-latest"),
-            ("openrouter", _FakeVisionClient(outputs=['{"vendor_name":"Fallback"}']), "mistralai/mistral-medium-3.1"),
-        ]
-    )
-
-    payload = extract_document(file_path=file_path, client=client, model_name="auto")
-    assert payload["vendor_name"] == "Fallback"
-
-
-def test_extract_document_auto_provider_requires_any_key(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    file_path = tmp_path / "doc.jpg"
-    file_path.write_bytes(b"img")
-    monkeypatch.delenv("MISTRAL_API_KEY", raising=False)
+def test_extract_document_requires_openrouter_key(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
-    monkeypatch.delenv("GROQ_API_KEY", raising=False)
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
-    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
 
-    with pytest.raises(ExtractionError, match="No provider API key found"):
-        extract_document(file_path=file_path, provider="auto")
+    with pytest.raises(ExtractionError, match="OPENROUTER_API_KEY") as exc_info:
+        extract_document(_image(tmp_path))
+
+    assert exc_info.value.code == "missing_api_key"
 
 
-def test_extract_document_carries_ocr_text_when_available(tmp_path: Path) -> None:
-    file_path = tmp_path / "doc.jpg"
-    file_path.write_bytes(b"img")
-    client = _FakeVisionClientWithOcr(
-        outputs=['{"vendor_name":"A","total_amount":1.0}'],
-        ocr_text="Invoice date: 01/03/2026",
+def test_extract_document_rejects_other_providers(tmp_path: Path) -> None:
+    with pytest.raises(ExtractionError) as exc_info:
+        extract_document(_image(tmp_path), provider="mistral", client=_FakeVisionClient(outputs=["{}"]))
+
+    assert exc_info.value.code == "unsupported_provider"
+
+
+def test_model_comes_from_environment_when_auto(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("OPENROUTER_MODEL", "vendor/cheaper-model")
+    client = _FakeVisionClient(outputs=["{}"])
+
+    extract_document(_image(tmp_path), client=client)
+
+    assert client.calls[0][0] == "vendor/cheaper-model"
+
+
+def test_openrouter_client_sends_images_inline_with_a_token_cap(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    sent: dict[str, Any] = {}
+
+    def _fake_post(url: str, **kwargs: Any) -> _FakeResponse:
+        sent.update(kwargs, url=url)
+        return _FakeResponse(200, {"choices": [{"message": {"content": '{"vendor_name":"Img"}'}}]})
+
+    monkeypatch.setattr("app.extraction_service.requests.post", _fake_post)
+
+    text = OpenRouterClient("sk-test", max_tokens=900).extract_json(_image(tmp_path), "m/model", "prompt")
+
+    body = sent["json"]
+    document = body["messages"][1]["content"][1]
+    assert text == '{"vendor_name":"Img"}'
+    assert sent["url"] == "https://openrouter.ai/api/v1/chat/completions"
+    assert sent["headers"]["Authorization"] == "Bearer sk-test"
+    assert body["max_tokens"] == 900
+    assert body["response_format"] == {"type": "json_object"}
+    assert document["type"] == "image_url"
+    assert document["image_url"]["url"].startswith("data:image/jpeg;base64,")
+    assert "plugins" not in body
+
+
+def test_openrouter_client_reads_pdfs_natively_never_with_paid_ocr(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    sent: dict[str, Any] = {}
+
+    def _fake_post(url: str, **kwargs: Any) -> _FakeResponse:
+        sent.update(kwargs)
+        return _FakeResponse(200, {"choices": [{"message": {"content": "{}"}}]})
+
+    monkeypatch.setattr("app.extraction_service.requests.post", _fake_post)
+    pdf = tmp_path / "invoice.pdf"
+    pdf.write_bytes(b"%PDF-1.4 fake")
+
+    OpenRouterClient("sk-test").extract_json(pdf, "m/model", "prompt")
+
+    document = sent["json"]["messages"][1]["content"][1]
+    assert document["type"] == "file"
+    assert document["file"]["filename"] == "invoice.pdf"
+    assert document["file"]["file_data"].startswith("data:application/pdf;base64,")
+    assert sent["json"]["plugins"] == [{"id": "file-parser", "pdf": {"engine": "native"}}]
+
+
+def test_openrouter_client_reports_http_errors(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        "app.extraction_service.requests.post",
+        lambda url, **kwargs: _FakeResponse(402, {"error": {"message": "Insufficient credits"}}),
     )
-    payload = extract_document(file_path=file_path, client=client)
-    assert payload["_ocr_text"].startswith("Invoice date")
 
+    with pytest.raises(ExtractionError, match="402") as exc_info:
+        OpenRouterClient("sk-test").extract_json(_image(tmp_path), "m/model", "prompt")
 
-def test_extract_document_uses_client_provider_name_if_available(tmp_path: Path) -> None:
-    file_path = tmp_path / "doc.jpg"
-    file_path.write_bytes(b"img")
-    client = _FakeVisionClient(outputs=['{"vendor_name":"A","total_amount":1.0}'])
-    client.provider_name = "mistral"
-    payload = extract_document(file_path=file_path, client=client)
-    assert payload["_provider"] == "mistral"
+    assert exc_info.value.code == "provider_request_failed"

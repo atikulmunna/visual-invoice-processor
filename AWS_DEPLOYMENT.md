@@ -1,11 +1,11 @@
 # AWS Private-Alpha Deployment
 
-The AWS deployment is serverless: FastAPI runs behind a Lambda Function URL, browsers upload directly to private S3 with a five-minute presigned policy, and an S3 event invokes the processing Lambda. Supabase remains the durable database and Mistral remains the only extraction provider.
+The AWS deployment is serverless: FastAPI runs behind a Lambda Function URL, browsers upload directly to private S3 with a five-minute presigned policy, and an S3 event invokes the processing Lambda. Supabase remains the durable database and OpenRouter is the only extraction provider.
 
 ## Cost and safety boundaries
 
 - AWS annual budget: USD 15, with 50%, 80%, 100%, and forecast alerts.
-- Mistral workspace spending limit: set manually to USD 10.
+- OpenRouter key credit limit: set manually on the API key (for example USD 3). The default model, `google/gemini-2.5-flash-lite`, costs roughly USD 0.50 per 1,000 documents, and each reply is capped at 2,000 tokens.
 - Maximum 10 active testers, 20 authorized documents each, 5 MB and 5 pages per document.
 - Global maximum of 1,000 page-processing attempts.
 - S3 deletes abandoned inbox objects after one day and archives after 30 days.
@@ -17,7 +17,7 @@ The AWS deployment is serverless: FastAPI runs behind a Lambda Function URL, bro
 1. Configure `POSTGRES_DSN`, then apply all ordered migrations with
    `python -m app.db_migrate`. This creates the base tables, analytics views,
    private-alpha state, and browser-role access restrictions.
-2. Create Standard `SecureString` parameters in `ap-southeast-1` for the Supabase DSN and Mistral API key. Use the AWS-managed SSM key, not a customer-managed monthly KMS key.
+2. Create Standard `SecureString` parameters in `ap-southeast-1` for the Supabase DSN and the OpenRouter API key. The OpenRouter key must live at `/invoice-processor/alpha/openrouter-api-key`; only the processing Lambda can read it. Use the AWS-managed SSM key, not a customer-managed monthly KMS key.
 3. Bootstrap GitHub OIDC once. This creates a repository-specific deployment role,
    a least-privilege CloudFormation execution role, two ECR repositories, and a
    seven-day deployment-artifact bucket:
@@ -39,10 +39,9 @@ The AWS deployment is serverless: FastAPI runs behind a Lambda Function URL, bro
 
    - `AWS_DEPLOY_ROLE_ARN`
    - `POSTGRES_PARAMETER_NAME`
-   - `MISTRAL_PARAMETER_NAME`
    - `BUDGET_ALERT_EMAIL`
 
-5. In Mistral Studio, set the workspace spending limit to USD 10.
+5. In OpenRouter, set a credit limit on the API key, and add it as the `OPENROUTER_API_KEY` repository secret for the golden-set workflows.
 6. Run the `Deploy Private Alpha to AWS` workflow manually for the first deployment and confirm the AWS budget subscription email.
 
 ## Create tester credentials

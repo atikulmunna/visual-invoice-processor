@@ -249,8 +249,8 @@ def build_parser() -> argparse.ArgumentParser:
         default="config/normalization_rules.json",
         help="Normalization rules JSON path.",
     )
-    parser.add_argument("--provider", default="auto", help="Extraction provider (default: auto).")
-    parser.add_argument("--model", default="auto", help="Model name (default: auto).")
+    parser.add_argument("--provider", default="openrouter", help="Extraction provider (only openrouter).")
+    parser.add_argument("--model", default="auto", help="OpenRouter model id (default: OPENROUTER_MODEL or the built-in default).")
     parser.add_argument(
         "--amount-tolerance",
         type=float,

@@ -27,12 +27,8 @@ jobs:
     env:
       LOG_LEVEL: INFO
       NORMALIZATION_RULES_PATH: config/normalization_rules.json
-      EXTRACTION_PROVIDER: auto
-      EXTRACTION_PROVIDER_ORDER: mistral,openrouter,groq
-      MISTRAL_MODEL: mistral-small-latest
-      MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+      OPENROUTER_MODEL: google/gemini-2.5-flash-lite
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
-      GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -49,8 +45,8 @@ jobs:
 
       - name: Validate required secrets
         run: |
-          if [ -z "${MISTRAL_API_KEY}" ]; then
-            echo "MISTRAL_API_KEY secret is required for golden-set evaluation."
+          if [ -z "${OPENROUTER_API_KEY}" ]; then
+            echo "OPENROUTER_API_KEY secret is required for golden-set evaluation."
             exit 1
           fi
 
@@ -58,7 +54,6 @@ jobs:
         run: |
           python -u -m app.evaluation \
             --dataset eval/golden_set.json \
-            --provider auto \
             --model auto \
             --fail-under 0.90 \
             --output logs/golden_eval_report.json

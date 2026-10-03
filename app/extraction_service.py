@@ -2,10 +2,21 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
+import os
+import re
 from pathlib import Path
 from typing import Any, Protocol
 
 import requests
+
+OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+# Cheap, reads images and scanned PDFs natively, and spends no hidden reasoning tokens.
+DEFAULT_MODEL = "google/gemini-2.5-flash-lite"
+# Caps every reply so a runaway response cannot run up the bill.
+DEFAULT_MAX_TOKENS = 2000
+
+logger = logging.getLogger(__name__)
 
 
 class VisionClient(Protocol):
@@ -27,16 +38,16 @@ USER_EXTRACTION_PROMPT = (
     "currency, subtotal, tax_amount, shipping_amount, discount_amount, total_amount, "
     "payment_method, line_items, and "
     "model_confidence. Each line_items entry must contain description, quantity, "
-    "unit_price, line_total, and category. Read labeled values exactly: prefer Grand Total "
+    "unit_price, line_total, and category. Set document_type to receipt only for proof of a "
+    "completed point-of-sale payment, such as a till slip, ride or delivery receipt, or payment "
+    "confirmation; use invoice for everything else, including bills, tax invoices, and order "
+    "summaries. Read labeled values exactly: prefer Grand Total "
     "for total_amount, do not confuse an order number with an invoice number, convert currency "
     "symbols or labels to a three-letter ISO code, and use null only when a value is genuinely "
     "absent. Amounts and confidence must be JSON numbers, not formatted strings."
 )
 
-CORRECTIVE_PROMPT = (
-    "Your previous output was invalid. Return only one valid JSON object "
-    "with no extra text."
-)
+CORRECTIVE_PROMPT = "Your previous reply was not valid JSON. Return only one valid JSON object with no extra text."
 
 
 def _mime_for_path(path: Path) -> str:
@@ -51,10 +62,19 @@ def _mime_for_path(path: Path) -> str:
 
 
 def _parse_json_payload(raw_text: str) -> dict[str, Any]:
+    # Models sometimes wrap JSON in a markdown fence or add a stray sentence. Recovering
+    # the object locally is free; asking the model again costs a second call.
+    text = re.sub(r"^\s*```(?:json)?\s*|\s*```\s*$", "", raw_text, flags=re.IGNORECASE)
     try:
-        payload = json.loads(raw_text)
-    except json.JSONDecodeError as exc:
-        raise ExtractionError("Model returned invalid JSON", code="invalid_json") from exc
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        start, end = text.find("{"), text.rfind("}")
+        if not 0 <= start < end:
+            raise ExtractionError("Model returned invalid JSON", code="invalid_json") from None
+        try:
+            payload = json.loads(text[start : end + 1])
+        except json.JSONDecodeError as exc:
+            raise ExtractionError("Model returned invalid JSON", code="invalid_json") from exc
     if not isinstance(payload, dict):
         raise ExtractionError("Model output must be a JSON object", code="invalid_json_shape")
     return payload
@@ -73,370 +93,119 @@ def _native_pdf_text(file_path: Path) -> str | None:
     return text or None
 
 
-def _enrich_extraction_payload(
-    payload: dict[str, Any],
-    *,
-    client: VisionClient,
-    file_path: Path,
-    provider_name: str,
-) -> dict[str, Any]:
-    text_chunks: list[str] = []
-    ocr_text = getattr(client, "last_ocr_text", None)
-    if isinstance(ocr_text, str) and ocr_text.strip():
-        text_chunks.append(ocr_text.strip())
+def _enrich_extraction_payload(payload: dict[str, Any], *, file_path: Path, provider_name: str) -> dict[str, Any]:
+    # The PDF text layer is free to read locally and lets normalization recover values
+    # the model left out.
     native_text = _native_pdf_text(file_path)
-    if native_text and all(native_text not in chunk for chunk in text_chunks):
-        text_chunks.append(native_text)
-    if text_chunks:
-        payload["_ocr_text"] = "\n\n".join(text_chunks)
+    if native_text:
+        payload["_ocr_text"] = native_text
     payload["_provider"] = provider_name
     return payload
 
 
-class OpenAIVisionClient:
-    def __init__(self, api_key: str) -> None:
-        try:
-            from openai import OpenAI
-        except ImportError as exc:
-            raise RuntimeError("openai package is required for OpenAI extraction") from exc
-        self._client = OpenAI(api_key=api_key)
-        self.provider_name = "openai"
+class OpenRouterClient:
+    provider_name = "openrouter"
 
-    def extract_json(self, file_path: Path, model_name: str, prompt: str) -> str:
-        mime = _mime_for_path(file_path)
-        encoded = base64.b64encode(file_path.read_bytes()).decode("ascii")
-        data_uri = f"data:{mime};base64,{encoded}"
-        response = self._client.chat.completions.create(
-            model=model_name,
-            response_format={"type": "json_object"},
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": prompt},
-                        {"type": "image_url", "image_url": {"url": data_uri}},
-                    ],
-                },
-            ],
-        )
-        text = response.choices[0].message.content
-        if not text:
-            raise ExtractionError("OpenAI returned empty response", code="empty_response")
-        return text
-
-
-class OpenAICompatibleVisionClient:
-    def __init__(
-        self,
-        *,
-        api_key: str,
-        base_url: str,
-        provider_name: str,
-        default_headers: dict[str, str] | None = None,
-    ) -> None:
-        try:
-            from openai import OpenAI
-        except ImportError as exc:
-            raise RuntimeError("openai package is required for OpenAI-compatible providers") from exc
-        self._provider_name = provider_name
-        self.provider_name = provider_name.strip().lower()
-        self._client = OpenAI(
-            api_key=api_key,
-            base_url=base_url,
-            default_headers=default_headers or {},
-        )
-
-    def extract_json(self, file_path: Path, model_name: str, prompt: str) -> str:
-        mime = _mime_for_path(file_path)
-        encoded = base64.b64encode(file_path.read_bytes()).decode("ascii")
-        data_uri = f"data:{mime};base64,{encoded}"
-        response = self._client.chat.completions.create(
-            model=model_name,
-            response_format={"type": "json_object"},
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": prompt},
-                        {"type": "image_url", "image_url": {"url": data_uri}},
-                    ],
-                },
-            ],
-        )
-        text = response.choices[0].message.content
-        if not text:
-            raise ExtractionError(
-                f"{self._provider_name} returned empty response",
-                code="empty_response",
-            )
-        return text
-
-
-class MistralVisionClient:
-    def __init__(self, api_key: str) -> None:
+    def __init__(self, api_key: str, *, max_tokens: int = DEFAULT_MAX_TOKENS, timeout: float = 90) -> None:
         self._api_key = api_key.strip()
-        self._base_url = "https://api.mistral.ai/v1"
-        self.last_ocr_text: str | None = None
-        self.provider_name = "mistral"
+        self._max_tokens = max_tokens
+        self._timeout = timeout
 
-    def _headers(self) -> dict[str, str]:
-        return {
-            "Authorization": f"Bearer {self._api_key}",
-            "Content-Type": "application/json",
-        }
-
-    def _ocr_text(self, file_path: Path) -> str:
+    def _request_body(self, file_path: Path, model_name: str, prompt: str) -> dict[str, Any]:
         mime = _mime_for_path(file_path)
-        encoded = base64.b64encode(file_path.read_bytes()).decode("ascii")
-        data_uri = f"data:{mime};base64,{encoded}"
-        doc_type = "document_url" if mime == "application/pdf" else "image_url"
-        doc_key = "document_url" if doc_type == "document_url" else "image_url"
-
-        response = requests.post(
-            f"{self._base_url}/ocr",
-            headers=self._headers(),
-            json={
-                "model": "mistral-ocr-latest",
-                "document": {
-                    "type": doc_type,
-                    doc_key: data_uri,
-                },
-            },
-            timeout=60,
-        )
-        if response.status_code >= 400:
-            raise ExtractionError(
-                f"Mistral OCR failed with status {response.status_code}: {response.text[:300]}",
-                code="provider_request_failed",
-            )
-
-        payload = response.json()
-        pages = payload.get("pages", [])
-        text_chunks: list[str] = []
-        for page in pages:
-            markdown = page.get("markdown")
-            if isinstance(markdown, str) and markdown.strip():
-                text_chunks.append(markdown)
-        if not text_chunks:
-            raise ExtractionError("Mistral OCR returned no text", code="empty_response")
-        return "\n\n".join(text_chunks)
+        data_url = f"data:{mime};base64,{base64.b64encode(file_path.read_bytes()).decode('ascii')}"
+        body: dict[str, Any] = {
+            "model": model_name,
+            "temperature": 0,
+            "max_tokens": self._max_tokens,
+            "response_format": {"type": "json_object"},
+            "usage": {"include": True},
+        }
+        if mime == "application/pdf":
+            document = {"type": "file", "file": {"filename": file_path.name, "file_data": data_url}}
+            # Let the model read the PDF itself; never fall back to OpenRouter's paid OCR engine.
+            body["plugins"] = [{"id": "file-parser", "pdf": {"engine": "native"}}]
+        else:
+            document = {"type": "image_url", "image_url": {"url": data_url}}
+        body["messages"] = [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": [{"type": "text", "text": prompt}, document]},
+        ]
+        return body
 
     def extract_json(self, file_path: Path, model_name: str, prompt: str) -> str:
-        ocr_text = self._ocr_text(file_path)
-        self.last_ocr_text = ocr_text
-        response = requests.post(
-            f"{self._base_url}/chat/completions",
-            headers=self._headers(),
-            json={
-                "model": model_name,
-                "response_format": {"type": "json_object"},
-                "messages": [
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    {
-                        "role": "user",
-                        "content": (
-                            f"{prompt}\n\n"
-                            "Extract fields from this OCR text:\n"
-                            f"{ocr_text}"
-                        ),
-                    },
-                ],
-            },
-            timeout=60,
-        )
+        try:
+            response = requests.post(
+                OPENROUTER_URL,
+                headers={
+                    "Authorization": f"Bearer {self._api_key}",
+                    "HTTP-Referer": "https://github.com/atikulmunna/visual-invoice-processor",
+                    "X-Title": "Ledgerly",
+                },
+                json=self._request_body(file_path, model_name, prompt),
+                timeout=self._timeout,
+            )
+        except requests.RequestException as exc:
+            raise ExtractionError(f"OpenRouter request failed: {exc}", code="provider_request_failed") from exc
         if response.status_code >= 400:
             raise ExtractionError(
-                f"Mistral chat failed with status {response.status_code}: {response.text[:300]}",
+                f"OpenRouter failed with status {response.status_code}: {response.text[:300]}",
                 code="provider_request_failed",
             )
         payload = response.json()
-        choices = payload.get("choices", [])
-        if not choices:
-            raise ExtractionError("Mistral chat returned no choices", code="empty_response")
-        message = choices[0].get("message", {})
-        content = message.get("content")
+        usage = payload.get("usage") or {}
+        logger.info(
+            "OpenRouter usage model=%s prompt_tokens=%s completion_tokens=%s cost=%s",
+            payload.get("model", model_name),
+            usage.get("prompt_tokens"),
+            usage.get("completion_tokens"),
+            usage.get("cost"),
+        )
+        choices = payload.get("choices") or []
+        content = choices[0].get("message", {}).get("content") if choices else None
         if not isinstance(content, str) or not content.strip():
-            raise ExtractionError("Mistral chat returned empty content", code="empty_response")
+            raise ExtractionError("OpenRouter returned empty content", code="empty_response")
         return content
 
 
-class GeminiVisionClient:
-    def __init__(self, api_key: str) -> None:
-        try:
-            from google import genai
-        except ImportError as exc:
-            raise RuntimeError("google-genai package is required for Gemini extraction") from exc
-        self._client = genai.Client(api_key=api_key.strip())
-        self.provider_name = "gemini"
-
-    def extract_json(self, file_path: Path, model_name: str, prompt: str) -> str:
-        mime = _mime_for_path(file_path)
-        response = self._client.models.generate_content(
-            model=model_name,
-            contents=[
-                prompt,
-                {
-                    "mime_type": mime,
-                    "data": file_path.read_bytes(),
-                },
-            ],
-        )
-        text = getattr(response, "text", None)
-        if not text:
-            raise ExtractionError("Gemini returned empty response", code="empty_response")
-        return text
+def _resolve_model(model_name: str) -> str:
+    if model_name and model_name != "auto":
+        return model_name
+    return (os.getenv("OPENROUTER_MODEL") or DEFAULT_MODEL).strip()
 
 
-class MultiProviderVisionClient:
-    def __init__(self, providers: list[tuple[str, VisionClient, str]]) -> None:
-        self._providers = providers
-        self.last_ocr_text: str | None = None
-        self.last_provider: str | None = None
-
-    def extract_json(self, file_path: Path, model_name: str, prompt: str) -> str:
-        errors: list[str] = []
-        for provider_name, client, provider_model in self._providers:
-            active_model = provider_model or model_name
-            try:
-                text = client.extract_json(file_path, active_model, prompt)
-                self.last_ocr_text = getattr(client, "last_ocr_text", None)
-                self.last_provider = provider_name
-                return text
-            except Exception as exc:  # noqa: BLE001
-                errors.append(f"{provider_name}: {exc}")
-                continue
-        raise ExtractionError(
-            "All configured providers failed: " + "; ".join(errors),
-            code="all_providers_failed",
-        )
-
-
-def _provider_model(provider: str, fallback_model_name: str) -> str:
-    import os
-
-    normalized = provider.strip().lower()
-    if fallback_model_name and fallback_model_name != "auto":
-        return fallback_model_name
-    defaults = {
-        "mistral": os.getenv("MISTRAL_MODEL", "mistral-small-latest"),
-        "openrouter": os.getenv("OPENROUTER_MODEL", "mistralai/mistral-medium-3.1"),
-        "groq": os.getenv("GROQ_MODEL", "qwen/qwen3.6-27b"),
-        "openai": os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
-        "gemini": os.getenv("GEMINI_MODEL", "gemini-1.5-pro"),
-    }
-    return defaults.get(normalized, "gpt-4o-mini")
-
-
-def _client_for_provider(provider: str) -> VisionClient | None:
-    import os
-
-    normalized = provider.strip().lower()
-    if normalized == "mistral":
-        api_key = (os.getenv("MISTRAL_API_KEY") or "").strip()
-        if not api_key:
-            return None
-        return MistralVisionClient(api_key=api_key)
-    if normalized == "openrouter":
-        api_key = (os.getenv("OPENROUTER_API_KEY") or "").strip()
-        if not api_key:
-            return None
-        return OpenAICompatibleVisionClient(
-            api_key=api_key,
-            base_url="https://openrouter.ai/api/v1",
-            provider_name="OpenRouter",
-            default_headers={"HTTP-Referer": "https://github.com/atikulmunna/visual-invoice-processor"},
-        )
-    if normalized == "groq":
-        api_key = (os.getenv("GROQ_API_KEY") or "").strip()
-        if not api_key:
-            return None
-        return OpenAICompatibleVisionClient(
-            api_key=api_key,
-            base_url="https://api.groq.com/openai/v1",
-            provider_name="Groq",
-        )
-    if normalized == "openai":
-        api_key = (os.getenv("OPENAI_API_KEY") or "").strip()
-        if not api_key:
-            return None
-        return OpenAIVisionClient(api_key=api_key)
-    if normalized == "gemini":
-        api_key = ((os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")) or "").strip()
-        if not api_key:
-            return None
-        return GeminiVisionClient(api_key=api_key)
-    raise ExtractionError("Unsupported provider", code="unsupported_provider")
-
-
-def _build_default_client(provider: str, model_name: str) -> tuple[VisionClient, str]:
-    import os
-
-    normalized = provider.strip().lower()
-    if normalized in {"auto", "fallback", "multi"}:
-        order = os.getenv("EXTRACTION_PROVIDER_ORDER", "mistral,openrouter,groq").split(",")
-        providers: list[tuple[str, VisionClient, str]] = []
-        for name in [x.strip().lower() for x in order if x.strip()]:
-            client = _client_for_provider(name)
-            if client is None:
-                continue
-            providers.append((name, client, _provider_model(name, "auto")))
-        if not providers:
-            raise ExtractionError(
-                "No provider API key found for configured fallback chain",
-                code="missing_api_key",
-            )
-        return MultiProviderVisionClient(providers), "auto"
-
-    client = _client_for_provider(normalized)
-    if client is None:
-        raise ExtractionError(
-            f"Missing API key for provider: {normalized}",
-            code="missing_api_key",
-        )
-    return client, _provider_model(normalized, model_name)
+def build_client() -> OpenRouterClient:
+    api_key = (os.getenv("OPENROUTER_API_KEY") or "").strip()
+    if not api_key:
+        raise ExtractionError("OPENROUTER_API_KEY is not configured", code="missing_api_key")
+    max_tokens = int(os.getenv("OPENROUTER_MAX_TOKENS") or DEFAULT_MAX_TOKENS)
+    return OpenRouterClient(api_key, max_tokens=max_tokens)
 
 
 def extract_document(
     file_path: str | Path,
     model_name: str = "auto",
-    provider: str = "auto",
+    provider: str = "openrouter",
     client: VisionClient | None = None,
 ) -> dict[str, Any]:
     path = Path(file_path)
     if not path.exists():
         raise ExtractionError(f"File not found: {path}", code="file_not_found")
-
-    if client is None:
-        active_client, active_model = _build_default_client(provider, model_name)
-    else:
-        active_client, active_model = client, model_name
-
-    def _resolved_provider_name() -> str:
-        name = getattr(active_client, "last_provider", None) or getattr(active_client, "provider_name", None)
-        if isinstance(name, str) and name.strip():
-            return name.strip().lower()
-        return provider.strip().lower()
-
-    first_text = active_client.extract_json(path, active_model, USER_EXTRACTION_PROMPT)
-    try:
-        payload = _parse_json_payload(first_text)
-        return _enrich_extraction_payload(
-            payload,
-            client=active_client,
-            file_path=path,
-            provider_name=_resolved_provider_name(),
+    if provider.strip().lower() not in {"openrouter", "auto"}:
+        raise ExtractionError(
+            f"Unsupported provider: {provider}. OpenRouter is the only extraction provider.",
+            code="unsupported_provider",
         )
-    except ExtractionError as exc:
-        if exc.code not in {"invalid_json", "invalid_json_shape"}:
-            raise
 
-    corrective_text = active_client.extract_json(path, active_model, CORRECTIVE_PROMPT)
-    payload = _parse_json_payload(corrective_text)
-    return _enrich_extraction_payload(
-        payload,
-        client=active_client,
-        file_path=path,
-        provider_name=_resolved_provider_name(),
-    )
+    active_client = client or build_client()
+    active_model = _resolve_model(model_name)
+    provider_name = str(getattr(active_client, "provider_name", "openrouter"))
+
+    text = active_client.extract_json(path, active_model, USER_EXTRACTION_PROMPT)
+    try:
+        payload = _parse_json_payload(text)
+    except ExtractionError:
+        # One retry, with the full instructions, only when local repair failed.
+        text = active_client.extract_json(path, active_model, f"{USER_EXTRACTION_PROMPT} {CORRECTIVE_PROMPT}")
+        payload = _parse_json_payload(text)
+    return _enrich_extraction_payload(payload, file_path=path, provider_name=provider_name)

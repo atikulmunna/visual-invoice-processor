@@ -11,7 +11,7 @@ def load_aws_parameter_secrets(ssm_client: Any | None = None) -> None:
         target: os.getenv(parameter_env, "").strip()
         for target, parameter_env in {
             "POSTGRES_DSN": "POSTGRES_PARAMETER_NAME",
-            "MISTRAL_API_KEY": "MISTRAL_PARAMETER_NAME",
+            "OPENROUTER_API_KEY": "OPENROUTER_PARAMETER_NAME",
         }.items()
         if not os.getenv(target)
     }
