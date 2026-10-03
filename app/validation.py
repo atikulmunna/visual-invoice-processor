@@ -2,11 +2,34 @@ from __future__ import annotations
 
 from typing import Any
 
+from pydantic import ValidationError
+
 from schemas.invoice_schema import InvoiceRecord
+
+# Fields a document must show before it can be stored. Normalization leaves them empty
+# rather than guessing, and each gap becomes its own review reason.
+REQUIRED_FIELDS = {
+    "vendor_name": ("missing_vendor", "vendor name"),
+    "invoice_date": ("missing_invoice_date", "invoice date"),
+    "currency": ("missing_currency", "currency"),
+}
 
 
 def validate_invoice_payload(payload: dict[str, Any]) -> InvoiceRecord:
     return InvoiceRecord.model_validate(payload)
+
+
+def missing_required_fields(payload: dict[str, Any]) -> list[str]:
+    return [field for field in REQUIRED_FIELDS if not str(payload.get(field) or "").strip()]
+
+
+def review_reason_codes(payload: dict[str, Any], error: ValidationError) -> list[str]:
+    """One code per missing required field, plus a generic code for any other schema error."""
+    missing = missing_required_fields(payload)
+    codes = [REQUIRED_FIELDS[field][0] for field in missing]
+    if any(not err["loc"] or err["loc"][0] not in missing for err in error.errors()):
+        codes.append("schema_validation_failed")
+    return codes
 
 
 def evaluate_business_rules(

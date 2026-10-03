@@ -179,7 +179,10 @@ python -m app.alpha_admin org-create --name "Acme Traders" --owner tester.one
 python -m app.alpha_admin org-add-member --org-id <org-id> --username tester.two --role member
 python -m app.alpha_admin org-remove-member --org-id <org-id> --username tester.two
 python -m app.alpha_admin org-list
+python -m app.alpha_admin org-set-currency --org-id <org-id> --currency USD
 ```
+
+Extraction never invents values. A missing vendor or invoice date leaves the field empty and sends the document to review with a reason such as `missing_vendor`, and approval stays blocked until a reviewer fills it in. Currency is the one fallback: when a document shows no readable currency, the record uses the organization's base currency (BDT unless changed with `org-set-currency`) and is flagged `currency_assumed`.
 
 Records created before organizations existed that cannot be traced to an upload stay unowned and hidden. To assign them to an organization:
 
@@ -222,7 +225,7 @@ python -m app.evaluation --dataset eval/golden_set_strict.json --provider auto -
 
 ## Deployment
 
-The application is declared in `template.yaml` and deployed through `.github/workflows/deploy-aws.yml` using GitHub OIDC—no long-lived AWS keys are stored in the repository.
+The application is declared in `template.yaml` and deployed through `.github/workflows/deploy-aws.yml` using GitHub OIDC, so no long-lived AWS keys are stored in the repository.
 
 The stack provisions:
 

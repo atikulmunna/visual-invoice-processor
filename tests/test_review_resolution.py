@@ -4,6 +4,8 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from app.main import run_review_list, run_review_resolve
 
 
@@ -93,3 +95,48 @@ def test_run_review_resolve_uses_normalized_record_and_marks_resolved(tmp_path: 
     assert resolved_payload["status"] == "RESOLVED_STORED"
     assert resolved_payload["storage_result"]["row_id"] == 99
     assert resolved_payload["resolved_record"]["vendor_name"] == "Acme"
+
+
+def test_approval_is_blocked_until_missing_fields_are_filled(tmp_path: Path, monkeypatch) -> None:
+    from app.review_queue import resolve_review_item
+
+    queue = tmp_path / "review_queue"
+    queue.mkdir()
+    record = {
+        "document_type": "invoice",
+        "vendor_name": None,
+        "invoice_number": "INV-40",
+        "invoice_date": None,
+        "currency": "BDT",
+        "subtotal": 100.0,
+        "tax_amount": 0.0,
+        "total_amount": 100.0,
+        "line_items": [],
+        "model_confidence": 0.9,
+        "validation_score": 0.9,
+    }
+    (queue / "doc-40.json").write_text(
+        json.dumps(
+            {
+                "document_id": "doc-40",
+                "status": "REVIEW_REQUIRED",
+                "reason_codes": ["missing_vendor", "missing_invoice_date"],
+                "metadata": {"source_file_id": "inbox/doc-40.pdf", "file_hash": "hash-40", "normalized_record": record},
+            }
+        ),
+        encoding="utf-8",
+    )
+    append_calls: list[dict] = []
+    monkeypatch.setattr(
+        "app.storage_service.append_record",
+        lambda *, record, metadata: append_calls.append(record) or {"status": "appended", "row_id": 1},
+    )
+
+    with pytest.raises(ValueError, match="vendor name, invoice date"):
+        resolve_review_item("doc-40", queue_dir=queue)
+    assert append_calls == []
+
+    corrected = {**record, "vendor_name": "Acme", "invoice_date": "2026-03-20"}
+    result = resolve_review_item("doc-40", queue_dir=queue, record_override=corrected)
+    assert result["storage_result"]["status"] == "appended"
+    assert append_calls[0]["vendor_name"] == "Acme"

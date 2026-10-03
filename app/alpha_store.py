@@ -54,6 +54,7 @@ class Organization:
     id: str
     name: str
     members: tuple[tuple[str, str], ...] = ()
+    base_currency: str = "BDT"
 
 
 # Picks the session's organization, or the user's first membership when the session has none.
@@ -305,7 +306,7 @@ class AlphaStore:
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    SELECT o.id, o.name, u.username, m.role
+                    SELECT o.id, o.name, o.base_currency, u.username, m.role
                     FROM public.organizations AS o
                     LEFT JOIN public.memberships AS m ON m.org_id = o.id
                     LEFT JOIN public.alpha_users AS u ON u.id = m.user_id
@@ -313,12 +314,26 @@ class AlphaStore:
                     """
                 )
                 rows = cur.fetchall()
-        grouped: dict[str, tuple[str, list[tuple[str, str]]]] = {}
-        for org_id, name, username, role in rows:
-            entry = grouped.setdefault(str(org_id), (name, []))
+        grouped: dict[str, tuple[str, str, list[tuple[str, str]]]] = {}
+        for org_id, name, base_currency, username, role in rows:
+            entry = grouped.setdefault(str(org_id), (name, base_currency, []))
             if username is not None:
-                entry[1].append((username, role))
-        return [Organization(org_id, name, tuple(members)) for org_id, (name, members) in grouped.items()]
+                entry[2].append((username, role))
+        return [
+            Organization(org_id, name, tuple(members), base_currency)
+            for org_id, (name, base_currency, members) in grouped.items()
+        ]
+
+    def set_base_currency(self, org_id: str, currency: str) -> str:
+        code = currency.strip().upper()
+        if len(code) != 3 or not code.isalpha() or not code.isascii():
+            raise ValueError("Base currency must be a three-letter ISO code such as BDT or USD")
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                self._require_org(cur, org_id)
+                cur.execute("UPDATE public.organizations SET base_currency = %s WHERE id = %s", (code, org_id))
+            conn.commit()
+        return code
 
     def adopt_unowned_records(self, org_id: str) -> dict[str, int]:
         """Assign ledger records and review items that have no organization to org_id."""
@@ -482,14 +497,20 @@ class AlphaStore:
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    UPDATE public.processing_jobs
-                    SET status = 'PROCESSING', attempts = attempts + 1,
-                        started_at_utc = NOW(), updated_at_utc = NOW(),
-                        error_code = NULL, error_message = NULL
-                    WHERE object_key = %s
-                      AND status IN ('AUTHORIZED', 'FAILED')
-                      AND attempts < %s
-                    RETURNING id, user_id, org_id, original_name, content_type, declared_size, attempts
+                    WITH claimed AS (
+                        UPDATE public.processing_jobs
+                        SET status = 'PROCESSING', attempts = attempts + 1,
+                            started_at_utc = NOW(), updated_at_utc = NOW(),
+                            error_code = NULL, error_message = NULL
+                        WHERE object_key = %s
+                          AND status IN ('AUTHORIZED', 'FAILED')
+                          AND attempts < %s
+                        RETURNING id, user_id, org_id, original_name, content_type, declared_size, attempts
+                    )
+                    SELECT c.id, c.user_id, c.org_id, c.original_name, c.content_type,
+                           c.declared_size, c.attempts, o.base_currency
+                    FROM claimed AS c
+                    JOIN public.organizations AS o ON o.id = c.org_id
                     """,
                     (object_key, max_attempts),
                 )
@@ -505,6 +526,7 @@ class AlphaStore:
             "content_type": row[4],
             "declared_size": int(row[5]),
             "attempts": int(row[6]),
+            "base_currency": row[7],
         }
 
     def retry_job(self, job_id: str, *, org_id: str, max_attempts: int = 3) -> str:

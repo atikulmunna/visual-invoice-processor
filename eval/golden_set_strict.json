@@ -69,7 +69,7 @@
       "file_path": "eval/samples/invoice_005.pdf",
       "expected": {
         "document_type": "invoice",
-        "vendor_name": "Unknown Vendor",
+        "vendor_name": null,
         "invoice_number": "1001866868",
         "invoice_date": "2025-03-03",
         "currency": "BDT",

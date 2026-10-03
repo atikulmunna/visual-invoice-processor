@@ -3,7 +3,13 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from app.validation import evaluate_business_rules, validate_and_score, validate_invoice_payload
+from app.validation import (
+    evaluate_business_rules,
+    missing_required_fields,
+    review_reason_codes,
+    validate_and_score,
+    validate_invoice_payload,
+)
 
 
 def _valid_payload() -> dict:
@@ -116,3 +122,26 @@ def test_zero_total_is_a_validation_error() -> None:
 
     assert result["is_valid"] is False
     assert any(v["code"] == "missing_total" and v["severity"] == "error" for v in result["violations"])
+
+
+def _reason_codes(payload: dict) -> list[str]:
+    with pytest.raises(ValidationError) as exc_info:
+        validate_invoice_payload(payload)
+    return review_reason_codes(payload, exc_info.value)
+
+
+def test_each_missing_required_field_gets_its_own_review_reason() -> None:
+    payload = {**_valid_payload(), "vendor_name": None, "invoice_date": None, "currency": None}
+
+    assert missing_required_fields(payload) == ["vendor_name", "invoice_date", "currency"]
+    assert _reason_codes(payload) == ["missing_vendor", "missing_invoice_date", "missing_currency"]
+
+
+def test_other_schema_errors_add_a_generic_review_reason() -> None:
+    payload = {**_valid_payload(), "invoice_date": None, "total_amount": -5}
+
+    assert _reason_codes(payload) == ["missing_invoice_date", "schema_validation_failed"]
+
+
+def test_blank_strings_count_as_missing() -> None:
+    assert missing_required_fields({**_valid_payload(), "vendor_name": "   "}) == ["vendor_name"]

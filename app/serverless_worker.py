@@ -108,6 +108,7 @@ def process_s3_object(
         "size": str(job["declared_size"]),
         "job_id": job_id,
         "org_id": job["org_id"],
+        "base_currency": job["base_currency"],
     }
     result = _process_candidate(
         candidate=candidate,

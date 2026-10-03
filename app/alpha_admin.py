@@ -37,6 +37,13 @@ def main() -> int:
 
     sub.add_parser("org-list", help="List organizations and their members")
 
+    org_currency = sub.add_parser(
+        "org-set-currency",
+        help="Set the base currency used when a document shows no readable currency",
+    )
+    org_currency.add_argument("--org-id", required=True)
+    org_currency.add_argument("--currency", required=True, help="Three-letter ISO code, such as BDT or USD")
+
     adopt = sub.add_parser(
         "org-adopt-unowned",
         help="Assign ledger records and review items that have no organization to one",
@@ -74,7 +81,10 @@ def main() -> int:
     elif args.command == "org-list":
         for org in store.list_organizations():
             members = ", ".join(f"{username} ({role})" for username, role in org.members) or "no members"
-            print(f"{org.id}  {org.name}: {members}")
+            print(f"{org.id}  {org.name} [{org.base_currency}]: {members}")
+    elif args.command == "org-set-currency":
+        code = store.set_base_currency(args.org_id, args.currency)
+        print(f"Base currency of {args.org_id} is now {code}")
     elif args.command == "org-adopt-unowned":
         counts = store.adopt_unowned_records(args.org_id)
         print(
