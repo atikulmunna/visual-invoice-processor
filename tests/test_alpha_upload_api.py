@@ -6,7 +6,7 @@ from typing import Any
 
 from fastapi.testclient import TestClient
 
-from app.alpha_store import AlphaAuthenticationError, AlphaNotFoundError, AlphaQuotaError, AlphaUser
+from app.alpha_store import AlphaAuthenticationError, AlphaNotFoundError, AlphaQuotaError, AlphaUser, Organization
 from app.monitoring_api import create_monitoring_app
 
 PASSWORD = "A-strong-alpha-password"
@@ -68,6 +68,9 @@ class _FakeAlphaStore:
     def complete_job(self, job_id: str, **kwargs: Any) -> None:
         self.jobs[job_id]["status"] = kwargs["status"]
 
+    def get_organization(self, org_id: str) -> Organization:
+        return Organization(org_id, "Test organization")
+
 
 class _FakeStorage:
     def create_presigned_upload(self, object_key: str, **kwargs: Any) -> dict[str, Any]:
@@ -86,6 +89,7 @@ def _configure(monkeypatch: Any) -> None:
     monkeypatch.setenv("POSTGRES_DSN", "postgresql://example")
     monkeypatch.setenv("MAX_UPLOAD_BYTES", "5242880")
     monkeypatch.setattr("app.monitoring_api.AlphaStore", _FakeAlphaStore)
+    monkeypatch.setattr("app.workspace_api.AlphaStore", _FakeAlphaStore)
     monkeypatch.setattr(
         "app.monitoring_api.ObjectStorageService.from_settings",
         lambda settings: _FakeStorage(),
@@ -134,35 +138,66 @@ def test_alpha_login_creates_secure_session_and_logout_clears_it(monkeypatch: An
     )
 
     root = client.get("/", follow_redirects=False)
-    login_page = client.get("/login")
-    login = client.post(
-        "/login",
-        data={"username": "tester.one", "password": "A-strong-alpha-password"},
-        follow_redirects=False,
-    )
+    login_page = client.get("/login", follow_redirects=False)
+    login = client.post("/api/session", json={"username": "tester.one", "password": PASSWORD})
     dashboard = client.get("/dashboard")
+    me = client.get("/api/me")
     logout = client.post("/logout", follow_redirects=False)
     dashboard_after_logout = client.get("/dashboard")
 
     assert root.status_code == 307
     assert root.headers["location"] == "/login"
-    assert login_page.status_code == 200
-    assert "Enter workspace" in login_page.text
-    assert '<link rel="icon" type="image/png" href="/assets/icon.png" />' in login_page.text
-    assert '<img src="/assets/icon.png" alt="" />' in login_page.text
-    assert "Invoice intelligence" not in login_page.text
-    assert "rgba(241, 90, 36, 0.16)" in login_page.text
-    assert "--ink-950: #f7f4ee" in login_page.text
-    assert login.status_code == 303
-    assert login.headers["location"] == "/dashboard"
-    assert "httponly" in login.headers["set-cookie"].lower()
-    assert "secure" in login.headers["set-cookie"].lower()
-    assert "samesite=lax" in login.headers["set-cookie"].lower()
+    assert login_page.status_code == 307
+    assert login_page.headers["location"] == "/app/login"
+    assert login.status_code == 200
+    assert login.json() == {"username": "tester.one"}
+    cookie = login.headers["set-cookie"].lower()
+    assert "invoice_alpha_session=test-session-token" in cookie
+    assert "httponly" in cookie
+    assert "secure" in cookie
+    assert "samesite=lax" in cookie
     assert dashboard.status_code == 200
     assert "tester.one" in dashboard.text
+    assert me.json()["username"] == "tester.one"
     assert logout.status_code == 303
     assert logout.headers["location"] == "/login"
+    assert "invoice_alpha_session=" in logout.headers["set-cookie"]
     assert dashboard_after_logout.status_code == 401
+
+
+def test_sign_in_rejects_wrong_and_oversized_credentials(monkeypatch: Any) -> None:
+    _configure(monkeypatch)
+    client = TestClient(create_monitoring_app(postgres_dsn="postgresql://example"), base_url="https://testserver")
+
+    wrong = client.post("/api/session", json={"username": "tester.one", "password": "not-the-password"})
+    unknown = client.post("/api/session", json={"username": "nobody", "password": PASSWORD})
+    oversized = client.post("/api/session", json={"username": "tester.one", "password": "x" * 257})
+
+    assert wrong.status_code == 401
+    assert wrong.json()["detail"] == "The username or password is incorrect."
+    assert "set-cookie" not in wrong.headers
+    assert unknown.status_code == 401
+    assert oversized.status_code == 422
+
+
+def test_sign_in_is_unavailable_without_a_database(monkeypatch: Any) -> None:
+    _configure(monkeypatch)
+    monkeypatch.delenv("POSTGRES_DSN", raising=False)
+    client = TestClient(create_monitoring_app(postgres_dsn=None), base_url="https://testserver")
+
+    response = client.post("/api/session", json={"username": "tester.one", "password": PASSWORD})
+
+    assert response.status_code == 503
+
+
+def test_legacy_login_address_keeps_the_return_path(monkeypatch: Any) -> None:
+    _configure(monkeypatch)
+    client = TestClient(create_monitoring_app(postgres_dsn="postgresql://example"))
+
+    response = client.get("/login?next=/app/review", follow_redirects=False)
+
+    assert response.status_code == 307
+    assert response.headers["location"] == "/app/login?next=/app/review"
 
 
 def test_presign_rejects_unsupported_and_oversized_files(monkeypatch: Any) -> None:

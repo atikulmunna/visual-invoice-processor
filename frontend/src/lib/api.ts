@@ -1,3 +1,5 @@
+import { signInUrl } from "./navigation";
+
 export class ApiError extends Error {
   readonly status: number;
 
@@ -29,7 +31,7 @@ async function errorMessage(response: Response): Promise<string> {
 
 export function createApiClient({
   fetchImpl = (input, init) => fetch(input, init),
-  onUnauthorized = () => window.location.assign("/login"),
+  onUnauthorized = () => window.location.assign(signInUrl(window.location.pathname + window.location.search)),
 }: ClientOptions = {}) {
   return async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     const headers = new Headers(init.headers);
@@ -40,7 +42,7 @@ export function createApiClient({
     const response = await fetchImpl(path, { credentials: "same-origin", ...init, headers });
     if (response.status === 401) {
       onUnauthorized();
-      throw new ApiError(401, "Your session has ended. Sign in again.");
+      throw new ApiError(401, await errorMessage(response));
     }
     if (!response.ok) {
       throw new ApiError(response.status, await errorMessage(response));
@@ -73,6 +75,17 @@ export interface Backlog {
 }
 
 const request = createApiClient();
+// The sign-in page handles 401s itself; redirecting there from there would loop.
+const publicRequest = createApiClient({ onUnauthorized: () => undefined });
+
+export const publicApi = {
+  me: () => publicRequest<Me>("/api/me"),
+  signIn: (username: string, password: string) =>
+    publicRequest<{ username: string }>("/api/session", {
+      method: "POST",
+      body: JSON.stringify({ username, password }),
+    }),
+};
 
 export const api = {
   me: () => request<Me>("/api/me"),

@@ -5,16 +5,23 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Callable
 
-from fastapi import APIRouter, Depends, FastAPI, HTTPException
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Response
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from app.alpha_store import AlphaNotFoundError, AlphaStore, AlphaUser
+from app.alpha_store import AlphaAuthenticationError, AlphaNotFoundError, AlphaStore, AlphaUser
+from app.web_session import set_session_cookie
 
 
 class OrganizationUpdate(BaseModel):
     base_currency: str
+
+
+class SignInRequest(BaseModel):
+    # Bounded so an oversized password cannot make password hashing expensive.
+    username: str = Field(max_length=64)
+    password: str = Field(max_length=256)
 
 
 def _organization_payload(store: AlphaStore, user: AlphaUser) -> dict[str, Any]:
@@ -29,6 +36,18 @@ def _organization_payload(store: AlphaStore, user: AlphaUser) -> dict[str, Any]:
 
 def build_workspace_router(require_auth: Callable[..., Any], postgres_dsn: str | None) -> APIRouter:
     router = APIRouter(prefix="/api")
+
+    @router.post("/session")
+    def sign_in(credentials: SignInRequest, response: Response) -> dict[str, str]:
+        if not postgres_dsn:
+            raise HTTPException(status_code=503, detail="Sign-in is not configured")
+        store = AlphaStore(postgres_dsn)
+        try:
+            user = store.authenticate(credentials.username, credentials.password)
+        except AlphaAuthenticationError as exc:
+            raise HTTPException(status_code=401, detail="The username or password is incorrect.") from exc
+        set_session_cookie(response, store.create_session(user))
+        return {"username": user.username}
 
     @router.get("/me")
     def me(principal: str | AlphaUser = Depends(require_auth)) -> dict[str, Any]:
