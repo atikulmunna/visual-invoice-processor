@@ -12,9 +12,9 @@ Ledgerly is a private-alpha invoice processing application for a small, controll
 
 <div align="center">
   <a href="https://2wuikcntsyyqfgkucq5m26vyfe0kekgl.lambda-url.ap-southeast-1.on.aws/">
-    <img src="assets/invoice_operations.png" alt="Ledgerly upload screen showing a stored receipt and the uploads-left meter" width="100%" />
+    <img src="assets/workspace_collage.png" alt="Four Ledgerly screens: the overview with its spotlight, stats, and monthly spending chart; the records list with search and filters; the review workspace with the original invoice beside an editable form; and the upload screen showing a batch in progress" width="100%" />
   </a>
-  <sub>Batch uploads go straight to private storage, and each document shows its progress and result.</sub>
+  <sub>Overview, records, review, and batch upload. Every screen is scoped to your organization.</sub>
 </div>
 
 ## Highlights
@@ -129,7 +129,7 @@ app/
   alpha_admin.py           Administrator command line
   db_migrate.py            Ordered migration runner
 frontend/                   Workspace single-page app (React, TypeScript, Vite)
-assets/                     Product icon and workspace screenshot
+assets/                     Product icon and the README screenshot collage
 config/                     Data-driven normalization rules
 eval/                       Standard and strict golden datasets
 infra/                      GitHub OIDC bootstrap stack
