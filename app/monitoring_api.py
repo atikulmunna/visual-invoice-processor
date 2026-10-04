@@ -11,7 +11,7 @@ from uuid import uuid4
 from fastapi import Cookie, Depends, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from app.alpha_store import (
     AlphaAuthenticationError,
@@ -42,6 +42,19 @@ class PresignUploadRequest(BaseModel):
 
 SITE_ICON_PATH = Path(__file__).resolve().parents[1] / "assets" / "icon.png"
 FRONTEND_DIST = Path(__file__).resolve().parents[1] / "frontend" / "dist"
+
+
+def _validation_message(error: ValidationError) -> str:
+    """One readable line per invalid field, such as "line item 1 quantity: Input should be greater than 0"."""
+    parts = []
+    for issue in error.errors():
+        location = [
+            f"line item {part + 1}" if isinstance(part, int) else str(part).replace("_", " ")
+            for part in issue["loc"]
+            if part != "line_items"
+        ]
+        parts.append(f"{' '.join(location)}: {issue['msg']}")
+    return "; ".join(parts)
 
 
 def _org_scope(principal: str | AlphaUser) -> str | None:
@@ -271,6 +284,8 @@ def create_monitoring_app(
             }
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValidationError as exc:
+            raise HTTPException(status_code=400, detail=_validation_message(exc)) from exc
         except Exception as exc:  # noqa: BLE001
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -371,7 +386,18 @@ def create_monitoring_app(
     def dashboard(principal: str | AlphaUser = Depends(require_dashboard_auth)) -> str:
         return _dashboard_html(principal)
 
-    app.include_router(build_workspace_router(require_dashboard_auth, active_postgres_dsn))
+    def pending_reviews(org_id: str) -> list[dict[str, Any]]:
+        resolved_hashes = _resolved_file_hashes(active_postgres_dsn, org_id=org_id)
+        return _active_review_items(review_queue_dir, resolved_hashes, org_id=org_id)
+
+    app.include_router(
+        build_workspace_router(
+            require_dashboard_auth,
+            active_postgres_dsn,
+            review_queue_dir=review_queue_dir,
+            pending_reviews=pending_reviews,
+        )
+    )
     mount_frontend(app, Path(frontend_dist))
     return app
 

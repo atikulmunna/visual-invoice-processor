@@ -117,13 +117,40 @@ class ObjectStorageService:
             ExpiresIn=expires_seconds,
         )
 
-    def move_to_archive(self, object_key: str, archive_prefix: str | None = None) -> str:
+    def archive_key_for(self, object_key: str, archive_prefix: str | None = None) -> str:
+        """Where move_to_archive puts an inbox object."""
         active_archive_prefix = archive_prefix if archive_prefix is not None else self._archive_prefix
         relative_key = object_key
         normalized_inbox = self._inbox_prefix.rstrip("/") + "/"
         if object_key.startswith(normalized_inbox):
             relative_key = object_key[len(normalized_inbox) :]
-        destination_key = f"{active_archive_prefix.rstrip('/')}/{relative_key.lstrip('/')}"
+        return f"{active_archive_prefix.rstrip('/')}/{relative_key.lstrip('/')}"
+
+    def object_exists(self, object_key: str) -> bool:
+        try:
+            self._s3.head_object(Bucket=self._bucket, Key=object_key)
+        except Exception as exc:  # noqa: BLE001
+            code = str(getattr(exc, "response", {}).get("Error", {}).get("Code", ""))
+            if code in {"404", "NoSuchKey", "NotFound"}:
+                return False
+            raise
+        return True
+
+    def create_presigned_download(self, object_key: str, *, content_type: str, expires_seconds: int = 300) -> str:
+        """A short-lived link that shows the object inline in the browser."""
+        return self._s3.generate_presigned_url(
+            "get_object",
+            Params={
+                "Bucket": self._bucket,
+                "Key": object_key,
+                "ResponseContentType": content_type,
+                "ResponseContentDisposition": "inline",
+            },
+            ExpiresIn=expires_seconds,
+        )
+
+    def move_to_archive(self, object_key: str, archive_prefix: str | None = None) -> str:
+        destination_key = self.archive_key_for(object_key, archive_prefix)
         self._s3.copy_object(
             Bucket=self._bucket,
             CopySource={"Bucket": self._bucket, "Key": object_key},

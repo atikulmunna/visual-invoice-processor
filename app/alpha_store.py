@@ -525,6 +525,19 @@ class AlphaStore:
             raise AlphaNotFoundError("Processing job not found")
         return self._job_from_row(row)
 
+    def find_job_by_object_key(self, object_key: str, *, org_id: str) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"""
+                    SELECT {", ".join(self._JOB_COLUMNS)}
+                    FROM public.processing_jobs WHERE object_key = %s AND org_id = %s
+                    """,
+                    (object_key, org_id),
+                )
+                row = cur.fetchone()
+        return self._job_from_row(row) if row else None
+
     def list_jobs(self, *, org_id: str, limit: int = 20) -> list[dict[str, Any]]:
         """The organization's most recent jobs, newest first."""
         with self._connect() as conn:

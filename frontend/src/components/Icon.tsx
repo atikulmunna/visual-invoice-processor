@@ -18,6 +18,10 @@ const PATHS = {
   users: "M16 20v-1a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v1M9.5 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM21 20v-1a4 4 0 0 0-3-3.9M15.5 3.1a4 4 0 0 1 0 7.8",
   clock: "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 7v5l3 2",
   shield: "M12 3l7 3v5c0 5-3.5 8.5-7 10-3.5-1.5-7-5-7-10V6z",
+  plus: "M12 5v14M5 12h14",
+  minus: "M5 12h14",
+  rotate: "M21 12a9 9 0 1 1-3-6.7L21 8M21 3v5h-5",
+  arrowLeft: "M19 12H5M11 6l-6 6 6 6",
 } as const;
 
 export type IconName = keyof typeof PATHS;

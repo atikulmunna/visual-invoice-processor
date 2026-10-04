@@ -21,7 +21,8 @@ describe("reasonLabel", () => {
   });
 
   it("humanizes unknown codes", () => {
-    expect(reasonLabel("line_item_sum_mismatch")).toBe("Line item sum mismatch");
+    expect(reasonLabel("some_new_check")).toBe("Some new check");
+    expect(reasonLabel("line_item_sum_mismatch")).toBe("Line items do not add up to the subtotal");
     expect(reasonLabel("")).toBe("Unknown");
   });
 });

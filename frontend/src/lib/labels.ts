@@ -20,6 +20,11 @@ const REVIEW_REASONS: Record<string, string> = {
   low_confidence: "Low extraction confidence",
   validation_failed: "Amounts do not add up",
   schema_validation_failed: "Some fields could not be read",
+  amount_mismatch: "Subtotal, tax, and total do not agree",
+  line_item_sum_mismatch: "Line items do not add up to the subtotal",
+  line_items_incomplete: "Line items are missing amounts",
+  missing_identifier: "No invoice number or vendor tax ID",
+  missing_total: "Total not found on the document",
 };
 
 function humanize(code: string): string {

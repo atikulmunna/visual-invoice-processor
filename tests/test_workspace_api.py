@@ -288,3 +288,117 @@ def test_upload_limits_come_from_configuration(client: TestClient, monkeypatch: 
         "max_pdf_pages": 3,
         "allowed_types": ["application/pdf", "image/png"],
     }
+
+
+class _ReviewStorage:
+    """Stands in for S3 when preparing review document links."""
+
+    existing = {"archive/u/j/receipt.pdf"}
+    broken = False
+
+    def archive_key_for(self, object_key: str) -> str:
+        return "archive/" + object_key.removeprefix("inbox/")
+
+    def object_exists(self, key: str) -> bool:
+        if _ReviewStorage.broken:
+            raise RuntimeError("S3 is unreachable")
+        return key in _ReviewStorage.existing
+
+    def create_presigned_download(self, key: str, *, content_type: str, expires_seconds: int = 300) -> str:
+        return f"https://bucket.example/{key}?type={content_type}"
+
+
+class _ReviewStore(_FakeAlphaStore):
+    def find_job_by_object_key(self, object_key: str, *, org_id: str) -> dict[str, Any] | None:
+        if object_key == "inbox/u/j/receipt.pdf" and org_id == ORG_ID:
+            return {"original_name": "Receipt-2734.pdf", "content_type": "application/pdf"}
+        return None
+
+
+def _write_review(queue: Path, document_id: str, org_id: str, source: str) -> None:
+    import json
+
+    queue.mkdir(exist_ok=True)
+    (queue / f"{document_id}.json").write_text(json.dumps({
+        "document_id": document_id,
+        "status": "REVIEW_REQUIRED",
+        "org_id": org_id,
+        "created_at_utc": "2026-10-04T08:00:00+00:00",
+        "reason_codes": ["missing_vendor", "validation_failed"],
+        "metadata": {
+            "source_file_id": source,
+            "file_hash": f"hash-{document_id}",
+            "violations": [{"code": "amount_mismatch", "severity": "error"}],
+            "normalized_record": {"vendor_name": None, "invoice_date": "2026-03-02", "currency": "BDT",
+                                  "total_amount": 1954.0, "line_items": []},
+        },
+    }), encoding="utf-8")
+
+
+@pytest.fixture
+def review_client(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> TestClient:
+    for key, value in {"ALPHA_AUTH_ENABLED": "true", "INGESTION_BACKEND": "s3", "S3_BUCKET_NAME": "alpha",
+                       "LEDGER_BACKEND": "postgres", "POSTGRES_DSN": "postgresql://example"}.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setattr("app.monitoring_api.AlphaStore", _ReviewStore)
+    monkeypatch.setattr("app.workspace_api.AlphaStore", _ReviewStore)
+    monkeypatch.setattr("app.monitoring_api._resolved_file_hashes", lambda dsn, org_id=None: set())
+    monkeypatch.setattr("app.workspace_api.ObjectStorageService.from_settings", lambda settings: _ReviewStorage())
+    _ReviewStorage.broken = False
+    queue = tmp_path / "queue"
+    _write_review(queue, "doc-mine", ORG_ID, "inbox/u/j/receipt.pdf")
+    _write_review(queue, "doc-gone", ORG_ID, "inbox/u/old/expired.png")
+    _write_review(queue, "doc-other", "cccccccc-cccc-cccc-cccc-cccccccccccc", "inbox/x/y/other.pdf")
+    return TestClient(create_monitoring_app(
+        postgres_dsn="postgresql://example", review_queue_dir=queue, frontend_dist=tmp_path / "none"))
+
+
+def test_review_queue_lists_only_the_organization_items(review_client: TestClient) -> None:
+    response = review_client.get("/api/review", auth=("owner.one", PASSWORD))
+
+    items = response.json()["items"]
+    assert response.status_code == 200
+    assert {item["document_id"] for item in items} == {"doc-mine", "doc-gone"}
+    assert items[0]["reason_codes"] == ["missing_vendor", "validation_failed"]
+    assert items[0]["total_amount"] == 1954.0
+
+
+def test_review_detail_includes_the_record_reasons_and_a_document_link(review_client: TestClient) -> None:
+    body = review_client.get("/api/review/doc-mine", auth=("owner.one", PASSWORD)).json()
+
+    assert body["record"]["vendor_name"] is None
+    assert body["violation_codes"] == ["amount_mismatch"]
+    assert body["document"] == {
+        "name": "Receipt-2734.pdf",
+        "content_type": "application/pdf",
+        "url": "https://bucket.example/archive/u/j/receipt.pdf?type=application/pdf",
+    }
+
+
+def test_review_detail_reports_a_deleted_or_unreachable_document_without_failing(review_client: TestClient) -> None:
+    gone = review_client.get("/api/review/doc-gone", auth=("owner.one", PASSWORD)).json()["document"]
+    _ReviewStorage.broken = True
+    unreachable = review_client.get("/api/review/doc-mine", auth=("owner.one", PASSWORD))
+
+    assert gone == {"name": "expired.png", "content_type": "image/png", "url": None}
+    assert unreachable.status_code == 200
+    assert unreachable.json()["document"]["url"] is None
+
+
+def test_review_detail_hides_other_organizations(review_client: TestClient) -> None:
+    assert review_client.get("/api/review/doc-other", auth=("owner.one", PASSWORD)).status_code == 404
+    assert review_client.get("/api/review/../secrets", auth=("owner.one", PASSWORD)).status_code == 404
+
+
+def test_invalid_corrections_get_a_readable_message(review_client: TestClient) -> None:
+    corrected = {
+        "document_type": "invoice", "vendor_name": "Acme", "invoice_date": "2026-03-02", "currency": "BDT",
+        "subtotal": 10, "tax_amount": 0, "total_amount": 10, "model_confidence": 0.9, "validation_score": 0.9,
+        "line_items": [{"description": "Paper", "quantity": 0, "unit_price": 10, "line_total": 10}],
+    }
+
+    response = review_client.post(
+        "/review-items/doc-mine/resolve", auth=("owner.one", PASSWORD), json={"corrected_record": corrected})
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "line item 1 quantity: Input should be greater than 0"
