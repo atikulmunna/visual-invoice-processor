@@ -41,3 +41,32 @@ export function initials(name: string): string {
   const letters = parts.length > 1 ? parts[0][0] + parts[1][0] : name.slice(0, 2);
   return letters.toUpperCase();
 }
+
+const relative = new Intl.RelativeTimeFormat("en", { numeric: "auto" });
+const MINUTE = 60_000;
+const HOUR = 60 * MINUTE;
+const DAY = 24 * HOUR;
+
+/** "just now", "3 minutes ago", "yesterday"; older than a week falls back to the date. */
+export function formatRelativeTime(iso: string | null | undefined, now: number = Date.now()): string | null {
+  if (!iso) {
+    return null;
+  }
+  const elapsed = now - new Date(iso).getTime();
+  if (Number.isNaN(elapsed)) {
+    return null;
+  }
+  if (elapsed < 45_000) {
+    return "just now";
+  }
+  if (elapsed < HOUR) {
+    return relative.format(-Math.round(elapsed / MINUTE), "minute");
+  }
+  if (elapsed < DAY) {
+    return relative.format(-Math.round(elapsed / HOUR), "hour");
+  }
+  if (elapsed < 7 * DAY) {
+    return relative.format(-Math.round(elapsed / DAY), "day");
+  }
+  return formatDate(iso);
+}

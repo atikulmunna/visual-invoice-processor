@@ -1,4 +1,5 @@
 import { signInUrl } from "./navigation";
+import type { JobView, UploadLimits } from "./uploads";
 
 export class ApiError extends Error {
   readonly status: number;
@@ -68,6 +69,12 @@ export interface Me {
   document_limit: number | null;
 }
 
+export interface PresignedUpload {
+  job_id: string;
+  upload: { url: string; fields: Record<string, string> };
+  documents_remaining: number;
+}
+
 export interface Backlog {
   review_queue_total: number;
   dead_letter_total: number;
@@ -92,4 +99,24 @@ export const api = {
   backlog: () => request<Backlog>("/backlog"),
   updateOrganization: (changes: { base_currency: string }) =>
     request<Organization>("/api/organization", { method: "PUT", body: JSON.stringify(changes) }),
+  uploadLimits: () => request<UploadLimits>("/api/upload-limits"),
+  recentJobs: (limit = 20) => request<{ jobs: JobView[] }>(`/api/jobs?limit=${limit}`),
+  job: (jobId: string) => request<JobView>(`/api/jobs/${encodeURIComponent(jobId)}`),
+  presign: (file: { filename: string; content_type: string; size: number }) =>
+    request<PresignedUpload>("/uploads/presign", { method: "POST", body: JSON.stringify(file) }),
+  retryJob: (jobId: string) =>
+    request<{ job_id: string; status: string }>(`/uploads/${encodeURIComponent(jobId)}/retry`, { method: "POST" }),
 };
+
+/** Send the file straight to S3 with the presigned form; the file field must come last. */
+export async function uploadToStorage(upload: PresignedUpload["upload"], file: File): Promise<void> {
+  const form = new FormData();
+  for (const [key, value] of Object.entries(upload.fields)) {
+    form.append(key, value);
+  }
+  form.append("file", file);
+  const response = await fetch(upload.url, { method: "POST", body: form });
+  if (!response.ok) {
+    throw new ApiError(response.status, "The file could not be uploaded to storage.");
+  }
+}

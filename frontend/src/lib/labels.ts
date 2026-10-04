@@ -38,3 +38,21 @@ export function reasonLabel(code: string): string {
 export function currencyNote(currencyAssumed: boolean | undefined, currency: string | null | undefined): string | null {
   return currencyAssumed && currency ? `Not shown on the document; assumed ${currency}, your base currency` : null;
 }
+
+const PROCESSING_ERRORS: Record<string, string> = {
+  page_limit_exceeded: "The PDF has more pages than allowed.",
+  invalid_pdf: "The PDF could not be opened.",
+  invalid_file_size: "The file is empty or too large.",
+  unsupported_signature: "The file is not a real PDF, PNG, or JPEG.",
+  content_type_mismatch: "The file's contents do not match its type.",
+  global_page_limit_exceeded: "The private alpha's processing allowance is used up.",
+  retry_trigger_failed: "The retry could not be started.",
+};
+
+/** A sentence for a failed or rejected job; extraction failures never show provider details. */
+export function processingErrorLabel(code: string | null | undefined, message?: string | null): string {
+  if (code && PROCESSING_ERRORS[code]) {
+    return PROCESSING_ERRORS[code];
+  }
+  return message || "Processing failed. Try again.";
+}

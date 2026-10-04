@@ -6,6 +6,7 @@ import { ToastProvider } from "../components/Toast";
 import { buttonClass } from "../components/ui";
 import { initials } from "../lib/format";
 import { SessionProvider, useSession } from "./session";
+import { UploadQueueProvider, useUploadQueue } from "./uploadQueue";
 
 const NAV: { to: string; label: string; icon: IconName }[] = [
   { to: "/overview", label: "Overview", icon: "overview" },
@@ -115,6 +116,8 @@ function AccountMenu() {
 
 function TopBar() {
   const { reviewCount } = useSession();
+  const { items } = useUploadQueue();
+  const uploading = items.filter((item) => !["finished", "failed", "stalled"].includes(item.phase)).length;
   const [mobileOpen, setMobileOpen] = useState(false);
   const location = useLocation();
 
@@ -133,9 +136,14 @@ function TopBar() {
           </nav>
           <div className="topbar-actions">
             <SearchForm id="search-desktop" />
-            <Link to="/upload" className={buttonClass("light", "sm")} aria-label="Upload documents">
+            <Link
+              to="/upload"
+              className={buttonClass("light", "sm")}
+              aria-label={uploading ? `Upload documents, ${uploading} in progress` : "Upload documents"}
+            >
               <Icon name="upload" size={15} />
               <span className="upload-label">Upload</span>
+              {uploading > 0 && <span className="count-badge">{uploading}</span>}
             </Link>
             <AccountMenu />
             <button
@@ -173,10 +181,12 @@ export function AppShell() {
         <span />
       </div>
       <SessionProvider>
-        <TopBar />
-        <main id="main" tabIndex={-1}>
-          <Outlet />
-        </main>
+        <UploadQueueProvider>
+          <TopBar />
+          <main id="main" tabIndex={-1}>
+            <Outlet />
+          </main>
+        </UploadQueueProvider>
       </SessionProvider>
     </ToastProvider>
   );

@@ -452,3 +452,18 @@ def test_set_password_replaces_the_password_and_ends_sessions(dsn: str) -> None:
         store.set_password("no-such-tester", "A-brand-new-password")
     with pytest.raises(ValueError, match="12"):
         store.set_password(user.username, "short")
+
+
+def test_recent_jobs_are_newest_first_and_scoped(dsn: str) -> None:
+    store = AlphaStore(dsn)
+    one, two = _user(store, "one"), _user(store, "two")
+    first, _ = _upload(store, one, name="first.png")
+    second, _ = _upload(store, one, name="second.png")
+    _upload(store, two, name="other.png")
+
+    jobs = store.list_jobs(org_id=one.org_id or "", limit=10)
+
+    assert [str(job["id"]) for job in jobs] == [second, first]
+    assert {job["original_name"] for job in jobs} == {"first.png", "second.png"}
+    assert len(store.list_jobs(org_id=one.org_id or "", limit=1)) == 1
+

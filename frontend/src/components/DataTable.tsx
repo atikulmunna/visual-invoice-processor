@@ -22,7 +22,8 @@ const SKELETON_ROWS = 4;
 
 export function DataTable<Row>({ caption, columns, rows, rowKey, loading = false, empty }: DataTableProps<Row>) {
   return (
-    <div className="table-wrap">
+    // Focusable so keyboard users can scroll a table wider than a phone screen.
+    <div className="table-wrap" role="region" aria-label={caption} tabIndex={0}>
       <table className="table" aria-busy={loading || undefined}>
         <caption className="visually-hidden">{caption}</caption>
         <thead>
