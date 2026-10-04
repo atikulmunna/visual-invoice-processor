@@ -24,11 +24,17 @@ describe("createApiClient", () => {
     expect(headers.get("Content-Type")).toBe("application/json");
   });
 
-  it("redirects to sign-in and throws on 401", async () => {
+  it("calls the unauthorized handler and keeps the server's message on 401", async () => {
     const onUnauthorized = vi.fn();
-    const request = createApiClient({ fetchImpl: async () => jsonResponse(401, {}), onUnauthorized });
+    const request = createApiClient({
+      fetchImpl: async () => jsonResponse(401, { detail: "The username or password is incorrect." }),
+      onUnauthorized,
+    });
 
-    await expect(request("/api/me")).rejects.toMatchObject({ status: 401 });
+    await expect(request("/api/session")).rejects.toMatchObject({
+      status: 401,
+      message: "The username or password is incorrect.",
+    });
     expect(onUnauthorized).toHaveBeenCalledOnce();
   });
 
