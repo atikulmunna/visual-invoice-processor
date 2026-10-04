@@ -100,9 +100,6 @@ function AccountMenu() {
           <Link className="menu-item" to="/settings" onClick={() => setOpen(false)}>
             <Icon name="settings" /> Settings
           </Link>
-          <a className="menu-item" href="/dashboard">
-            <Icon name="classic" /> Classic workspace
-          </a>
           <form method="post" action="/logout">
             <button type="submit" className="menu-item">
               <Icon name="logout" /> Sign out

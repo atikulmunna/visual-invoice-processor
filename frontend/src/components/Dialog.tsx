@@ -7,12 +7,13 @@ interface DialogProps {
   onClose: () => void;
   title: string;
   variant?: "modal" | "drawer";
+  className?: string;
   children: ReactNode;
 }
 
 /** Modal or side drawer. The native dialog element traps focus, closes on Escape,
  * and returns focus to the trigger when it closes. */
-export function Dialog({ open, onClose, title, variant = "modal", children }: DialogProps) {
+export function Dialog({ open, onClose, title, variant = "modal", className = "", children }: DialogProps) {
   const ref = useRef<HTMLDialogElement>(null);
   const titleId = useId();
 
@@ -37,7 +38,7 @@ export function Dialog({ open, onClose, title, variant = "modal", children }: Di
   return (
     <dialog
       ref={ref}
-      className={variant === "drawer" ? "dialog dialog-drawer" : "dialog"}
+      className={["dialog", variant === "drawer" ? "dialog-drawer" : "", className].filter(Boolean).join(" ")}
       aria-labelledby={titleId}
       onClose={onClose}
       onClick={closeOnBackdrop}

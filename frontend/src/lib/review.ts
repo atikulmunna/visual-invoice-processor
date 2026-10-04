@@ -57,6 +57,29 @@ export interface ReviewForm {
 export type AmountField = "subtotal" | "tax_amount" | "shipping_amount" | "discount_amount" | "total_amount";
 export const AMOUNT_FIELDS: AmountField[] = ["subtotal", "tax_amount", "shipping_amount", "discount_amount", "total_amount"];
 
+export const DOCUMENT_TYPE_OPTIONS = [
+  { value: "invoice", label: "Invoice" },
+  { value: "receipt", label: "Receipt" },
+];
+export const PAYMENT_METHOD_OPTIONS = [
+  { value: "unknown", label: "Not shown" },
+  { value: "card", label: "Card" },
+  { value: "cash", label: "Cash" },
+  { value: "bank", label: "Bank transfer" },
+];
+export const AMOUNT_LABELS: Record<AmountField, string> = {
+  subtotal: "Subtotal",
+  tax_amount: "Tax or VAT",
+  shipping_amount: "Shipping",
+  discount_amount: "Discount",
+  total_amount: "Total",
+};
+
+/** The label shown for a stored value, such as "Bank transfer" for "bank". */
+export function optionLabel(options: { value: string; label: string }[], value: unknown): string | null {
+  return options.find((option) => option.value === value)?.label ?? null;
+}
+
 export interface Issue {
   /** A form field name, or "line_items.<index>.<field>" for a line item. */
   field: string;

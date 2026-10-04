@@ -1,0 +1,262 @@
+.stack[data-refreshing] {
+  opacity: 0.6;
+  transition: opacity 150ms var(--ease);
+}
+
+/* Spotlight: one dark glass panel for the most pressing thing. */
+.spotlight {
+  position: relative;
+  display: grid;
+  grid-template-columns: 180px minmax(0, 1fr);
+  align-items: center;
+  gap: 32px;
+  overflow: hidden;
+  padding: 32px 36px;
+  border: 1px solid var(--glass-dark-border);
+  border-radius: var(--radius-panel);
+  background: linear-gradient(160deg, #0d0d12, var(--dark-raised));
+  color: var(--on-dark);
+  box-shadow: var(--shadow-pop);
+}
+
+.spotlight::before {
+  content: "";
+  position: absolute;
+  top: -140px;
+  left: -100px;
+  width: 380px;
+  height: 380px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(59, 91, 255, 0.55), transparent 65%);
+  pointer-events: none;
+}
+
+.spotlight[data-urgent]::before {
+  background: radial-gradient(circle, rgba(255, 107, 157, 0.45), transparent 65%);
+}
+
+.spotlight-art {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 132px;
+  height: 132px;
+  margin: 0 auto;
+  border: 1px solid var(--glass-dark-border);
+  border-radius: 50%;
+  background: var(--glass-dark);
+  color: #e8ecff;
+  backdrop-filter: var(--blur);
+}
+
+.spotlight-copy {
+  position: relative;
+  display: grid;
+  justify-items: start;
+  gap: 10px;
+}
+
+.spotlight .eyebrow {
+  color: #9db0ff;
+}
+
+.spotlight[data-urgent] .eyebrow {
+  color: #ffa3c4;
+}
+
+.spotlight-title {
+  max-width: 640px;
+  font-family: var(--font-display);
+  font-size: clamp(22px, 2.4vw, 30px);
+  font-weight: 700;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+}
+
+.spotlight-body {
+  max-width: 600px;
+  margin-bottom: 6px;
+  color: var(--on-dark-soft);
+}
+
+/* Money in stat tiles: the code small, the digits large, wrapping rather than overflowing. */
+.money {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: 8px;
+  font-size: 26px;
+  overflow-wrap: anywhere;
+}
+
+.money-code {
+  font-family: var(--font-body);
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--ink-muted);
+}
+
+.overview-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+  align-items: start;
+  gap: 20px;
+}
+
+.chart-card {
+  position: relative;
+}
+
+.chart-subtitle {
+  margin-top: 4px;
+  font-size: 13.5px;
+}
+
+/* Column chart */
+.chart {
+  margin-top: 16px;
+}
+
+/* The chart and table toggle sits in the card's top corner, beside the title. */
+.chart-tools {
+  position: absolute;
+  top: 18px;
+  right: 18px;
+}
+
+.chart-frame {
+  position: relative;
+  border-radius: 12px;
+}
+
+.chart-frame svg {
+  display: block;
+}
+
+.chart-grid {
+  stroke: rgba(17, 17, 20, 0.08);
+  stroke-width: 1;
+  shape-rendering: crispEdges;
+}
+
+.chart-tick {
+  fill: var(--ink-muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.chart-value {
+  fill: var(--ink);
+  font-size: 12.5px;
+  font-weight: 700;
+}
+
+.chart-bar {
+  fill: var(--accent);
+}
+
+.chart-column[data-active] .chart-bar {
+  fill: var(--accent-strong);
+}
+
+.chart-tooltip {
+  position: absolute;
+  display: grid;
+  gap: 2px;
+  min-width: 150px;
+  padding: 8px 12px;
+  border-radius: 12px;
+  background: var(--ink);
+  color: #fff;
+  font-size: 12.5px;
+  text-align: center;
+  white-space: nowrap;
+  box-shadow: var(--shadow-pop);
+  pointer-events: none;
+  transform: translate(-50%, -100%);
+}
+
+.chart-tooltip strong {
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+
+.chart-tooltip span {
+  color: rgba(255, 255, 255, 0.74);
+}
+
+/* Top vendors: one thin bar each, the amount in text beside the name. */
+.vendor-bars {
+  display: grid;
+  gap: 8px;
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.vendor-bar {
+  display: grid;
+  gap: 6px;
+  margin: 0 -10px;
+  padding: 8px 10px;
+  border-radius: 14px;
+  color: inherit;
+  text-decoration: none;
+}
+
+.vendor-bar:hover {
+  background: rgba(255, 255, 255, 0.85);
+}
+
+.vendor-bar-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 14px;
+}
+
+.vendor-name {
+  min-width: 0;
+  overflow: hidden;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vendor-total {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.vendor-fill {
+  display: block;
+  min-width: 4px;
+  height: 8px;
+  border-radius: 0 4px 4px 0;
+  background: var(--accent);
+}
+
+.vendor-count {
+  font-size: 12.5px;
+}
+
+@media (max-width: 1000px) {
+  .overview-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 720px) {
+  .spotlight {
+    grid-template-columns: 1fr;
+    gap: 20px;
+    padding: 24px;
+  }
+
+  .spotlight-art {
+    width: 72px;
+    height: 72px;
+    margin: 0;
+  }
+}

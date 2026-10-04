@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
 
-import { formatDate, formatMoney, formatRelativeTime, initials } from "./format";
+import { formatAmount, formatDate, formatMoney, formatRelativeTime, initials } from "./format";
+
+describe("formatAmount", () => {
+  it("groups the digits for the currency without naming it", () => {
+    expect(formatAmount(216500, "bdt")).toBe("2,16,500.00");
+    expect(formatAmount(216500, "USD")).toBe("216,500.00");
+    expect(formatAmount(3, null)).toBe("3.00");
+  });
+});
 
 describe("formatMoney", () => {
   it("groups taka and rupee amounts in lakhs", () => {

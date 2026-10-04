@@ -41,7 +41,20 @@ export function DocumentViewer({ document }: { document: ReviewDocument }) {
       <div className="viewer-body">
         {!document.url ? (
           <EmptyState icon="file" title="The original file is not available">
-            Source files are deleted 30 days after upload. The extracted details are still here to review.
+            Source files are deleted 30 days after upload. The extracted details are kept.
+          </EmptyState>
+        ) : isPdf && navigator.pdfViewerEnabled === false ? (
+          // Phone browsers such as Chrome on Android cannot show a PDF inside the page.
+          <EmptyState
+            icon="file"
+            title="This browser opens PDFs separately"
+            action={
+              <a className={buttonClass("primary")} href={document.url} target="_blank" rel="noopener noreferrer">
+                Open the PDF
+              </a>
+            }
+          >
+            The link works for five minutes.
           </EmptyState>
         ) : isPdf ? (
           <iframe src={document.url} title={`Original document: ${name}`} />

@@ -1,4 +1,6 @@
 import { signInUrl } from "./navigation";
+import type { Overview } from "./overview";
+import { recordsApiPath, type RecordDetail, type RecordFacets, type RecordPage, type RecordQuery } from "./records";
 import type { ReviewDetail, ReviewSummary, StoredRecord } from "./review";
 import type { JobView, UploadLimits } from "./uploads";
 
@@ -117,6 +119,11 @@ export const api = {
       method: "POST",
       body: JSON.stringify(decision),
     }),
+  records: (query: RecordQuery) => request<RecordPage>(recordsApiPath(query)),
+  recordFacets: () => request<RecordFacets>("/api/records/facets"),
+  record: (id: number) => request<RecordDetail>(`/api/records/${id}`),
+  overview: (currency: string | null) =>
+    request<Overview>(currency ? `/api/overview?currency=${encodeURIComponent(currency)}` : "/api/overview"),
 };
 
 /** Send the file straight to S3 with the presigned form; the file field must come last. */

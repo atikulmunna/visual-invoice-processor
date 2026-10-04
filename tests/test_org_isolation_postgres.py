@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
-from collections.abc import Iterator
+from datetime import date
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -26,35 +26,6 @@ BASE_DSN = os.getenv("TEST_POSTGRES_DSN", "").strip()
 pytestmark = pytest.mark.skipif(not BASE_DSN, reason="TEST_POSTGRES_DSN is not set")
 
 PASSWORD = "A-strong-alpha-password"
-
-
-def _create_database() -> str:
-    name = f"ledgerly_test_{uuid4().hex[:12]}"
-    with psycopg.connect(BASE_DSN, autocommit=True) as conn:
-        conn.execute(f'CREATE DATABASE "{name}"')
-        # Supabase roles referenced by the lockdown migrations.
-        for role in ("anon", "authenticated"):
-            conn.execute(
-                f"DO $$ BEGIN CREATE ROLE {role} NOLOGIN; "
-                "EXCEPTION WHEN duplicate_object THEN NULL; END $$"
-            )
-    return psycopg.conninfo.make_conninfo(BASE_DSN, dbname=name)
-
-
-def _drop_database(dsn: str) -> None:
-    name = psycopg.conninfo.conninfo_to_dict(dsn)["dbname"]
-    with psycopg.connect(BASE_DSN, autocommit=True) as conn:
-        conn.execute(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')
-
-
-@pytest.fixture(scope="module")
-def dsn() -> Iterator[str]:
-    database = _create_database()
-    try:
-        apply_migrations(database)
-        yield database
-    finally:
-        _drop_database(database)
 
 
 @pytest.fixture
@@ -86,69 +57,66 @@ def _upload(store: AlphaStore, user: AlphaUser, name: str = "invoice.png", size:
     return job_id, object_key
 
 
-def test_migration_backfills_existing_rows_into_personal_organizations(tmp_path: Path) -> None:
-    database = _create_database()
-    try:
-        legacy_dir = tmp_path / "legacy"
-        legacy_dir.mkdir()
-        for path in DEFAULT_MIGRATIONS_DIR.glob("00[0-4]_*.sql"):
-            shutil.copy(path, legacy_dir / path.name)
-        apply_migrations(database, legacy_dir)
+def test_migration_backfills_existing_rows_into_personal_organizations(tmp_path: Path, empty_database: str) -> None:
+    database = empty_database
+    legacy_dir = tmp_path / "legacy"
+    legacy_dir.mkdir()
+    for path in DEFAULT_MIGRATIONS_DIR.glob("00[0-4]_*.sql"):
+        shutil.copy(path, legacy_dir / path.name)
+    apply_migrations(database, legacy_dir)
 
-        user_a, user_b = uuid4(), uuid4()
-        key_a = f"inbox/{user_a}/{uuid4()}/a.pdf"
-        key_b = f"inbox/{user_b}/{uuid4()}/b.pdf"
-        with psycopg.connect(database) as conn:
-            for user_id, name in ((user_a, "tester.a"), (user_b, "tester.b")):
-                conn.execute(
-                    "INSERT INTO alpha_users(id, username, password_hash) VALUES (%s, %s, 'x')",
-                    (user_id, name),
-                )
-            for user_id, key in ((user_a, key_a), (user_b, key_b)):
-                conn.execute(
-                    """
-                    INSERT INTO processing_jobs(id, user_id, object_key, original_name, content_type, declared_size)
-                    VALUES (%s, %s, %s, 'f.pdf', 'application/pdf', 10)
-                    """,
-                    (uuid4(), user_id, key),
-                )
-            for key in (key_a, key_b, "drive-legacy"):
-                conn.execute(
-                    """
-                    INSERT INTO ledger_records(drive_file_id, file_hash, status, record_json, metadata_json)
-                    VALUES (%s, 'same-hash', 'STORED', '{}', '{}')
-                    """,
-                    (key,),
-                )
+    user_a, user_b = uuid4(), uuid4()
+    key_a = f"inbox/{user_a}/{uuid4()}/a.pdf"
+    key_b = f"inbox/{user_b}/{uuid4()}/b.pdf"
+    with psycopg.connect(database) as conn:
+        for user_id, name in ((user_a, "tester.a"), (user_b, "tester.b")):
             conn.execute(
-                "INSERT INTO review_queue_items(document_id, status, metadata_json) VALUES ('rv-a', 'REVIEW_REQUIRED', %s)",
-                (json.dumps({"source_file_id": key_a}),),
+                "INSERT INTO alpha_users(id, username, password_hash) VALUES (%s, %s, 'x')",
+                (user_id, name),
             )
+        for user_id, key in ((user_a, key_a), (user_b, key_b)):
             conn.execute(
-                "INSERT INTO document_claims(file_hash, source_id, status) VALUES ('same-hash', %s, 'STORED')",
-                (key_a,),
+                """
+                INSERT INTO processing_jobs(id, user_id, object_key, original_name, content_type, declared_size)
+                VALUES (%s, %s, %s, 'f.pdf', 'application/pdf', 10)
+                """,
+                (uuid4(), user_id, key),
             )
+        for key in (key_a, key_b, "drive-legacy"):
             conn.execute(
-                "INSERT INTO document_claims(file_hash, source_id, status) VALUES ('legacy-hash', 'drive-legacy', 'STORED')"
+                """
+                INSERT INTO ledger_records(drive_file_id, file_hash, status, record_json, metadata_json)
+                VALUES (%s, 'same-hash', 'STORED', '{}', '{}')
+                """,
+                (key,),
             )
+        conn.execute(
+            "INSERT INTO review_queue_items(document_id, status, metadata_json) VALUES ('rv-a', 'REVIEW_REQUIRED', %s)",
+            (json.dumps({"source_file_id": key_a}),),
+        )
+        conn.execute(
+            "INSERT INTO document_claims(file_hash, source_id, status) VALUES ('same-hash', %s, 'STORED')",
+            (key_a,),
+        )
+        conn.execute(
+            "INSERT INTO document_claims(file_hash, source_id, status) VALUES ('legacy-hash', 'drive-legacy', 'STORED')"
+        )
 
-        assert apply_migrations(database) == ["005_organizations.sql", "006_org_base_currency.sql"]
+    assert apply_migrations(database) == ["005_organizations.sql", "006_org_base_currency.sql"]
 
-        with psycopg.connect(database) as conn:
-            orgs = dict(conn.execute("SELECT id, name FROM organizations").fetchall())
-            assert orgs == {user_a: "tester.a", user_b: "tester.b"}
-            currencies = {row[0] for row in conn.execute("SELECT base_currency FROM organizations").fetchall()}
-            assert currencies == {"BDT"}
-            owners = conn.execute("SELECT org_id, user_id, role FROM memberships ORDER BY role").fetchall()
-            assert sorted(owners) == sorted([(user_a, user_a, "owner"), (user_b, user_b, "owner")])
-            records = dict(conn.execute("SELECT drive_file_id, org_id FROM ledger_records").fetchall())
-            assert records == {key_a: user_a, key_b: user_b, "drive-legacy": None}
-            assert conn.execute("SELECT org_id FROM review_queue_items").fetchone()[0] == user_a
-            claims = conn.execute("SELECT org_id, file_hash FROM document_claims").fetchall()
-            assert claims == [(user_a, "same-hash")]
-            assert conn.execute("SELECT count(*) FROM processing_jobs WHERE org_id IS NULL").fetchone()[0] == 0
-    finally:
-        _drop_database(database)
+    with psycopg.connect(database) as conn:
+        orgs = dict(conn.execute("SELECT id, name FROM organizations").fetchall())
+        assert orgs == {user_a: "tester.a", user_b: "tester.b"}
+        currencies = {row[0] for row in conn.execute("SELECT base_currency FROM organizations").fetchall()}
+        assert currencies == {"BDT"}
+        owners = conn.execute("SELECT org_id, user_id, role FROM memberships ORDER BY role").fetchall()
+        assert sorted(owners) == sorted([(user_a, user_a, "owner"), (user_b, user_b, "owner")])
+        records = dict(conn.execute("SELECT drive_file_id, org_id FROM ledger_records").fetchall())
+        assert records == {key_a: user_a, key_b: user_b, "drive-legacy": None}
+        assert conn.execute("SELECT org_id FROM review_queue_items").fetchone()[0] == user_a
+        claims = conn.execute("SELECT org_id, file_hash FROM document_claims").fetchall()
+        assert claims == [(user_a, "same-hash")]
+        assert conn.execute("SELECT count(*) FROM processing_jobs WHERE org_id IS NULL").fetchone()[0] == 0
 
 
 def test_users_sessions_and_memberships_carry_the_active_organization(dsn: str) -> None:
@@ -229,8 +197,9 @@ def test_deduplication_is_scoped_per_organization(dsn: str) -> None:
     assert statuses == {key_one: "STORED", key_two: "CLAIMED"}
 
 
-def test_review_queue_and_dashboard_queries_are_scoped(pg_env: str) -> None:
-    from app.monitoring_api import _query_dashboard_data, _resolved_file_hashes
+def test_review_queue_and_records_queries_are_scoped(pg_env: str) -> None:
+    from app.monitoring_api import _resolved_file_hashes
+    from app.records_store import RecordFilters, overview, record_facets, search_records
     from app.review_queue import (
         dismiss_review_item,
         list_review_items,
@@ -285,13 +254,15 @@ def test_review_queue_and_dashboard_queries_are_scoped(pg_env: str) -> None:
     resolved = resolve_review_item(f"review-{one.id}", org_id=one.org_id)
     assert resolved["storage_result"]["status"] == "appended"
 
-    data = _query_dashboard_data(pg_env, limit=20, org_id=one.org_id)
-    assert data["error"] is None
-    assert data["kpis"]["records_total"] == 2
-    assert {row["vendor_name"] for row in data["vendor_spend"]} == {f"Vendor {one.username}", "Acme"}
-    assert sum(day["records_total"] for day in data["daily_summary"]) == 2
+    found = search_records(pg_env, org_id=one.org_id, filters=RecordFilters())
+    assert found["total"] == 2
+    assert {row["vendor_name"] for row in found["items"]} == {f"Vendor {one.username}", "Acme"}
+    assert record_facets(pg_env, org_id=one.org_id)["vendors"] == sorted([f"Vendor {one.username}", "Acme"])
+    summary = overview(pg_env, org_id=one.org_id, currency=None, base_currency="BDT", today=date(2026, 1, 15))
+    assert summary["records_total"] == 2
+    assert {row["vendor_name"] for row in summary["top_vendors"]} == {f"Vendor {one.username}", "Acme"}
     assert _resolved_file_hashes(pg_env, org_id=one.org_id) == {f"stored-{one.id}", f"review-{one.id}"}
-    assert _query_dashboard_data(pg_env, limit=20, org_id=two.org_id)["kpis"]["records_total"] == 1
+    assert search_records(pg_env, org_id=two.org_id, filters=RecordFilters())["total"] == 1
 
 
 class _FakeObjectStorage(ObjectStorageService):
