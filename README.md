@@ -180,9 +180,10 @@ python -m app.alpha_admin list
 python -m app.alpha_admin disable --username tester.one
 python -m app.alpha_admin enable --username tester.one
 python -m app.alpha_admin reset --username tester.one
+python -m app.alpha_admin set-password --username tester.one
 ```
 
-Generated passwords are shown once. Do not commit them or store them in deployment variables.
+`reset` restores a tester's upload allowance; `set-password` issues a new password and signs the tester out everywhere. Generated passwords are shown once. Do not commit them or store them in deployment variables.
 
 ### Organizations
 
