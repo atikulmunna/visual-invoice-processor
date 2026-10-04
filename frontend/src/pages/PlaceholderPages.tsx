@@ -2,7 +2,6 @@ import { useSearchParams } from "react-router";
 
 import { PageHeader, RebuildNotice } from "../components/PageHeader";
 import { EmptyState } from "../components/ui";
-import { useSession } from "../shell/session";
 
 export function RecordsPage() {
   const [params] = useSearchParams();
@@ -17,27 +16,6 @@ export function RecordsPage() {
         </p>
       )}
       <RebuildNotice what="records list with filters, search, and export" />
-    </div>
-  );
-}
-
-export function ReviewPage() {
-  const { reviewCount } = useSession();
-
-  return (
-    <div className="page stack">
-      <PageHeader
-        eyebrow="Review"
-        title="Review queue"
-        subtitle="Documents that need a person to confirm or fill in details before they are stored."
-      />
-      {reviewCount === 0 ? (
-        <EmptyState icon="check" title="Nothing to review">
-          New documents that need attention will appear here.
-        </EmptyState>
-      ) : (
-        <RebuildNotice what="side-by-side review workspace" />
-      )}
     </div>
   );
 }

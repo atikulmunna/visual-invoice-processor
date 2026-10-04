@@ -467,3 +467,14 @@ def test_recent_jobs_are_newest_first_and_scoped(dsn: str) -> None:
     assert {job["original_name"] for job in jobs} == {"first.png", "second.png"}
     assert len(store.list_jobs(org_id=one.org_id or "", limit=1)) == 1
 
+
+def test_jobs_are_found_by_object_key_only_within_their_organization(dsn: str) -> None:
+    store = AlphaStore(dsn)
+    one, two = _user(store, "one"), _user(store, "two")
+    _, key = _upload(store, one, name="receipt.png")
+
+    found = store.find_job_by_object_key(key, org_id=one.org_id or "")
+
+    assert found is not None and found["original_name"] == "receipt.png"
+    assert store.find_job_by_object_key(key, org_id=two.org_id or "") is None
+

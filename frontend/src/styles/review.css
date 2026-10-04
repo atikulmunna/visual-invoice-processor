@@ -1,0 +1,238 @@
+.page-wide {
+  max-width: 1480px;
+}
+
+.review-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.review-header .page-title:focus {
+  outline: none;
+}
+
+.back-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.review-position {
+  gap: 8px;
+}
+
+.review-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr);
+  align-items: start;
+  gap: 24px;
+}
+
+/* The document stays in view while the form scrolls beside it. */
+.viewer {
+  position: sticky;
+  top: calc(var(--topbar-height) + 16px);
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - var(--topbar-height) - 32px);
+  min-height: 420px;
+  overflow: hidden;
+  border: 1px solid var(--glass-light-border);
+  border-radius: var(--radius-card);
+  background: var(--glass-light);
+  box-shadow: var(--shadow-card);
+  backdrop-filter: var(--blur);
+}
+
+.viewer-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.viewer-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 14px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.viewer-zoom {
+  min-width: 44px;
+  font-size: 13px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.viewer-body {
+  display: grid;
+  flex: 1;
+  min-height: 0;
+  place-items: center;
+  background: #eceae5;
+}
+
+.viewer-body iframe {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: #fff;
+}
+
+.viewer-canvas {
+  width: 100%;
+  height: 100%;
+  overflow: auto;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+
+.viewer-canvas img {
+  max-width: 100%;
+  transform-origin: center;
+  box-shadow: 0 10px 30px -12px rgba(17, 17, 20, 0.35);
+  transition: transform 200ms var(--ease);
+}
+
+.review-form {
+  gap: 16px;
+}
+
+.callout.tone-warning svg,
+.callout.tone-info svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.reason-list {
+  margin: 6px 0 0;
+  padding-left: 18px;
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+  gap: 16px;
+  margin-top: 16px;
+}
+
+.lines {
+  display: grid;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.lines-head,
+.lines-row {
+  display: grid;
+  grid-template-columns: minmax(0, 2.4fr) minmax(0, 0.7fr) minmax(0, 1fr) minmax(0, 1fr) 36px;
+  align-items: center;
+  gap: 8px;
+}
+
+.lines-head {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+}
+
+.lines-row .input {
+  min-height: 40px;
+  padding: 8px 10px;
+}
+
+.review-actions {
+  position: sticky;
+  bottom: 16px;
+  z-index: 2;
+  display: grid;
+  gap: 10px;
+  padding: 16px 18px;
+  border: 1px solid var(--glass-light-border);
+  border-radius: var(--radius-card);
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: var(--shadow-pop);
+  backdrop-filter: var(--blur);
+}
+
+.review-warnings {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--warning);
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.review-total {
+  margin-left: auto;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.review-reasons-cell {
+  font-size: 13.5px;
+  color: var(--warning);
+}
+
+kbd {
+  display: inline-grid;
+  place-items: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.2);
+  font: 700 11px var(--font-body);
+}
+
+.btn-danger kbd,
+.btn-ghost kbd {
+  background: var(--neutral-tint);
+}
+
+@media (max-width: 1100px) {
+  .review-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .viewer {
+    position: static;
+    height: 70vh;
+  }
+}
+
+@media (max-width: 560px) {
+  .form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .lines-head {
+    display: none;
+  }
+
+  .lines-row {
+    grid-template-columns: 1fr 1fr 36px;
+  }
+
+  .lines-row .input:first-child {
+    grid-column: 1 / -1;
+  }
+}

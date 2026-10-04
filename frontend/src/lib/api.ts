@@ -1,4 +1,5 @@
 import { signInUrl } from "./navigation";
+import type { ReviewDetail, ReviewSummary, StoredRecord } from "./review";
 import type { JobView, UploadLimits } from "./uploads";
 
 export class ApiError extends Error {
@@ -106,6 +107,16 @@ export const api = {
     request<PresignedUpload>("/uploads/presign", { method: "POST", body: JSON.stringify(file) }),
   retryJob: (jobId: string) =>
     request<{ job_id: string; status: string }>(`/uploads/${encodeURIComponent(jobId)}/retry`, { method: "POST" }),
+  reviewQueue: () => request<{ items: ReviewSummary[] }>("/api/review"),
+  reviewItem: (documentId: string) => request<ReviewDetail>(`/api/review/${encodeURIComponent(documentId)}`),
+  resolveReview: (
+    documentId: string,
+    decision: { action: "approve" | "reject" | "duplicate"; corrected_record?: StoredRecord; note?: string },
+  ) =>
+    request<{ review_status: string }>(`/review-items/${encodeURIComponent(documentId)}/resolve`, {
+      method: "POST",
+      body: JSON.stringify(decision),
+    }),
 };
 
 /** Send the file straight to S3 with the presigned form; the file field must come last. */

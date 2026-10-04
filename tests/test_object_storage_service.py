@@ -73,3 +73,69 @@ def test_native_s3_client_uses_regional_virtual_host_endpoint(monkeypatch: Any) 
     assert captured["region_name"] == "ap-southeast-1"
     assert captured["endpoint_url"] == "https://s3.ap-southeast-1.amazonaws.com"
     assert captured["config"].s3["addressing_style"] == "virtual"
+
+
+class _ClientError(Exception):
+    def __init__(self, code: str) -> None:
+        super().__init__(code)
+        self.response = {"Error": {"Code": code}}
+
+
+class _ReviewS3:
+    def __init__(self, existing: set[str], failure: str | None = None) -> None:
+        self.existing = existing
+        self.failure = failure
+        self.url_calls: list[tuple[str, dict[str, Any], int]] = []
+
+    def head_object(self, *, Bucket: str, Key: str) -> dict[str, Any]:
+        if self.failure:
+            raise _ClientError(self.failure)
+        if Key not in self.existing:
+            raise _ClientError("404")
+        return {}
+
+    def generate_presigned_url(self, operation: str, *, Params: dict[str, Any], ExpiresIn: int) -> str:
+        self.url_calls.append((operation, Params, ExpiresIn))
+        return f"https://bucket.example/{Params['Key']}?signed"
+
+
+def _service(client: Any) -> ObjectStorageService:
+    return ObjectStorageService(
+        client, bucket="alpha-invoices", inbox_prefix="inbox/", archive_prefix="archive/",
+        allowed_mime_types=("application/pdf",),
+    )
+
+
+def test_archive_key_mirrors_the_inbox_path() -> None:
+    service = _service(_ReviewS3(set()))
+
+    assert service.archive_key_for("inbox/user/job/receipt.pdf") == "archive/user/job/receipt.pdf"
+    assert service.archive_key_for("other/receipt.pdf") == "archive/other/receipt.pdf"
+
+
+def test_object_exists_distinguishes_missing_from_real_errors() -> None:
+    assert _service(_ReviewS3({"archive/a.pdf"})).object_exists("archive/a.pdf") is True
+    assert _service(_ReviewS3(set())).object_exists("archive/a.pdf") is False
+    try:
+        _service(_ReviewS3(set(), failure="AccessDenied")).object_exists("archive/a.pdf")
+    except _ClientError:
+        pass
+    else:
+        raise AssertionError("A permissions error must not look like a missing file")
+
+
+def test_download_links_are_short_lived_and_shown_inline() -> None:
+    client = _ReviewS3(set())
+
+    url = _service(client).create_presigned_download("archive/a.pdf", content_type="application/pdf")
+
+    operation, params, expires = client.url_calls[0]
+    assert url.startswith("https://bucket.example/archive/a.pdf")
+    assert operation == "get_object"
+    assert params == {
+        "Bucket": "alpha-invoices",
+        "Key": "archive/a.pdf",
+        "ResponseContentType": "application/pdf",
+        "ResponseContentDisposition": "inline",
+    }
+    assert expires == 300

@@ -111,6 +111,10 @@ Resources:
                 - s3:GetObject
                 - s3:PutObject
               Resource: !Sub "arn:${AWS::Partition}:s3:::invoice-processor-alpha-${AWS::AccountId}-${AWS::Region}/inbox/*"
+            # Read-only, to sign five-minute view links for documents in the review queue.
+            - Effect: Allow
+              Action: s3:GetObject
+              Resource: !Sub "arn:${AWS::Partition}:s3:::invoice-processor-alpha-${AWS::AccountId}-${AWS::Region}/archive/*"
             - Effect: Allow
               Action: ssm:GetParameters
               Resource:

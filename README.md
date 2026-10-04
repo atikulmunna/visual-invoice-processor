@@ -24,7 +24,7 @@ Ledgerly is a private-alpha invoice processing application for a small, controll
 - **Low-cost AI:** extraction runs through OpenRouter on Gemini 2.5 Flash Lite at roughly USD 0.25 per 1,000 single-page documents, with hard caps on every call.
 - **Direct uploads:** the browser uploads straight to private S3 with a five-minute presigned policy; document bytes never pass through the web function.
 - **Batch uploads:** drop many files at once and follow each one through upload, extraction, and validation, with a plain reason for anything rejected and retry for failures.
-- **Validation and review:** schema checks, arithmetic checks on totals and line items, confidence scoring, and a review queue with approve, reject, and duplicate actions.
+- **Validation and review:** schema checks, arithmetic checks on totals and line items, and confidence scoring. Doubtful documents open in a review workspace with the original file beside an editable form, live checks, and keyboard shortcuts for approve, reject, and duplicate.
 - **Safe reprocessing:** idempotent jobs and duplicate-safe writes; the same file uploaded twice in one organization is caught, while two organizations can process identical files independently.
 - **Operations on a budget:** infrastructure as code, least-privilege IAM, secrets in SSM, seven-day log retention, and an annual AWS budget with alerts.
 
@@ -290,7 +290,7 @@ Follow [AWS_DEPLOYMENT.md](AWS_DEPLOYMENT.md) for the one-time AWS, SSM, Supabas
 - After sign-in, only same-site return paths are honored, so a crafted link cannot redirect anyone off the site.
 - Production secrets are stored as SSM `SecureString` parameters, and only the processing Lambda can read the model key.
 - Supabase browser roles have no direct access to operational tables.
-- The web Lambda can authorize inbox uploads but cannot process archive objects.
+- The web Lambda can authorize inbox uploads and read archived files to sign five-minute view links for reviewers, but it cannot write to or delete from the archive.
 - Never commit `.env`, tester credentials, database passwords, or model keys.
 
 ## Roadmap
@@ -299,7 +299,6 @@ Planned features, roughly in order. The product is heading two ways at once: VAT
 
 **Workspace**
 
-- A review workspace with the document beside an editable form, live arithmetic checks, and keyboard shortcuts
 - Records with filters, search, a detail view, and CSV and Excel export
 - An overview of spending trends, top vendors, and the review backlog
 

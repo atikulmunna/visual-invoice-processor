@@ -1,4 +1,10 @@
-import { useId, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode } from "react";
+import {
+  useId,
+  type ButtonHTMLAttributes,
+  type InputHTMLAttributes,
+  type ReactNode,
+  type SelectHTMLAttributes,
+} from "react";
 
 import { statusLabel, type Tone } from "../lib/labels";
 import { Icon, type IconName } from "./Icon";
@@ -139,6 +145,29 @@ export function TextField({ label, hint, error, className = "", ...rest }: TextF
           {error}
         </span>
       )}
+    </div>
+  );
+}
+
+interface SelectFieldProps extends SelectHTMLAttributes<HTMLSelectElement> {
+  label: string;
+  options: { value: string; label: string }[];
+}
+
+export function SelectField({ label, options, className = "", ...rest }: SelectFieldProps) {
+  const id = useId();
+  return (
+    <div className="field">
+      <label className="field-label" htmlFor={id}>
+        {label}
+      </label>
+      <select id={id} className={`input ${className}`.trim()} {...rest}>
+        {options.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
     </div>
   );
 }
