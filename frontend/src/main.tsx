@@ -5,7 +5,8 @@ import { createBrowserRouter, Navigate, RouterProvider } from "react-router";
 import { KitPage } from "./pages/KitPage";
 import { LoginPage } from "./pages/LoginPage";
 import { OverviewPage } from "./pages/OverviewPage";
-import { NotFoundPage, RecordsPage } from "./pages/PlaceholderPages";
+import { NotFoundPage } from "./pages/NotFoundPage";
+import { RecordsPage } from "./pages/RecordsPage";
 import { ReviewQueuePage } from "./pages/ReviewQueuePage";
 import { ReviewWorkspacePage } from "./pages/ReviewWorkspacePage";
 import { SettingsPage } from "./pages/SettingsPage";
@@ -18,6 +19,8 @@ import "./styles/shell.css";
 import "./styles/signin.css";
 import "./styles/upload.css";
 import "./styles/review.css";
+import "./styles/records.css";
+import "./styles/overview.css";
 
 const router = createBrowserRouter(
   [

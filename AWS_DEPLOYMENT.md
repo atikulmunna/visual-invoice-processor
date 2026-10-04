@@ -60,7 +60,7 @@ The generated password is printed once. Send it privately and do not store it in
 ## Verification
 
 1. Open the `DashboardUrl` CloudFormation output and verify `/health` without credentials.
-2. Verify the dashboard rejects missing and invalid credentials.
+2. Verify `/app` sends you to sign-in and `/api/me` rejects missing and invalid credentials.
 3. Sign in with a tester account and upload one small repository sample.
 4. Confirm `processing_jobs` reaches `STORED` or `REVIEW_REQUIRED`, the ledger record exists, and the source object moved from `inbox/` to `archive/`.
 5. Confirm S3 public access is blocked, lifecycle rules exist, both log groups retain seven days, and the annual budget is active.

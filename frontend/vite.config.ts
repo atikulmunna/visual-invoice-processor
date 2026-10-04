@@ -14,7 +14,6 @@ export default defineConfig({
       "/backlog": api,
       "/login": api,
       "/logout": api,
-      "/dashboard": api,
       "/assets/icon.png": api,
     },
   },

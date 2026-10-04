@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import logging
 import mimetypes
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Response
+from fastapi import Path as PathParam
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -19,12 +21,21 @@ from app.alpha_store import (
     AlphaStore,
     AlphaUser,
 )
+from app import records_store
 from app.config import Settings, load_dotenv
 from app.object_storage_service import ObjectStorageService
+from app.records_store import RecordFilters, SortKey
 from app.review_queue import load_review_item
 from app.web_session import set_session_cookie
 
 logger = logging.getLogger(__name__)
+
+CURRENCY_PATTERN = "^[A-Za-z]{3}$"
+# Matches the archive/ lifecycle rule in template.yaml.
+ARCHIVE_RETENTION_DAYS = 30
+EXPIRY_WARNING_DAYS = 7
+# Failed uploads can be retried only while their inbox copy exists (inbox/ lifecycle rule).
+INBOX_RETENTION = timedelta(days=1)
 
 
 class OrganizationUpdate(BaseModel):
@@ -100,6 +111,52 @@ def review_summary(item: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _parse_time(value: Any) -> datetime | None:
+    if isinstance(value, datetime):
+        return value
+    if not isinstance(value, str) or not value:
+        return None
+    parsed = datetime.fromisoformat(value)
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+def _retryable_now(job: dict[str, Any], now: datetime) -> bool:
+    authorized = _parse_time(job.get("authorized_at_utc"))
+    return job_view(job)["retryable"] and authorized is not None and now - authorized < INBOX_RETENTION
+
+
+def choose_spotlight(
+    *,
+    reviews: list[dict[str, Any]],
+    jobs: list[dict[str, Any]],
+    flagged_total: int,
+    now: datetime,
+) -> dict[str, Any] | None:
+    """The single most pressing thing for the overview, or None when all is clear.
+
+    Most urgent first: documents in review about to lose their source file, failed
+    uploads that can still be retried, the review backlog, then records stored with
+    a warning.
+    """
+    ages = [now - created for created in (_parse_time(item.get("created_at_utc")) for item in reviews) if created]
+    expiring = [age for age in ages if age.days >= ARCHIVE_RETENTION_DAYS - EXPIRY_WARNING_DAYS]
+    if expiring:
+        days_left = max(ARCHIVE_RETENTION_DAYS - max(expiring).days, 0)
+        return {"kind": "files_expiring", "count": len(expiring), "days_left": days_left}
+    failed = [job for job in jobs if _retryable_now(job, now)]
+    if failed:
+        return {"kind": "uploads_failed", "count": len(failed)}
+    if reviews:
+        return {"kind": "review_waiting", "count": len(reviews), "oldest_days": max((age.days for age in ages), default=0)}
+    if flagged_total:
+        return {"kind": "records_flagged", "count": flagged_total}
+    return None
+
+
 def _organization_member(principal: str | AlphaUser) -> AlphaUser:
     if not isinstance(principal, AlphaUser) or not principal.org_id:
         raise HTTPException(status_code=403, detail="No organization is available for this account")
@@ -116,8 +173,8 @@ def build_workspace_router(
     """pending_reviews(org_id) lists the review items still waiting, as the top bar counts them."""
     router = APIRouter(prefix="/api")
 
-    def review_document(source_key: str | None, org_id: str) -> dict[str, Any]:
-        """The flagged document's name, type, and a five-minute inline link, when it still exists."""
+    def source_document(source_key: str | None, org_id: str) -> dict[str, Any]:
+        """An uploaded document's name, type, and a five-minute inline link, when it still exists."""
         if not source_key:
             return {"name": None, "content_type": None, "url": None}
         job = AlphaStore(postgres_dsn or "").find_job_by_object_key(source_key, org_id=org_id)
@@ -129,7 +186,7 @@ def build_workspace_router(
             archived = storage.archive_key_for(source_key)
             url = storage.create_presigned_download(archived, content_type=content_type) if storage.object_exists(archived) else None
         except Exception:  # noqa: BLE001
-            logger.exception("Could not prepare a link for review document %s", source_key)
+            logger.exception("Could not prepare a link for document %s", source_key)
             url = None
         return {"name": name, "content_type": content_type, "url": url}
 
@@ -206,10 +263,88 @@ def build_workspace_router(
             "reason_codes": list(item.get("reason_codes") or []),
             "violation_codes": [v.get("code") for v in violations if isinstance(v, dict) and v.get("code")],
             "record": metadata.get("normalized_record") or {},
-            "document": review_document(
+            "document": source_document(
                 metadata.get("source_file_id") or metadata.get("drive_file_id"), member.org_id or ""
             ),
         }
+
+    @router.get("/records")
+    def records(
+        q: str | None = Query(default=None, max_length=100),
+        currency: str | None = Query(default=None, pattern=CURRENCY_PATTERN),
+        vendor: str | None = Query(default=None, max_length=200),
+        date_from: date | None = Query(default=None, alias="from"),
+        date_to: date | None = Query(default=None, alias="to"),
+        flagged: bool = False,
+        reviewed: bool = False,
+        sort: SortKey = "added",
+        order: str = Query(default="desc", pattern="^(asc|desc)$"),
+        page: int = Query(default=1, ge=1, le=10_000),
+        page_size: int = Query(default=25, ge=1, le=100),
+        principal: str | AlphaUser = Depends(require_auth),
+    ) -> dict[str, Any]:
+        member = _organization_member(principal)
+        filters = RecordFilters(
+            query=q,
+            currency=currency,
+            vendor=vendor,
+            date_from=date_from,
+            date_to=date_to,
+            flagged=flagged,
+            reviewed=reviewed,
+        )
+        result = records_store.search_records(
+            postgres_dsn or "",
+            org_id=member.org_id or "",
+            filters=filters,
+            sort=sort,
+            descending=order == "desc",
+            page=page,
+            page_size=page_size,
+        )
+        return {**result, "page": page, "page_size": page_size}
+
+    # Declared before /records/{record_id} so "facets" is never read as an id.
+    @router.get("/records/facets")
+    def record_facets(principal: str | AlphaUser = Depends(require_auth)) -> dict[str, Any]:
+        member = _organization_member(principal)
+        return records_store.record_facets(postgres_dsn or "", org_id=member.org_id or "")
+
+    @router.get("/records/{record_id}")
+    def record_detail(
+        record_id: int = PathParam(ge=1, le=2**63 - 1),
+        principal: str | AlphaUser = Depends(require_auth),
+    ) -> dict[str, Any]:
+        member = _organization_member(principal)
+        found = records_store.get_record(postgres_dsn or "", org_id=member.org_id or "", record_id=record_id)
+        if found is None:
+            raise HTTPException(status_code=404, detail="Record not found")
+        source_key = found.pop("source_key")
+        return {**found, "document": source_document(source_key, member.org_id or "")}
+
+    @router.get("/overview")
+    def overview(
+        currency: str | None = Query(default=None, pattern=CURRENCY_PATTERN),
+        principal: str | AlphaUser = Depends(require_auth),
+    ) -> dict[str, Any]:
+        member = _organization_member(principal)
+        org_id = member.org_id or ""
+        store = AlphaStore(postgres_dsn or "")
+        now = _utc_now()
+        data = records_store.overview(
+            postgres_dsn or "",
+            org_id=org_id,
+            currency=currency,
+            base_currency=store.get_organization(org_id).base_currency,
+            today=now.date(),
+        )
+        data["spotlight"] = choose_spotlight(
+            reviews=pending_reviews(org_id),
+            jobs=store.list_jobs(org_id=org_id, limit=20),
+            flagged_total=data["flagged_total"],
+            now=now,
+        )
+        return data
 
     @router.put("/organization")
     def update_organization(

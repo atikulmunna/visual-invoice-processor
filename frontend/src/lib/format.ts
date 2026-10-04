@@ -12,11 +12,16 @@ function amountFormat(locale: string): Intl.NumberFormat {
   return format;
 }
 
+/** The digits of an amount, grouped the way its currency is usually written, with two decimals. */
+export function formatAmount(amount: number, currency?: string | null): string {
+  const code = currency?.trim().toUpperCase();
+  return amountFormat(code && LAKH_GROUPED.has(code) ? "en-IN" : "en-US").format(amount);
+}
+
 /** Accounting style: always two decimals, prefixed with the ISO code when known. */
 export function formatMoney(amount: number, currency?: string | null): string {
   const code = currency?.trim().toUpperCase() || null;
-  const locale = code && LAKH_GROUPED.has(code) ? "en-IN" : "en-US";
-  const digits = amountFormat(locale).format(amount);
+  const digits = formatAmount(amount, code);
   return code ? `${code} ${digits}` : digits;
 }
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -8,6 +9,7 @@ from fastapi.testclient import TestClient
 
 from app.alpha_store import AlphaAuthenticationError, AlphaUser, Organization
 from app.monitoring_api import create_monitoring_app
+from app.records_store import RecordFilters
 
 PASSWORD = "A-strong-alpha-password"
 ORG_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
@@ -402,3 +404,182 @@ def test_invalid_corrections_get_a_readable_message(review_client: TestClient) -
 
     assert response.status_code == 400
     assert response.json()["detail"] == "line item 1 quantity: Input should be greater than 0"
+
+
+class _RecordsStore(_ReviewStore):
+    jobs: list[dict[str, Any]] = []
+
+    def list_jobs(self, *, org_id: str, limit: int = 20) -> list[dict[str, Any]]:
+        assert org_id == ORG_ID
+        return _RecordsStore.jobs
+
+
+@pytest.fixture
+def records_client(review_client: TestClient, monkeypatch: pytest.MonkeyPatch) -> tuple[TestClient, list]:
+    """The review client plus stand-ins for the records queries, which note each call."""
+    calls: list[tuple[str, dict[str, Any]]] = []
+
+    def search_records(dsn: str, **kwargs: Any) -> dict[str, Any]:
+        calls.append(("search", kwargs))
+        return {"items": [{"id": 7, "vendor_name": "Acme"}], "total": 31}
+
+    def record_facets(dsn: str, *, org_id: str) -> dict[str, Any]:
+        calls.append(("facets", {"org_id": org_id}))
+        return {"currencies": [{"code": "BDT", "count": 3}], "vendors": ["Acme"]}
+
+    def get_record(dsn: str, *, org_id: str, record_id: int) -> dict[str, Any] | None:
+        if org_id != ORG_ID or record_id != 7:
+            return None
+        return {"id": 7, "added_at": "2026-10-01T00:00:00+00:00", "source_key": "inbox/u/j/receipt.pdf",
+                "record": {"vendor_name": "Acme"}, "flagged": False, "reviewed": True}
+
+    def overview(dsn: str, **kwargs: Any) -> dict[str, Any]:
+        calls.append(("overview", kwargs))
+        return {"currency": "BDT", "currencies": ["BDT"], "records_total": 3, "flagged_total": 1,
+                "months": [], "top_vendors": []}
+
+    fakes = {"search_records": search_records, "record_facets": record_facets, "get_record": get_record,
+             "overview": overview}
+    for name, fake in fakes.items():
+        monkeypatch.setattr(f"app.workspace_api.records_store.{name}", fake)
+    monkeypatch.setattr("app.monitoring_api.AlphaStore", _RecordsStore)
+    monkeypatch.setattr("app.workspace_api.AlphaStore", _RecordsStore)
+    monkeypatch.setattr("app.workspace_api._utc_now", lambda: datetime(2026, 10, 5, tzinfo=timezone.utc))
+    _RecordsStore.jobs = []
+    return review_client, calls
+
+
+def test_records_pass_filters_sort_and_page_for_the_organization(records_client: tuple[TestClient, list]) -> None:
+    client, calls = records_client
+
+    response = client.get(
+        "/api/records?q=acme&currency=usd&vendor=Acme&from=2026-09-01&to=2026-09-30&flagged=true"
+        "&reviewed=true&sort=total&order=asc&page=2&page_size=10",
+        auth=("member.two", PASSWORD),
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"items": [{"id": 7, "vendor_name": "Acme"}], "total": 31, "page": 2, "page_size": 10}
+    assert calls == [("search", {
+        "org_id": ORG_ID,
+        "filters": RecordFilters(query="acme", currency="usd", vendor="Acme", date_from=date(2026, 9, 1),
+                                 date_to=date(2026, 9, 30), flagged=True, reviewed=True),
+        "sort": "total",
+        "descending": False,
+        "page": 2,
+        "page_size": 10,
+    })]
+
+
+def test_records_default_to_the_newest_first_page(records_client: tuple[TestClient, list]) -> None:
+    client, calls = records_client
+
+    client.get("/api/records", auth=("owner.one", PASSWORD))
+
+    assert calls[0][1] == {"org_id": ORG_ID, "filters": RecordFilters(), "sort": "added", "descending": True,
+                           "page": 1, "page_size": 25}
+
+
+@pytest.mark.parametrize(
+    "query",
+    ["currency=US", "currency=us1", "sort=processed_at_utc", "order=sideways", "page=0", "page_size=101",
+     "from=yesterday", "q=" + "x" * 101],
+)
+def test_records_reject_invalid_parameters(records_client: tuple[TestClient, list], query: str) -> None:
+    client, calls = records_client
+
+    assert client.get(f"/api/records?{query}", auth=("owner.one", PASSWORD)).status_code == 422
+    assert calls == []
+
+
+def test_records_require_a_session(records_client: tuple[TestClient, list]) -> None:
+    client, calls = records_client
+
+    assert client.get("/api/records").status_code == 401
+    assert client.get("/api/overview").status_code == 401
+    assert calls == []
+
+
+def test_record_facets_are_scoped_to_the_organization(records_client: tuple[TestClient, list]) -> None:
+    client, calls = records_client
+
+    response = client.get("/api/records/facets", auth=("owner.one", PASSWORD))
+
+    assert response.json() == {"currencies": [{"code": "BDT", "count": 3}], "vendors": ["Acme"]}
+    assert calls == [("facets", {"org_id": ORG_ID})]
+
+
+def test_record_detail_has_a_document_link_but_not_the_storage_key(records_client: tuple[TestClient, list]) -> None:
+    client, _ = records_client
+
+    body = client.get("/api/records/7", auth=("owner.one", PASSWORD)).json()
+
+    assert body == {
+        "id": 7,
+        "added_at": "2026-10-01T00:00:00+00:00",
+        "record": {"vendor_name": "Acme"},
+        "flagged": False,
+        "reviewed": True,
+        "document": {
+            "name": "Receipt-2734.pdf",
+            "content_type": "application/pdf",
+            "url": "https://bucket.example/archive/u/j/receipt.pdf?type=application/pdf",
+        },
+    }
+
+
+def test_unknown_or_malformed_record_ids(records_client: tuple[TestClient, list]) -> None:
+    client, _ = records_client
+
+    assert client.get("/api/records/8", auth=("owner.one", PASSWORD)).status_code == 404
+    assert client.get("/api/records/0", auth=("owner.one", PASSWORD)).status_code == 422
+    assert client.get("/api/records/abc", auth=("owner.one", PASSWORD)).status_code == 422
+    assert client.get(f"/api/records/{2**63}", auth=("owner.one", PASSWORD)).status_code == 422
+
+
+def test_overview_uses_the_base_currency_and_adds_the_spotlight(records_client: tuple[TestClient, list]) -> None:
+    client, calls = records_client
+
+    response = client.get("/api/overview", auth=("owner.one", PASSWORD))
+    switched = client.get("/api/overview?currency=usd", auth=("owner.one", PASSWORD))
+
+    assert response.status_code == 200
+    assert calls[0] == ("overview", {"org_id": ORG_ID, "currency": None, "base_currency": "BDT",
+                                     "today": date(2026, 10, 5)})
+    # The two waiting review items outrank the flagged record.
+    assert response.json()["spotlight"] == {"kind": "review_waiting", "count": 2, "oldest_days": 0}
+    assert switched.status_code == 200
+    assert calls[1][1]["currency"] == "usd"
+    assert client.get("/api/overview?currency=dollars", auth=("owner.one", PASSWORD)).status_code == 422
+
+
+NOW = datetime(2026, 10, 5, 12, tzinfo=timezone.utc)
+
+
+def _review(days_ago: float) -> dict[str, Any]:
+    return {"created_at_utc": (NOW - timedelta(days=days_ago)).isoformat()}
+
+
+def _failed(hours_ago: float, attempts: int = 1) -> dict[str, Any]:
+    return _job(status="FAILED", attempts=attempts, authorized_at_utc=NOW - timedelta(hours=hours_ago), result={})
+
+
+@pytest.mark.parametrize(
+    ("reviews", "jobs", "flagged", "expected"),
+    [
+        ([_review(1), _review(25)], [_failed(1)], 4, {"kind": "files_expiring", "count": 1, "days_left": 5}),
+        ([_review(40)], [], 0, {"kind": "files_expiring", "count": 1, "days_left": 0}),
+        ([_review(3)], [_failed(1), _failed(2)], 4, {"kind": "uploads_failed", "count": 2}),
+        ([_review(3), _review(1)], [_failed(30)], 4, {"kind": "review_waiting", "count": 2, "oldest_days": 3}),
+        ([], [_failed(1, attempts=3)], 4, {"kind": "records_flagged", "count": 4}),
+        ([], [_job()], 0, None),
+    ],
+    ids=["expiring-first", "already-expired", "failed-uploads", "stale-failures-ignored",
+         "exhausted-retries-ignored", "all-clear"],
+)
+def test_spotlight_picks_the_most_pressing_item(
+    reviews: list[dict[str, Any]], jobs: list[dict[str, Any]], flagged: int, expected: dict[str, Any] | None
+) -> None:
+    from app.workspace_api import choose_spotlight
+
+    assert choose_spotlight(reviews=reviews, jobs=jobs, flagged_total=flagged, now=NOW) == expected

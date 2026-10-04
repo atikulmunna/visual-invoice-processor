@@ -116,19 +116,6 @@ def test_presign_and_owner_scoped_status(monkeypatch: Any) -> None:
     assert status.json()["status"] == "AUTHORIZED"
 
 
-def test_alpha_dashboard_shows_user_quota_and_result_workspace(monkeypatch: Any) -> None:
-    _configure(monkeypatch)
-    client = TestClient(create_monitoring_app(postgres_dsn="postgresql://example"))
-
-    response = client.get("/dashboard", auth=("tester.one", "A-strong-alpha-password"))
-
-    assert response.status_code == 200
-    assert '<div class="alpha-user">tester.one</div>' in response.text
-    assert '<span id="documentsRemaining">17</span>' in response.text
-    assert 'id="resultPanel"' in response.text
-    assert "terminalJobStatuses" in response.text
-
-
 def test_alpha_login_creates_secure_session_and_logout_clears_it(monkeypatch: Any) -> None:
     _configure(monkeypatch)
     _FakeAlphaStore.sessions.clear()
@@ -140,10 +127,9 @@ def test_alpha_login_creates_secure_session_and_logout_clears_it(monkeypatch: An
     root = client.get("/", follow_redirects=False)
     login_page = client.get("/login", follow_redirects=False)
     login = client.post("/api/session", json={"username": "tester.one", "password": PASSWORD})
-    dashboard = client.get("/dashboard")
     me = client.get("/api/me")
     logout = client.post("/logout", follow_redirects=False)
-    dashboard_after_logout = client.get("/dashboard")
+    me_after_logout = client.get("/api/me")
 
     assert root.status_code == 307
     assert root.headers["location"] == "/login"
@@ -156,13 +142,11 @@ def test_alpha_login_creates_secure_session_and_logout_clears_it(monkeypatch: An
     assert "httponly" in cookie
     assert "secure" in cookie
     assert "samesite=lax" in cookie
-    assert dashboard.status_code == 200
-    assert "tester.one" in dashboard.text
     assert me.json()["username"] == "tester.one"
     assert logout.status_code == 303
     assert logout.headers["location"] == "/login"
     assert "invoice_alpha_session=" in logout.headers["set-cookie"]
-    assert dashboard_after_logout.status_code == 401
+    assert me_after_logout.status_code == 401
 
 
 def test_sign_in_rejects_wrong_and_oversized_credentials(monkeypatch: Any) -> None:
@@ -309,30 +293,6 @@ def test_operator_logs_are_hidden_from_organizations(tmp_path: Path, monkeypatch
     assert client.get("/backlog", auth=one).json()["attention_total"] == 0
 
 
-def test_dashboard_data_is_scoped_to_the_active_organization(tmp_path: Path, monkeypatch: Any) -> None:
-    _configure(monkeypatch)
-    seen: list[tuple[str, str | None]] = []
-
-    def _fake_query(dsn: str | None, *, limit: int, org_id: str | None = None) -> dict[str, Any]:
-        seen.append(("records", org_id))
-        return {"kpis": {}, "recent_records": []}
-
-    def _fake_hashes(dsn: str | None, *, org_id: str | None = None) -> set[str]:
-        seen.append(("hashes", org_id))
-        return set()
-
-    monkeypatch.setattr("app.monitoring_api._query_dashboard_data", _fake_query)
-    monkeypatch.setattr("app.monitoring_api._resolved_file_hashes", _fake_hashes)
-    client = TestClient(
-        create_monitoring_app(postgres_dsn="postgresql://example", review_queue_dir=tmp_path / "review_queue")
-    )
-
-    response = client.get("/dashboard/data", auth=("tester.two", PASSWORD))
-
-    assert response.status_code == 200
-    assert seen == [("records", ORG_TWO), ("hashes", ORG_TWO)]
-
-
 def test_account_without_organization_is_refused(tmp_path: Path, monkeypatch: Any) -> None:
     _configure(monkeypatch)
     monkeypatch.setitem(
@@ -346,7 +306,7 @@ def test_account_without_organization_is_refused(tmp_path: Path, monkeypatch: An
     auth = ("tester.orphan", PASSWORD)
 
     assert client.get("/review-items", auth=auth).status_code == 403
-    assert client.get("/dashboard/data", auth=auth).status_code == 403
+    assert client.get("/api/records", auth=auth).status_code == 403
     assert client.post(
         "/uploads/presign",
         auth=auth,

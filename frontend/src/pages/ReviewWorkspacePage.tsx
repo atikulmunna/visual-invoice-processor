@@ -10,9 +10,12 @@ import { api, ApiError } from "../lib/api";
 import { formatMoney } from "../lib/format";
 import { reasonLabel, statusLabel } from "../lib/labels";
 import {
+  AMOUNT_LABELS,
   checkForm,
+  DOCUMENT_TYPE_OPTIONS,
   formFromRecord,
   nextAfter,
+  PAYMENT_METHOD_OPTIONS,
   recordFromForm,
   type AmountField,
   type Issue,
@@ -25,23 +28,6 @@ import { useSession } from "../shell/session";
 
 type Dismissal = "reject" | "duplicate";
 
-const DOCUMENT_TYPES = [
-  { value: "invoice", label: "Invoice" },
-  { value: "receipt", label: "Receipt" },
-];
-const PAYMENT_METHODS = [
-  { value: "unknown", label: "Not shown" },
-  { value: "card", label: "Card" },
-  { value: "cash", label: "Cash" },
-  { value: "bank", label: "Bank transfer" },
-];
-const AMOUNT_LABELS: Record<AmountField, string> = {
-  subtotal: "Subtotal",
-  tax_amount: "Tax or VAT",
-  shipping_amount: "Shipping",
-  discount_amount: "Discount",
-  total_amount: "Total",
-};
 const DISMISSALS: Record<Dismissal, { title: string; action: string; done: string; text: string }> = {
   reject: {
     title: "Reject this document?",
@@ -104,9 +90,9 @@ function DetailFields({ form, issues, set }: FieldsProps) {
         <TextField label="Vendor tax ID or BIN" name="vendor_tax_id" value={form.vendor_tax_id}
           onChange={set("vendor_tax_id")} autoComplete="off" />
         <SelectField label="Document type" name="document_type" value={form.document_type}
-          onChange={set("document_type")} options={DOCUMENT_TYPES} />
+          onChange={set("document_type")} options={DOCUMENT_TYPE_OPTIONS} />
         <SelectField label="Payment method" name="payment_method" value={form.payment_method}
-          onChange={set("payment_method")} options={PAYMENT_METHODS} />
+          onChange={set("payment_method")} options={PAYMENT_METHOD_OPTIONS} />
       </div>
     </Card>
   );

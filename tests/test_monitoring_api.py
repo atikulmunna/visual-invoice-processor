@@ -6,9 +6,7 @@ from fastapi.testclient import TestClient
 
 from app.monitoring_api import (
     _active_dead_letters,
-    _activity_feed_items,
     _active_review_items,
-    _format_currency_total_display,
     _review_history_items,
     create_monitoring_app,
 )
@@ -73,8 +71,7 @@ def test_monitoring_endpoints_expose_stats_backlog_and_failures(tmp_path: Path, 
     failures = client.get("/failures")
     review_items = client.get("/review-items")
     review_history = client.get("/review-history")
-    dashboard = client.get("/dashboard")
-    dashboard_data = client.get("/dashboard/data")
+    dashboard = client.get("/dashboard", follow_redirects=False)
 
     assert icon.status_code == 200
     assert icon.headers["content-type"] == "image/png"
@@ -82,7 +79,7 @@ def test_monitoring_endpoints_expose_stats_backlog_and_failures(tmp_path: Path, 
     assert health.status_code == 200
     assert health.json()["status"] == "ok"
     assert root.status_code == 307
-    assert root.headers["location"] == "/dashboard"
+    assert root.headers["location"] == "/app/overview"
     assert stats.status_code == 200
     assert stats.json()["documents_processed_total"] == 3
     assert stats.json()["dead_letter_total"] == 2
@@ -96,28 +93,11 @@ def test_monitoring_endpoints_expose_stats_backlog_and_failures(tmp_path: Path, 
     assert review_items.json()["items"][0]["vendor_name"] == "Acme"
     assert review_history.status_code == 200
     assert review_history.json()["count"] == 0
-    assert dashboard.status_code == 200
-    assert "Invoice Operations Dashboard" in dashboard.text
-    assert "light palette supplied by the product owner" in dashboard.text
-    assert "--ink-950: #f7f4ee" in dashboard.text
-    assert '<link rel="icon" type="image/png" href="/assets/icon.png" />' in dashboard.text
-    assert '<span class="brand-mark"><img src="/assets/icon.png" alt="" /></span>' in dashboard.text
-    assert 'id="uploadInput"' in dashboard.text
-    assert 'id="activityFeed"' in dashboard.text
-    assert 'id="recentSearch"' in dashboard.text
-    assert 'id="reviewSearch"' in dashboard.text
-    assert 'id="historySearch"' in dashboard.text
-    assert 'id="dropZone"' in dashboard.text
-    assert 'id="resultContent"' in dashboard.text
-    assert "waitForJob" in dashboard.text
-    assert "directly to encrypted S3" in dashboard.text
-    assert dashboard_data.status_code == 200
-    assert "kpis" in dashboard_data.json()
-    assert "activity_feed" in dashboard_data.json()
-    assert "currency_totals" in dashboard_data.json()
+    assert dashboard.status_code == 308
+    assert dashboard.headers["location"] == "/app/overview"
 
 
-def test_dashboard_routes_require_basic_auth_when_configured(tmp_path: Path, monkeypatch) -> None:
+def test_operator_routes_require_basic_auth_when_configured(tmp_path: Path, monkeypatch) -> None:
     queue = tmp_path / "review_queue"
     queue.mkdir(parents=True, exist_ok=True)
     monkeypatch.setenv("DASHBOARD_BASIC_AUTH_USERNAME", "admin")
@@ -127,12 +107,12 @@ def test_dashboard_routes_require_basic_auth_when_configured(tmp_path: Path, mon
     client = TestClient(app)
 
     health = client.get("/health")
-    dashboard_unauth = client.get("/dashboard")
-    dashboard_auth = client.get("/dashboard", auth=("admin", "secret-pass"))
+    stats_unauth = client.get("/stats")
+    stats_auth = client.get("/stats", auth=("admin", "secret-pass"))
 
     assert health.status_code == 200
-    assert dashboard_unauth.status_code == 401
-    assert dashboard_auth.status_code == 200
+    assert stats_unauth.status_code == 401
+    assert stats_auth.status_code == 200
 
 
 def test_active_backlog_filters_resolved_hashes(tmp_path: Path) -> None:
@@ -318,81 +298,3 @@ def test_review_action_endpoint_supports_duplicate_and_reject(tmp_path: Path, mo
         ("doc-3", "RESOLVED_DUPLICATE_MANUAL", "already stored"),
         ("doc-3", "REJECTED", "invalid document"),
     ]
-
-
-def test_activity_feed_combines_stored_review_resolved_and_failed_events() -> None:
-    events = _activity_feed_items(
-        recent_records=[
-            {
-                "processed_at_utc": "2026-03-22T10:00:00+00:00",
-                "document_id": "doc-stored",
-                "drive_file_id": "archive/a.pdf",
-                "vendor_name": "Acme",
-                "currency": "BDT",
-                "total_amount": 120.0,
-                "invoice_number": "INV-1",
-                "used_provider": "mistral",
-                "needs_review": False,
-            }
-        ],
-        review_items=[
-            {
-                "created_at_utc": "2026-03-22T10:05:00+00:00",
-                "document_id": "doc-review",
-                "source_file_id": "inbox/b.pdf",
-                "vendor_name": "Beta",
-                "currency": "BDT",
-                "total_amount": 88.0,
-                "invoice_number": "INV-2",
-                "used_provider": "mistral",
-                "reason_codes": ["low_confidence"],
-            }
-        ],
-        review_history=[
-            {
-                "resolved_at_utc": "2026-03-22T10:10:00+00:00",
-                "document_id": "doc-resolved",
-                "source_file_id": "inbox/c.pdf",
-                "vendor_name": "Gamma",
-                "currency": "BDT",
-                "total_amount": 77.0,
-                "invoice_number": "INV-3",
-                "used_provider": "mistral",
-                "status": "RESOLVED_STORED",
-                "resolution_note": "approved",
-            }
-        ],
-        dead_letters=[
-            {
-                "recorded_at_utc": "2026-03-22T10:15:00+00:00",
-                "document_id": "doc-failed",
-                "drive_file_id": "inbox/d.pdf",
-                "status": "FAILED",
-                "error_message": "OCR timeout",
-                "used_provider": "mistral",
-            }
-        ],
-        limit=10,
-    )
-
-    assert [event["status"] for event in events] == [
-        "FAILED",
-        "RESOLVED_STORED",
-        "REVIEW_REQUIRED",
-        "STORED",
-    ]
-    assert events[0]["message"] == "OCR timeout"
-    assert events[1]["message"] == "approved"
-    assert events[2]["message"] == "low_confidence"
-    assert events[3]["message"] == "Stored in ledger"
-
-
-def test_format_currency_total_display_handles_single_and_multiple_currencies() -> None:
-    assert _format_currency_total_display([]) == "0"
-    assert _format_currency_total_display([{"currency": "BDT", "total_amount_sum": 1200.0}]) == "BDT 1,200.00"
-    assert _format_currency_total_display(
-        [
-            {"currency": "BDT", "total_amount_sum": 1200.0},
-            {"currency": "USD", "total_amount_sum": 15.0},
-        ]
-    ) == "2 currencies"
