@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { formatDate, formatMoney, initials } from "./format";
+import { formatDate, formatMoney, formatRelativeTime, initials } from "./format";
 
 describe("formatMoney", () => {
   it("groups taka and rupee amounts in lakhs", () => {
@@ -36,5 +36,22 @@ describe("initials", () => {
   it("builds two-letter initials from usernames", () => {
     expect(initials("tester.one")).toBe("TO");
     expect(initials("munna")).toBe("MU");
+  });
+});
+
+describe("formatRelativeTime", () => {
+  const now = Date.parse("2026-10-04T12:00:00Z");
+
+  it("describes recent moments in words", () => {
+    expect(formatRelativeTime("2026-10-04T11:59:40Z", now)).toBe("just now");
+    expect(formatRelativeTime("2026-10-04T11:57:00Z", now)).toBe("3 minutes ago");
+    expect(formatRelativeTime("2026-10-04T10:00:00Z", now)).toBe("2 hours ago");
+    expect(formatRelativeTime("2026-10-03T12:00:00Z", now)).toBe("yesterday");
+  });
+
+  it("falls back to a date after a week and handles missing values", () => {
+    expect(formatRelativeTime("2026-09-01T09:00:00Z", now)).toBe("1 Sept 2026");
+    expect(formatRelativeTime(null, now)).toBeNull();
+    expect(formatRelativeTime("garbage", now)).toBeNull();
   });
 });

@@ -160,3 +160,131 @@ def test_existing_api_routes_are_not_shadowed(tmp_path: Path, monkeypatch: pytes
 
     assert response.status_code == 200
     assert "review_queue_total" in response.json()
+
+
+def _job(**overrides: Any) -> dict[str, Any]:
+    job: dict[str, Any] = {
+        "id": "33333333-3333-3333-3333-333333333333",
+        "org_id": ORG_ID,
+        "original_name": "invoice.pdf",
+        "content_type": "application/pdf",
+        "declared_size": 2048,
+        "status": "STORED",
+        "attempts": 1,
+        "page_count": 1,
+        "result": {
+            "record": {"vendor_name": "RYANS", "invoice_date": "2022-05-17", "total_amount": 1954.0,
+                       "currency": "BDT", "currency_assumed": True},
+        },
+        "error_code": None,
+        "error_message": None,
+        "authorized_at_utc": None,
+        "completed_at_utc": None,
+    }
+    job.update(overrides)
+    return job
+
+
+def test_job_view_summarizes_a_stored_record() -> None:
+    from app.workspace_api import job_view
+
+    view = job_view(_job())
+
+    assert view["summary"] == {
+        "vendor_name": "RYANS",
+        "invoice_date": "2022-05-17",
+        "total_amount": 1954.0,
+        "currency": "BDT",
+        "currency_assumed": True,
+    }
+    assert view["retryable"] is False
+    assert view["reason_codes"] == []
+
+
+def test_job_view_keeps_review_reasons_and_hides_failure_details() -> None:
+    from app.workspace_api import job_view
+
+    review = job_view(_job(status="REVIEW_REQUIRED", result={"record": {"vendor_name": None}, "reason_codes": ["missing_vendor"]}))
+    failed = job_view(_job(status="FAILED", result={}, error_code="provider_request_failed",
+                           error_message="OpenRouter failed with status 402: {...}"))
+    exhausted = job_view(_job(status="FAILED", attempts=3, result={}))
+    rejected = job_view(_job(status="REJECTED", result={}, error_code="page_limit_exceeded",
+                             error_message="PDFs may contain at most 5 pages"))
+    duplicate = job_view(_job(status="DUPLICATE", result={"status": "SKIPPED_DUPLICATE"}))
+
+    assert review["reason_codes"] == ["missing_vendor"]
+    assert failed["error_code"] == "provider_request_failed"
+    assert failed["error_message"] is None
+    assert failed["retryable"] is True
+    assert exhausted["retryable"] is False
+    assert rejected["error_message"] == "PDFs may contain at most 5 pages"
+    assert duplicate["summary"] is None
+
+
+class _JobStore(_FakeAlphaStore):
+    seen: dict[str, Any] = {}
+
+    def list_jobs(self, *, org_id: str, limit: int = 20) -> list[dict[str, Any]]:
+        _JobStore.seen = {"org_id": org_id, "limit": limit}
+        return [_job()]
+
+    def get_job(self, job_id: str, *, org_id: str) -> dict[str, Any]:
+        from app.alpha_store import AlphaNotFoundError
+
+        if job_id != _job()["id"] or org_id != ORG_ID:
+            raise AlphaNotFoundError("Processing job not found")
+        return _job()
+
+
+@pytest.fixture
+def jobs_client(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> TestClient:
+    monkeypatch.setenv("ALPHA_AUTH_ENABLED", "true")
+    monkeypatch.setattr("app.monitoring_api.AlphaStore", _JobStore)
+    monkeypatch.setattr("app.workspace_api.AlphaStore", _JobStore)
+    return TestClient(create_monitoring_app(postgres_dsn="postgresql://example", frontend_dist=tmp_path / "none"))
+
+
+def test_recent_jobs_are_listed_for_the_signed_in_organization(jobs_client: TestClient) -> None:
+    response = jobs_client.get("/api/jobs?limit=5", auth=("owner.one", PASSWORD))
+
+    assert response.status_code == 200
+    assert [job["name"] for job in response.json()["jobs"]] == ["invoice.pdf"]
+    assert _JobStore.seen == {"org_id": ORG_ID, "limit": 5}
+    assert jobs_client.get("/api/jobs?limit=0", auth=("owner.one", PASSWORD)).status_code == 422
+    assert jobs_client.get("/api/jobs?limit=51", auth=("owner.one", PASSWORD)).status_code == 422
+
+
+def test_single_job_status_is_scoped_to_the_organization(jobs_client: TestClient) -> None:
+    found = jobs_client.get(f"/api/jobs/{_job()['id']}", auth=("owner.one", PASSWORD))
+    missing = jobs_client.get("/api/jobs/44444444-4444-4444-4444-444444444444", auth=("owner.one", PASSWORD))
+
+    assert found.status_code == 200
+    assert found.json()["status"] == "STORED"
+    assert missing.status_code == 404
+
+
+def test_jobs_require_an_organization(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.delenv("ALPHA_AUTH_ENABLED", raising=False)
+    monkeypatch.delenv("DASHBOARD_BASIC_AUTH_USERNAME", raising=False)
+    monkeypatch.delenv("DASHBOARD_BASIC_AUTH_PASSWORD", raising=False)
+    client = TestClient(create_monitoring_app(frontend_dist=tmp_path / "none"))
+
+    assert client.get("/api/jobs").status_code == 403
+
+
+def test_upload_limits_come_from_configuration(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("INGESTION_BACKEND", "s3")
+    monkeypatch.setenv("S3_BUCKET_NAME", "alpha-invoices")
+    monkeypatch.setenv("LEDGER_BACKEND", "postgres")
+    monkeypatch.setenv("POSTGRES_DSN", "postgresql://example")
+    monkeypatch.setenv("MAX_UPLOAD_BYTES", "1048576")
+    monkeypatch.setenv("MAX_PDF_PAGES", "3")
+    monkeypatch.setenv("ALLOWED_MIME_TYPES", "application/pdf,image/png")
+
+    response = client.get("/api/upload-limits", auth=("owner.one", PASSWORD))
+
+    assert response.json() == {
+        "max_upload_bytes": 1048576,
+        "max_pdf_pages": 3,
+        "allowed_types": ["application/pdf", "image/png"],
+    }

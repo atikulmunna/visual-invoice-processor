@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { currencyNote, reasonLabel, statusLabel } from "./labels";
+import { currencyNote, processingErrorLabel, reasonLabel, statusLabel } from "./labels";
 
 describe("statusLabel", () => {
   it("maps pipeline statuses to plain language and a tone", () => {
@@ -31,5 +31,19 @@ describe("currencyNote", () => {
     expect(currencyNote(true, "BDT")).toBe("Not shown on the document; assumed BDT, your base currency");
     expect(currencyNote(false, "BDT")).toBeNull();
     expect(currencyNote(undefined, "USD")).toBeNull();
+  });
+});
+
+describe("processingErrorLabel", () => {
+  it("explains known problems with the file", () => {
+    expect(processingErrorLabel("page_limit_exceeded")).toBe("The PDF has more pages than allowed.");
+  });
+
+  it("uses a rejection's own message and a generic line otherwise", () => {
+    expect(processingErrorLabel("something_new", "PDFs may contain at most 5 pages")).toBe(
+      "PDFs may contain at most 5 pages",
+    );
+    expect(processingErrorLabel("provider_request_failed", null)).toBe("Processing failed. Try again.");
+    expect(processingErrorLabel(null)).toBe("Processing failed. Try again.");
   });
 });

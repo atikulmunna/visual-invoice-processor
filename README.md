@@ -23,6 +23,7 @@ Ledgerly is a private-alpha invoice processing application for a small, controll
 - **Honest extraction:** a missing vendor or invoice date is never guessed. The document goes to review with a plain reason, and approval stays blocked until a person fills the gap.
 - **Low-cost AI:** extraction runs through OpenRouter on Gemini 2.5 Flash Lite at roughly USD 0.25 per 1,000 single-page documents, with hard caps on every call.
 - **Direct uploads:** the browser uploads straight to private S3 with a five-minute presigned policy; document bytes never pass through the web function.
+- **Batch uploads:** drop many files at once and follow each one through upload, extraction, and validation, with a plain reason for anything rejected and retry for failures.
 - **Validation and review:** schema checks, arithmetic checks on totals and line items, confidence scoring, and a review queue with approve, reject, and duplicate actions.
 - **Safe reprocessing:** idempotent jobs and duplicate-safe writes; the same file uploaded twice in one organization is caught, while two organizations can process identical files independently.
 - **Operations on a budget:** infrastructure as code, least-privilege IAM, secrets in SSM, seven-day log retention, and an annual AWS budget with alerts.
@@ -298,7 +299,6 @@ Planned features, roughly in order. The product is heading two ways at once: VAT
 
 **Workspace**
 
-- Multi-file upload with live progress for each document
 - A review workspace with the document beside an editable form, live arithmetic checks, and keyboard shortcuts
 - Records with filters, search, a detail view, and CSV and Excel export
 - An overview of spending trends, top vendors, and the review backlog

@@ -310,6 +310,8 @@
 
 .table {
   width: 100%;
+  /* On narrow screens the wrapper scrolls instead of crushing columns into one-word lines. */
+  min-width: 640px;
   border-collapse: collapse;
   font-size: 14px;
 }

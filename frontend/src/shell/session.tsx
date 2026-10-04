@@ -37,7 +37,10 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       if (error instanceof ApiError && error.status === 401) {
         return; // The API client is already redirecting to sign-in.
       }
-      setState({ status: "error", message: error instanceof Error ? error.message : "Unknown error" });
+      // Only the first load may fail visibly. A failed background refresh keeps the
+      // workspace as it was, so in-flight uploads and their status checks survive.
+      const message = error instanceof Error ? error.message : "Unknown error";
+      setState((current) => (current.status === "ready" ? current : { status: "error", message }));
     }
   }, []);
 

@@ -31,6 +31,8 @@ class AlphaNotFoundError(AlphaStoreError):
 
 
 ORG_ROLES = ("owner", "member")
+# A job may be processed this many times before it can no longer be retried.
+MAX_JOB_ATTEMPTS = 3
 
 
 @dataclass(frozen=True)
@@ -495,16 +497,25 @@ class AlphaStore:
             conn.commit()
         return job_id
 
+    _JOB_COLUMNS = (
+        "id", "user_id", "org_id", "object_key", "original_name", "content_type", "declared_size",
+        "status", "attempts", "page_count", "document_id", "result_json", "error_code",
+        "error_message", "authorized_at_utc", "started_at_utc", "completed_at_utc",
+    )
+
+    @classmethod
+    def _job_from_row(cls, row: Any) -> dict[str, Any]:
+        job = dict(zip(cls._JOB_COLUMNS, row))
+        job["result"] = job.pop("result_json")
+        return job
+
     def get_job(self, job_id: str, *, org_id: str) -> dict[str, Any]:
         _require_uuid(job_id, AlphaNotFoundError("Processing job not found"))
         with self._connect() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    """
-                    SELECT id, user_id, org_id, object_key, original_name, content_type, declared_size,
-                           status, attempts, page_count, document_id, result_json,
-                           error_code, error_message, authorized_at_utc, started_at_utc,
-                           completed_at_utc
+                    f"""
+                    SELECT {", ".join(self._JOB_COLUMNS)}
                     FROM public.processing_jobs WHERE id = %s AND org_id = %s
                     """,
                     (job_id, org_id),
@@ -512,14 +523,25 @@ class AlphaStore:
                 row = cur.fetchone()
         if row is None:
             raise AlphaNotFoundError("Processing job not found")
-        keys = (
-            "id", "user_id", "org_id", "object_key", "original_name", "content_type", "declared_size",
-            "status", "attempts", "page_count", "document_id", "result", "error_code",
-            "error_message", "authorized_at_utc", "started_at_utc", "completed_at_utc",
-        )
-        return {key: value for key, value in zip(keys, row)}
+        return self._job_from_row(row)
 
-    def claim_job(self, object_key: str, *, max_attempts: int = 3) -> dict[str, Any] | None:
+    def list_jobs(self, *, org_id: str, limit: int = 20) -> list[dict[str, Any]]:
+        """The organization's most recent jobs, newest first."""
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"""
+                    SELECT {", ".join(self._JOB_COLUMNS)}
+                    FROM public.processing_jobs WHERE org_id = %s
+                    ORDER BY authorized_at_utc DESC
+                    LIMIT %s
+                    """,
+                    (org_id, limit),
+                )
+                rows = cur.fetchall()
+        return [self._job_from_row(row) for row in rows]
+
+    def claim_job(self, object_key: str, *, max_attempts: int = MAX_JOB_ATTEMPTS) -> dict[str, Any] | None:
         with self._connect() as conn:
             with conn.cursor() as cur:
                 cur.execute(
@@ -556,7 +578,7 @@ class AlphaStore:
             "base_currency": row[7],
         }
 
-    def retry_job(self, job_id: str, *, org_id: str, max_attempts: int = 3) -> str:
+    def retry_job(self, job_id: str, *, org_id: str, max_attempts: int = MAX_JOB_ATTEMPTS) -> str:
         _require_uuid(job_id, AlphaQuotaError("This job cannot be retried"))
         with self._connect() as conn:
             with conn.cursor() as cur:

@@ -5,12 +5,19 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Callable
 
-from fastapi import APIRouter, Depends, FastAPI, HTTPException, Response
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Response
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from app.alpha_store import AlphaAuthenticationError, AlphaNotFoundError, AlphaStore, AlphaUser
+from app.alpha_store import (
+    MAX_JOB_ATTEMPTS,
+    AlphaAuthenticationError,
+    AlphaNotFoundError,
+    AlphaStore,
+    AlphaUser,
+)
+from app.config import Settings, load_dotenv
 from app.web_session import set_session_cookie
 
 
@@ -32,6 +39,51 @@ def _organization_payload(store: AlphaStore, user: AlphaUser) -> dict[str, Any]:
         "role": user.role,
         "base_currency": organization.base_currency,
     }
+
+
+def _isoformat(value: Any) -> str | None:
+    return value.isoformat() if value is not None else None
+
+
+def job_view(job: dict[str, Any]) -> dict[str, Any]:
+    """What the workspace shows for a processing job.
+
+    Failed jobs expose only an error code: their messages can contain upstream provider
+    responses. Rejections describe the uploaded file itself, so their message is kept.
+    """
+    result = job.get("result") if isinstance(job.get("result"), dict) else {}
+    record = result.get("record") if isinstance(result.get("record"), dict) else None
+    summary = None
+    if record:
+        summary = {
+            "vendor_name": record.get("vendor_name"),
+            "invoice_date": record.get("invoice_date"),
+            "total_amount": record.get("total_amount"),
+            "currency": record.get("currency"),
+            "currency_assumed": bool(record.get("currency_assumed")),
+        }
+    status = job["status"]
+    return {
+        "id": str(job["id"]),
+        "name": job["original_name"],
+        "content_type": job["content_type"],
+        "size": int(job["declared_size"]),
+        "status": status,
+        "page_count": job.get("page_count"),
+        "reason_codes": list(result.get("reason_codes") or []),
+        "error_code": job.get("error_code"),
+        "error_message": job.get("error_message") if status == "REJECTED" else None,
+        "retryable": status == "FAILED" and int(job.get("attempts") or 0) < MAX_JOB_ATTEMPTS,
+        "authorized_at": _isoformat(job.get("authorized_at_utc")),
+        "completed_at": _isoformat(job.get("completed_at_utc")),
+        "summary": summary,
+    }
+
+
+def _organization_member(principal: str | AlphaUser) -> AlphaUser:
+    if not isinstance(principal, AlphaUser) or not principal.org_id:
+        raise HTTPException(status_code=403, detail="No organization is available for this account")
+    return principal
 
 
 def build_workspace_router(require_auth: Callable[..., Any], postgres_dsn: str | None) -> APIRouter:
@@ -61,6 +113,33 @@ def build_workspace_router(require_auth: Callable[..., Any], postgres_dsn: str |
             "documents_remaining": principal.documents_remaining,
             "document_limit": principal.document_limit,
         }
+
+    @router.get("/upload-limits")
+    def upload_limits(_: str | AlphaUser = Depends(require_auth)) -> dict[str, Any]:
+        load_dotenv()
+        settings = Settings.from_env()
+        return {
+            "max_upload_bytes": settings.max_upload_bytes,
+            "max_pdf_pages": settings.max_pdf_pages,
+            "allowed_types": list(settings.allowed_mime_types),
+        }
+
+    @router.get("/jobs")
+    def recent_jobs(
+        limit: int = Query(default=20, ge=1, le=50),
+        principal: str | AlphaUser = Depends(require_auth),
+    ) -> dict[str, Any]:
+        member = _organization_member(principal)
+        jobs = AlphaStore(postgres_dsn or "").list_jobs(org_id=member.org_id or "", limit=limit)
+        return {"jobs": [job_view(job) for job in jobs]}
+
+    @router.get("/jobs/{job_id}")
+    def job_status(job_id: str, principal: str | AlphaUser = Depends(require_auth)) -> dict[str, Any]:
+        member = _organization_member(principal)
+        try:
+            return job_view(AlphaStore(postgres_dsn or "").get_job(job_id, org_id=member.org_id or ""))
+        except AlphaNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     @router.put("/organization")
     def update_organization(

@@ -1,7 +1,7 @@
 import { useSearchParams } from "react-router";
 
 import { PageHeader, RebuildNotice } from "../components/PageHeader";
-import { EmptyState, Stepper } from "../components/ui";
+import { EmptyState } from "../components/ui";
 import { useSession } from "../shell/session";
 
 export function RecordsPage() {
@@ -38,27 +38,6 @@ export function ReviewPage() {
       ) : (
         <RebuildNotice what="side-by-side review workspace" />
       )}
-    </div>
-  );
-}
-
-export function UploadPage() {
-  return (
-    <div className="page stack">
-      <PageHeader
-        eyebrow="Upload"
-        title="Process documents"
-        subtitle="PDF, PNG, or JPEG, up to 5 MB and 5 pages each. Files go straight to private storage."
-      />
-      <Stepper
-        steps={[
-          { label: "Authorize", state: "pending" },
-          { label: "Upload", state: "pending" },
-          { label: "Extract", state: "pending" },
-          { label: "Validate", state: "pending" },
-        ]}
-      />
-      <RebuildNotice what="multi-file upload with live progress" />
     </div>
   );
 }
