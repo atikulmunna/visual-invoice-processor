@@ -22,6 +22,13 @@ def main() -> int:
         command.add_argument("--username", required=True)
     sub.add_parser("list")
 
+    set_password = sub.add_parser(
+        "set-password",
+        help="Give a tester a new password (generated unless --password is given) and end their sessions",
+    )
+    set_password.add_argument("--username", required=True)
+    set_password.add_argument("--password")
+
     org_create = sub.add_parser("org-create", help="Create an organization owned by an existing tester")
     org_create.add_argument("--name", required=True)
     org_create.add_argument("--owner", required=True, help="Username of the owner")
@@ -69,6 +76,10 @@ def main() -> int:
         store.set_user_active(args.username, False)
     elif args.command == "reset":
         store.reset_user_usage(args.username)
+    elif args.command == "set-password":
+        password = args.password or generate_password()
+        store.set_password(args.username, password)
+        print(f"New password for {args.username} (shown once): {password}")
     elif args.command == "org-create":
         org = store.create_organization(args.name, owner_username=args.owner)
         print(f"Created organization {org.name} ({org.id}) owned by {args.owner}")

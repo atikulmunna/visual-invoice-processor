@@ -227,6 +227,25 @@ class AlphaStore:
                     raise AlphaNotFoundError("Tester account not found")
             conn.commit()
 
+    def set_password(self, username: str, password: str) -> None:
+        """Replace a tester's password and sign them out everywhere."""
+        password_digest = hash_password(password)
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE public.alpha_users SET password_hash = %s, updated_at_utc = NOW()
+                    WHERE username = %s
+                    RETURNING id
+                    """,
+                    (password_digest, normalize_username(username)),
+                )
+                row = cur.fetchone()
+                if row is None:
+                    raise AlphaNotFoundError("Tester account not found")
+                cur.execute("DELETE FROM public.alpha_sessions WHERE user_id = %s", (row[0],))
+            conn.commit()
+
     def list_users(self) -> list[AlphaUser]:
         with self._connect() as conn:
             with conn.cursor() as cur:

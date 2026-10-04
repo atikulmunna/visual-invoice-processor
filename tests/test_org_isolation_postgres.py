@@ -434,3 +434,21 @@ def test_worker_uses_each_organization_base_currency_and_never_invents_fields(
         ).fetchone()
     assert stored == {key_bdt: "BDT assumed=true", key_usd: "USD assumed=true"}
     assert reviewed == (["missing_vendor", "missing_invoice_date"], None)
+
+
+def test_set_password_replaces_the_password_and_ends_sessions(dsn: str) -> None:
+    store = AlphaStore(dsn)
+    user = _user(store, "reset")
+    token = store.create_session(store.authenticate(user.username, PASSWORD))
+
+    store.set_password(user.username, "A-brand-new-password")
+
+    assert store.authenticate(user.username, "A-brand-new-password").id == user.id
+    with pytest.raises(AlphaAuthenticationError):
+        store.authenticate(user.username, PASSWORD)
+    with pytest.raises(AlphaAuthenticationError):
+        store.authenticate_session(token)
+    with pytest.raises(AlphaNotFoundError):
+        store.set_password("no-such-tester", "A-brand-new-password")
+    with pytest.raises(ValueError, match="12"):
+        store.set_password(user.username, "short")
