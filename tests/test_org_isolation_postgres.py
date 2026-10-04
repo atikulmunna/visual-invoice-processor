@@ -366,6 +366,7 @@ def test_base_currency_is_validated_and_listed(dsn: str) -> None:
 
     assert store.set_base_currency(owner.org_id, "usd") == "USD"
     assert {org.id: org.base_currency for org in store.list_organizations()}[owner.org_id] == "USD"
+    assert store.get_organization(owner.org_id).base_currency == "USD"
     for bad in ("US", "US1", "dollar"):
         with pytest.raises(ValueError):
             store.set_base_currency(owner.org_id, bad)
