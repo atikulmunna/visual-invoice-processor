@@ -51,11 +51,18 @@ export function useUploadQueue(): UploadQueue {
 
 const sleep = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
 
-function messageOf(error: unknown): string {
+// What to say when a request never got an answer, by the step that was running.
+const CONNECTION_PROBLEMS = [
+  "Ledgerly could not be reached. Check your connection and try again.",
+  "The file did not reach storage. Check your connection and try again.",
+  "Ledgerly could not be reached. Check your connection and try again.",
+];
+
+function messageOf(error: unknown, step: number): string {
   if (error instanceof ApiError && error.status === 429) {
     return "Your upload allowance is used up.";
   }
-  return error instanceof ApiError ? error.message : "Something went wrong. Try again.";
+  return error instanceof ApiError ? error.message : CONNECTION_PROBLEMS[step];
 }
 
 export function UploadQueueProvider({ children }: { children: ReactNode }) {
@@ -115,7 +122,7 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
       try {
         presigned = await api.presign({ filename: file.name, content_type: contentTypeFor(file), size: file.size });
       } catch (error) {
-        update(id, { phase: "failed", failedStep: 0, error: messageOf(error), canRetry: true });
+        update(id, { phase: "failed", failedStep: 0, error: messageOf(error, 0), canRetry: true });
         return;
       }
       void refresh(); // One upload credit was just used.
@@ -123,7 +130,7 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
       try {
         await uploadToStorage(presigned.upload, file);
       } catch (error) {
-        update(id, { phase: "failed", failedStep: 1, error: messageOf(error), canRetry: true });
+        update(id, { phase: "failed", failedStep: 1, error: messageOf(error, 1), canRetry: true });
         return;
       }
       files.current.delete(id);
@@ -180,7 +187,7 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
       try {
         await api.retryJob(jobId);
       } catch (error) {
-        update(id, { phase: "failed", failedStep: 2, error: messageOf(error), canRetry: false });
+        update(id, { phase: "failed", failedStep: 2, error: messageOf(error, 2), canRetry: false });
         return;
       }
       update(id, { phase: "processing", error: null, canRetry: false });
