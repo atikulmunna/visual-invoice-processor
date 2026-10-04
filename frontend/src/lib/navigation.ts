@@ -1,6 +1,5 @@
-// Where sign-in sends people when they did not come from a page in the new app.
-// The classic dashboard stays the default until the new screens replace it.
-export const DEFAULT_AFTER_SIGN_IN = "/dashboard";
+// Where sign-in sends people when they did not come from a specific page.
+export const DEFAULT_AFTER_SIGN_IN = "/app/overview";
 
 const SIGN_IN_PATHS = ["/login", "/app/login"];
 

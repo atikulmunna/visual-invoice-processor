@@ -182,7 +182,7 @@ Sign in at `http://localhost:8000/login`.
 
 ### Workspace frontend
 
-The workspace in `frontend/` is built with Vite and served by FastAPI under `/app`. It is being rolled out screen by screen alongside the classic dashboard at `/dashboard`, which stays the default after sign-in until the new screens reach parity.
+The workspace in `frontend/` is built with Vite and served by FastAPI under `/app`. Sign-in lands in the workspace. Screens not yet rebuilt there link to the classic dashboard at `/dashboard`, which stays available until the new screens reach parity.
 
 ```powershell
 cd frontend
