@@ -12,9 +12,9 @@ Ledgerly is a private-alpha invoice processing application for a small, controll
 
 <div align="center">
   <a href="https://2wuikcntsyyqfgkucq5m26vyfe0kekgl.lambda-url.ap-southeast-1.on.aws/">
-    <img src="assets/dashboard.png" alt="Ledgerly invoice processing dashboard" width="100%" />
+    <img src="assets/invoice_operations.png" alt="Ledgerly upload screen showing a stored receipt and the uploads-left meter" width="100%" />
   </a>
-  <sub>Private-alpha workspace for direct S3 uploads, extraction results, records, and review operations.</sub>
+  <sub>Batch uploads go straight to private storage, and each document shows its progress and result.</sub>
 </div>
 
 ## Highlights
@@ -127,7 +127,7 @@ app/
   alpha_admin.py           Administrator command line
   db_migrate.py            Ordered migration runner
 frontend/                   Workspace single-page app (React, TypeScript, Vite)
-assets/                     Product icon and dashboard screenshot
+assets/                     Product icon and workspace screenshot
 config/                     Data-driven normalization rules
 eval/                       Standard and strict golden datasets
 infra/                      GitHub OIDC bootstrap stack
@@ -182,7 +182,7 @@ Sign in at `http://localhost:8000/login`.
 
 ### Workspace frontend
 
-The workspace in `frontend/` is built with Vite and served by FastAPI under `/app`. It is being rolled out screen by screen alongside the classic dashboard at `/dashboard`, which stays the default after sign-in until the new screens reach parity.
+The workspace in `frontend/` is built with Vite and served by FastAPI under `/app`. Sign-in lands in the workspace. Screens not yet rebuilt there link to the classic dashboard at `/dashboard`, which stays available until the new screens reach parity.
 
 ```powershell
 cd frontend
