@@ -1,0 +1,246 @@
+.topbar {
+  position: fixed;
+  inset: 0 0 auto;
+  z-index: 100;
+  height: var(--topbar-height);
+  /* Dense enough to stay near-black over the light page, still frosting what scrolls under it. */
+  background: rgba(10, 10, 13, 0.9);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(24px) saturate(160%);
+  color: var(--on-dark);
+}
+
+.topbar-inner {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  height: 100%;
+  max-width: 1440px;
+  margin: 0 auto;
+  padding: 0 var(--gutter);
+}
+
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: #fff;
+  font-family: var(--font-display);
+  font-size: 19px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.brand:hover {
+  text-decoration: none;
+}
+
+.brand img {
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  background: #fff;
+}
+
+.nav {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.nav-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-radius: var(--radius-pill);
+  color: var(--on-dark-soft);
+  font-size: 14px;
+  font-weight: 600;
+  transition:
+    background-color 160ms var(--ease),
+    color 160ms var(--ease);
+}
+
+.nav-link:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+  text-decoration: none;
+}
+
+.nav-link[aria-current="page"] {
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+}
+
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
+}
+
+.search {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.search svg {
+  position: absolute;
+  left: 13px;
+  color: var(--on-dark-muted);
+  pointer-events: none;
+}
+
+.search input {
+  width: 220px;
+  height: 38px;
+  padding: 0 14px 0 38px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: var(--radius-pill);
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+  font-size: 13.5px;
+  transition:
+    width 200ms var(--ease),
+    background-color 160ms var(--ease);
+}
+
+.search input::placeholder {
+  color: var(--on-dark-muted);
+}
+
+.search input:focus-visible {
+  width: 280px;
+  background: rgba(255, 255, 255, 0.14);
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.avatar {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 50%;
+  background: linear-gradient(145deg, var(--accent), var(--violet));
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.menu {
+  position: relative;
+}
+
+.menu-panel {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 10px);
+  z-index: 110;
+  width: 260px;
+  padding: 8px;
+  border: 1px solid var(--glass-light-border);
+  border-radius: 20px;
+  background: #fff;
+  color: var(--ink);
+  box-shadow: var(--shadow-pop);
+}
+
+.menu-identity {
+  display: grid;
+  gap: 2px;
+  padding: 10px 12px 12px;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 6px;
+}
+
+.menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 12px;
+  background: none;
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.menu-item:hover,
+.menu-item:focus-visible {
+  background: var(--neutral-tint);
+  text-decoration: none;
+}
+
+.menu-toggle {
+  display: none;
+}
+
+.mobile-sheet {
+  display: none;
+}
+
+@media (max-width: 960px) {
+  .search input {
+    width: 160px;
+  }
+
+  .search input:focus-visible {
+    width: 200px;
+  }
+}
+
+@media (max-width: 860px) {
+  .nav,
+  .topbar .search,
+  .upload-label {
+    display: none;
+  }
+
+  .menu-toggle {
+    display: inline-flex;
+  }
+
+  .mobile-sheet {
+    position: fixed;
+    inset: var(--topbar-height) 0 auto;
+    z-index: 99;
+    display: grid;
+    gap: 6px;
+    padding: 16px var(--gutter) 20px;
+    background: rgba(10, 10, 13, 0.94);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    backdrop-filter: blur(24px);
+  }
+
+  .mobile-sheet[hidden] {
+    display: none;
+  }
+
+  .mobile-sheet .search {
+    margin-bottom: 8px;
+  }
+
+  .mobile-sheet .search input,
+  .mobile-sheet .search input:focus-visible {
+    width: 100%;
+  }
+
+  .mobile-sheet nav {
+    display: grid;
+    gap: 4px;
+  }
+
+  .mobile-sheet .nav-link {
+    padding: 12px 14px;
+    font-size: 15px;
+  }
+}

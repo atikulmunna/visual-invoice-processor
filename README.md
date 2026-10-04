@@ -156,6 +156,20 @@ python -m app.monitoring_main
 
 The local dashboard is available at `http://localhost:8000/`.
 
+### Workspace frontend
+
+The new workspace is a React and TypeScript app in `frontend/`, built with Vite and served by FastAPI under `/app`. It is being rolled out screen by screen alongside the classic dashboard at `/dashboard`, which stays the default until the new screens reach parity.
+
+```powershell
+cd frontend
+npm install
+npm run build   # FastAPI serves frontend/dist at http://localhost:8000/app
+npm run dev     # or develop with hot reload at http://localhost:5173/app
+npm test
+```
+
+The dev server proxies API and sign-in routes to the FastAPI app on port 8000, so sign in at `http://localhost:5173/login` first. `/app/kit` shows every component of the design system.
+
 ## Tester administration
 
 Run account-management commands only from a trusted machine with `POSTGRES_DSN` configured:

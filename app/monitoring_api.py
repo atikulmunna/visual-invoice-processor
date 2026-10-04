@@ -24,6 +24,7 @@ from app.config import Settings, load_dotenv
 from app.drive_service import is_supported_mime_type
 from app.object_storage_service import ObjectStorageService
 from app.review_queue import dismiss_review_item, list_review_items, resolve_review_item
+from app.workspace_api import build_workspace_router, mount_frontend
 
 
 class ReviewResolveRequest(BaseModel):
@@ -41,6 +42,7 @@ class PresignUploadRequest(BaseModel):
 SESSION_COOKIE_NAME = "invoice_alpha_session"
 SESSION_MAX_AGE_SECONDS = 7 * 24 * 60 * 60
 SITE_ICON_PATH = Path(__file__).resolve().parents[1] / "assets" / "icon.png"
+FRONTEND_DIST = Path(__file__).resolve().parents[1] / "frontend" / "dist"
 
 
 def _org_scope(principal: str | AlphaUser) -> str | None:
@@ -114,6 +116,7 @@ def create_monitoring_app(
     dead_letter_path: str | Path = "logs/dead_letter.jsonl",
     review_queue_dir: str | Path = "review_queue",
     postgres_dsn: str | None = None,
+    frontend_dist: str | Path = FRONTEND_DIST,
 ) -> FastAPI:
     app = FastAPI(title="Invoice Processor Monitoring API", version="0.1.0")
     active_postgres_dsn = postgres_dsn or os.getenv("POSTGRES_DSN")
@@ -401,6 +404,8 @@ def create_monitoring_app(
     def dashboard(principal: str | AlphaUser = Depends(require_dashboard_auth)) -> str:
         return _dashboard_html(principal)
 
+    app.include_router(build_workspace_router(require_dashboard_auth, active_postgres_dsn))
+    mount_frontend(app, Path(frontend_dist))
     return app
 
 

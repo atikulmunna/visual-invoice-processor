@@ -1,0 +1,43 @@
+// Currencies written with South Asian digit grouping (2,16,500 rather than 216,500).
+const LAKH_GROUPED = new Set(["BDT", "INR"]);
+
+const numberFormats = new Map<string, Intl.NumberFormat>();
+
+function amountFormat(locale: string): Intl.NumberFormat {
+  let format = numberFormats.get(locale);
+  if (!format) {
+    format = new Intl.NumberFormat(locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    numberFormats.set(locale, format);
+  }
+  return format;
+}
+
+/** Accounting style: always two decimals, prefixed with the ISO code when known. */
+export function formatMoney(amount: number, currency?: string | null): string {
+  const code = currency?.trim().toUpperCase() || null;
+  const locale = code && LAKH_GROUPED.has(code) ? "en-IN" : "en-US";
+  const digits = amountFormat(locale).format(amount);
+  return code ? `${code} ${digits}` : digits;
+}
+
+const dateFormat = new Intl.DateTimeFormat("en-GB", {
+  day: "numeric",
+  month: "short",
+  year: "numeric",
+  timeZone: "UTC",
+});
+
+/** Unambiguous day-month-year ("4 Mar 2026") for ISO dates; null when missing or invalid. */
+export function formatDate(isoDate?: string | null): string | null {
+  if (!isoDate) {
+    return null;
+  }
+  const parsed = new Date(isoDate.length === 10 ? `${isoDate}T00:00:00Z` : isoDate);
+  return Number.isNaN(parsed.getTime()) ? null : dateFormat.format(parsed);
+}
+
+export function initials(name: string): string {
+  const parts = name.split(/[\s._-]+/).filter(Boolean);
+  const letters = parts.length > 1 ? parts[0][0] + parts[1][0] : name.slice(0, 2);
+  return letters.toUpperCase();
+}

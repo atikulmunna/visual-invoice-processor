@@ -1,0 +1,229 @@
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--page);
+  color: var(--ink);
+  font-family: var(--font-body);
+  font-size: 15px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background: var(--accent);
+  color: #fff;
+}
+
+h1,
+h2,
+h3 {
+  margin: 0;
+  font-family: var(--font-display);
+  letter-spacing: -0.015em;
+  line-height: 1.1;
+}
+
+p {
+  margin: 0;
+}
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.skip-link {
+  position: absolute;
+  left: 12px;
+  top: -48px;
+  z-index: 200;
+  padding: 10px 16px;
+  border-radius: var(--radius-pill);
+  background: #fff;
+  color: var(--ink);
+  font-weight: 700;
+}
+
+.skip-link:focus {
+  top: 12px;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* Soft drifting color behind the content gives the glass cards something to frost. */
+.ambient {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.ambient span {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(80px);
+}
+
+.ambient span:nth-child(1) {
+  top: -180px;
+  left: -120px;
+  width: 560px;
+  height: 560px;
+  background: radial-gradient(circle, var(--accent), transparent 70%);
+  opacity: 0.16;
+  animation: drift-a 22s ease-in-out infinite;
+}
+
+.ambient span:nth-child(2) {
+  top: 8%;
+  right: -160px;
+  width: 520px;
+  height: 520px;
+  background: radial-gradient(circle, var(--violet), transparent 70%);
+  opacity: 0.13;
+  animation: drift-b 26s ease-in-out infinite;
+}
+
+.ambient span:nth-child(3) {
+  bottom: -220px;
+  left: 30%;
+  width: 480px;
+  height: 480px;
+  background: radial-gradient(circle, var(--pink), transparent 70%);
+  opacity: 0.08;
+  animation: drift-a 30s ease-in-out infinite reverse;
+}
+
+@keyframes drift-a {
+  50% {
+    transform: translate(60px, 40px) scale(1.08);
+  }
+}
+
+@keyframes drift-b {
+  50% {
+    transform: translate(-50px, 50px) scale(1.05);
+  }
+}
+
+#main {
+  position: relative;
+  z-index: 1;
+}
+
+.page {
+  width: 100%;
+  max-width: var(--content-width);
+  margin: 0 auto;
+  padding: calc(var(--topbar-height) + 40px) var(--gutter) 80px;
+  animation: page-in 320ms var(--ease);
+}
+
+@keyframes page-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+.page-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 32px;
+}
+
+.eyebrow {
+  font-size: 12.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.page-title {
+  margin-top: 8px;
+  font-size: clamp(30px, 4vw, 40px);
+  font-weight: 700;
+}
+
+.page-subtitle {
+  margin-top: 8px;
+  max-width: 620px;
+  color: var(--ink-soft);
+}
+
+.section-title {
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.muted {
+  color: var(--ink-muted);
+}
+
+.stack {
+  display: grid;
+  gap: 24px;
+}
+
+.grid-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 20px;
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

@@ -13,3 +13,5 @@ tests
 tmp
 assets/*
 !assets/icon.png
+frontend/node_modules
+frontend/dist

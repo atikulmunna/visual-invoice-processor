@@ -324,6 +324,14 @@ class AlphaStore:
             for org_id, (name, base_currency, members) in grouped.items()
         ]
 
+    def get_organization(self, org_id: str) -> Organization:
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                self._require_org(cur, org_id)
+                cur.execute("SELECT id, name, base_currency FROM public.organizations WHERE id = %s", (org_id,))
+                row = cur.fetchone()
+        return Organization(str(row[0]), row[1], base_currency=row[2])
+
     def set_base_currency(self, org_id: str, currency: str) -> str:
         code = currency.strip().upper()
         if len(code) != 3 or not code.isalpha() or not code.isascii():
