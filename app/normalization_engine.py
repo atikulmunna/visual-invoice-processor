@@ -37,15 +37,20 @@ _CURRENCY_MARKERS = {
 }
 
 # Day-first before month-first, matching Bangladeshi and most non-US documents.
+# Day-first comes before month-first, so an ambiguous date such as 04-05-2026 reads as 4 May
+# (the Bangladeshi convention); month-first only applies when the day-first reading is impossible.
 _DATE_FORMATS = (
     "%Y-%m-%d",
     "%Y/%m/%d",
     "%d-%m-%Y",
+    "%m-%d-%Y",
     "%d/%m/%Y",
-    "%d.%m.%Y",
     "%m/%d/%Y",
+    "%d.%m.%Y",
     "%d-%m-%y",
+    "%m-%d-%y",
     "%d/%m/%y",
+    "%m/%d/%y",
     "%B %d, %Y",
     "%b %d, %Y",
     "%B %d %Y",

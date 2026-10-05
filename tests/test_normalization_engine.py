@@ -170,6 +170,21 @@ def test_common_date_formats_are_understood() -> None:
         assert engine.coerce_payload(_minimal(invoice_date=raw_date))["invoice_date"] == expected, raw_date
 
 
+def test_month_first_dates_are_read_only_when_day_first_is_impossible() -> None:
+    engine = NormalizationRuleEngine(_rules())
+    cases = {
+        "09-19-2026": "2026-09-19",  # HiFi Heaven prints order dates month first
+        "09-19-26": "2026-09-19",
+        "09/19/26": "2026-09-19",
+        "04-05-2026": "2026-05-04",  # ambiguous, so day first as before
+        "04/05/26": "2026-05-04",
+        "13-13-2026": None,
+    }
+
+    for raw_date, expected in cases.items():
+        assert engine.coerce_payload(_minimal(invoice_date=raw_date))["invoice_date"] == expected, raw_date
+
+
 def test_explicit_currency_codes_and_symbols_are_normalized() -> None:
     engine = NormalizationRuleEngine(_rules())
 
