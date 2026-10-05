@@ -39,6 +39,7 @@ class Column(NamedTuple):
 RECORD_COLUMNS = (
     Column("Record ID", "number", 11),
     Column("Vendor", "text", 30),
+    Column("Vendor as printed", "text", 30),
     Column("Vendor tax ID or BIN", "text", 20),
     Column("Invoice number", "text", 18),
     Column("Invoice date", "date", 13),
@@ -104,6 +105,11 @@ def _yes_no(value: Any) -> str:
     return "Yes" if value else "No"
 
 
+def _vendor(row: dict[str, Any]) -> str | None:
+    """The linked vendor's chosen name, or the document's own spelling when it has no vendor."""
+    return _text(row.get("vendor_name")) or _text(row["record"].get("vendor_name"))
+
+
 def record_rows(rows: list[dict[str, Any]]) -> list[list[Any]]:
     """One row per record, in RECORD_COLUMNS order."""
     table = []
@@ -111,6 +117,7 @@ def record_rows(rows: list[dict[str, Any]]) -> list[list[Any]]:
         record = row["record"]
         table.append([
             row["id"],
+            _vendor(row),
             _text(record.get("vendor_name")),
             _text(record.get("vendor_tax_id")),
             _text(record.get("invoice_number")),
@@ -142,7 +149,7 @@ def line_item_rows(rows: list[dict[str, Any]]) -> list[list[Any]]:
             item = item if isinstance(item, dict) else {}
             table.append([
                 row["id"],
-                _text(record.get("vendor_name")),
+                _vendor(row),
                 _text(record.get("invoice_number")),
                 _day(record.get("invoice_date")),
                 _text(record.get("currency")),

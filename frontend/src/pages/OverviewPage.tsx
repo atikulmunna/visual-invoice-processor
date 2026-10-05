@@ -63,7 +63,11 @@ function VendorBars({ vendors, currency }: { vendors: VendorTotal[]; currency: s
         <li key={vendor.vendor_name}>
           <Link
             className="vendor-bar"
-            to={`/records?vendor=${encodeURIComponent(vendor.vendor_name)}&currency=${encodeURIComponent(currency)}`}
+            to={
+              vendor.vendor_id
+                ? `/vendors/${vendor.vendor_id}`
+                : `/records?vendor=${encodeURIComponent(vendor.vendor_name)}&currency=${encodeURIComponent(currency)}`
+            }
           >
             <span className="vendor-bar-head">
               <span className="vendor-name">{vendor.vendor_name}</span>

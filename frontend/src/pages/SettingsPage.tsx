@@ -4,9 +4,8 @@ import { PageHeader } from "../components/PageHeader";
 import { useToast } from "../components/Toast";
 import { Button, Card, TextField } from "../components/ui";
 import { api } from "../lib/api";
+import { COMMON_CURRENCIES } from "../lib/format";
 import { useSession } from "../shell/session";
-
-const COMMON_CURRENCIES = ["BDT", "USD", "EUR", "GBP", "INR", "AED", "SAR", "SGD", "MYR", "CNY", "JPY", "CAD", "AUD"];
 
 function OrganizationSettings() {
   const { me, refresh } = useSession();

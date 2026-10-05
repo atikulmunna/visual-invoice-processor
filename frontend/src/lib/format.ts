@@ -75,3 +75,6 @@ export function formatRelativeTime(iso: string | null | undefined, now: number =
   }
   return formatDate(iso);
 }
+
+/** Offered as suggestions wherever a currency code is typed. */
+export const COMMON_CURRENCIES = ["BDT", "USD", "EUR", "GBP", "INR", "AED", "SAR", "SGD", "MYR", "CNY", "JPY", "CAD", "AUD"];

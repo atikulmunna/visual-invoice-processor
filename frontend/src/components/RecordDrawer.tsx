@@ -1,4 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
+import { Link } from "react-router";
 
 import { api } from "../lib/api";
 import { formatDate, formatMoney } from "../lib/format";
@@ -65,6 +66,7 @@ function RecordFacts({ detail }: { detail: RecordDetail }) {
   const currency = text(record.currency);
   const lines = Array.isArray(record.line_items) ? (record.line_items as StoredRecord[]) : [];
   const note = currencyNote(Boolean(record.currency_assumed), currency);
+  const printed = text(record.vendor_name);
 
   return (
     <div className="record-facts">
@@ -76,6 +78,12 @@ function RecordFacts({ detail }: { detail: RecordDetail }) {
       <section>
         <h3 className="facts-title">Details</h3>
         <dl className="facts">
+          <Fact label="Vendor">
+            {detail.vendor ? <Link to={`/vendors/${detail.vendor.id}`}>{detail.vendor.name}</Link> : text(record.vendor_name)}
+            {detail.vendor && printed && printed !== detail.vendor.name && (
+              <span className="fact-note fact-note-muted">Printed as {printed}</span>
+            )}
+          </Fact>
           <Fact label="Invoice number">{text(record.invoice_number)}</Fact>
           <Fact label="Invoice date">{formatDate(text(record.invoice_date))}</Fact>
           <Fact label="Due date">{formatDate(text(record.due_date))}</Fact>
@@ -136,7 +144,11 @@ export function RecordDrawer({ recordId, onClose }: { recordId: number | null; o
 
   const current = loaded?.id === recordId ? loaded : null;
   const detail = current && "detail" in current ? current.detail : null;
-  const title = detail ? (text(detail.record.vendor_name) ?? "Vendor not shown") : current ? "Record not available" : "Loading record";
+  const title = detail
+    ? (detail.vendor?.name ?? text(detail.record.vendor_name) ?? "Vendor not shown")
+    : current
+      ? "Record not available"
+      : "Loading record";
 
   return (
     <Dialog open={recordId !== null} onClose={onClose} title={title} variant="drawer" className="record-drawer">

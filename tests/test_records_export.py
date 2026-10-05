@@ -60,10 +60,11 @@ def test_rows_line_up_with_their_columns() -> None:
 def test_records_csv_spells_out_each_value() -> None:
     header, row = _csv_rows(to_csv(RECORD_COLUMNS, record_rows([_row()])))
 
-    assert header[:4] == ["Record ID", "Vendor", "Vendor tax ID or BIN", "Invoice number"]
+    assert header[:4] == ["Record ID", "Vendor", "Vendor as printed", "Vendor tax ID or BIN"]
     assert dict(zip(header, row)) == {
         "Record ID": "7",
         "Vendor": "Tech Land BD",
+        "Vendor as printed": "Tech Land BD",
         "Vendor tax ID or BIN": "001234567-0101",
         "Invoice number": "TL-1001",
         "Invoice date": "2026-03-02",
@@ -99,8 +100,8 @@ def test_text_that_would_run_as_a_formula_is_neutralized_in_csv() -> None:
     rows = _csv_rows(to_csv(RECORD_COLUMNS, record_rows(risky)))[1:]
 
     assert [row[1] for row in rows] == ["'=HYPERLINK(\"http://x\")", "'+1", "'@SUM(A1)"]
-    assert rows[0][3] == "'-42"
-    assert rows[0][13] == "216500.00"  # amounts are numbers we format, never escaped
+    assert rows[0][4] == "'-42"
+    assert rows[0][14] == "216500.00"  # amounts are numbers we format, never escaped
 
 
 def test_bangla_text_and_odd_values_survive() -> None:
@@ -124,15 +125,15 @@ def test_workbook_has_typed_cells_frozen_headers_and_filters() -> None:
     records, lines = workbook["Records"], workbook["Line items"]
     assert (name, media_type) == ("ledgerly-records-2026-10-05.xlsx", XLSX_MEDIA_TYPE)
     assert workbook.sheetnames == ["Records", "Line items"]
-    assert [cell.value for cell in records[1]][:3] == ["Record ID", "Vendor", "Vendor tax ID or BIN"]
+    assert [cell.value for cell in records[1]][:3] == ["Record ID", "Vendor", "Vendor as printed"]
     assert records["A1"].font.bold
     assert records.freeze_panes == "A2"
-    assert records.auto_filter.ref == "A1:R3"
-    assert records["E2"].value == datetime(2026, 3, 2)
-    assert records["E2"].number_format == "d mmm yyyy"
-    assert records["N2"].value == 216500
-    assert records["N2"].number_format == "#,##0.00"
-    assert records["R2"].value == datetime(2026, 10, 4, 12, 30)
+    assert records.auto_filter.ref == "A1:S3"
+    assert records["F2"].value == datetime(2026, 3, 2)
+    assert records["F2"].number_format == "d mmm yyyy"
+    assert records["O2"].value == 216500
+    assert records["O2"].number_format == "#,##0.00"
+    assert records["S2"].value == datetime(2026, 10, 4, 12, 30)
     assert lines.max_row == 3  # header plus the two line items of the first record
 
 
@@ -144,7 +145,7 @@ def test_workbook_keeps_formula_text_as_text_and_drops_illegal_characters() -> N
 
     assert sheet["B2"].value == "=cmd|' /C calc'!A0"
     assert sheet["B2"].data_type == "s"
-    assert sheet["D2"].value == "INV-9"
+    assert sheet["E2"].value == "INV-9"
 
 
 def test_csv_exports_are_named_by_table_and_date() -> None:
@@ -159,3 +160,15 @@ def test_an_empty_view_still_has_headers() -> None:
     header_only = _csv_rows(build_export("line-items-csv", [], date(2026, 10, 5))[0])
 
     assert header_only == [[column.header for column in LINE_ITEM_COLUMNS]]
+
+
+def test_vendor_column_uses_the_linked_vendor_name_and_keeps_the_printed_one() -> None:
+    row = {**_row(vendor_name="RYANS"), "vendor_name": "RYANS Computers"}
+
+    header, values = _csv_rows(to_csv(RECORD_COLUMNS, record_rows([row])))
+    line = line_item_rows([row])[0]
+
+    assert dict(zip(header, values))["Vendor"] == "RYANS Computers"
+    assert dict(zip(header, values))["Vendor as printed"] == "RYANS"
+    assert line[1] == "RYANS Computers"
+

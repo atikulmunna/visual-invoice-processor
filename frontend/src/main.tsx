@@ -11,6 +11,8 @@ import { ReviewQueuePage } from "./pages/ReviewQueuePage";
 import { ReviewWorkspacePage } from "./pages/ReviewWorkspacePage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { UploadPage } from "./pages/UploadPage";
+import { VendorPage } from "./pages/VendorPage";
+import { VendorsPage } from "./pages/VendorsPage";
 import { AppShell } from "./shell/AppShell";
 import "./styles/tokens.css";
 import "./styles/base.css";
@@ -21,6 +23,7 @@ import "./styles/upload.css";
 import "./styles/review.css";
 import "./styles/records.css";
 import "./styles/overview.css";
+import "./styles/vendors.css";
 
 const router = createBrowserRouter(
   [
@@ -32,6 +35,8 @@ const router = createBrowserRouter(
         { index: true, element: <Navigate to="/overview" replace /> },
         { path: "overview", element: <OverviewPage /> },
         { path: "records", element: <RecordsPage /> },
+        { path: "vendors", element: <VendorsPage /> },
+        { path: "vendors/:vendorId", element: <VendorPage /> },
         { path: "review", element: <ReviewQueuePage /> },
         { path: "review/:documentId", element: <ReviewWorkspacePage /> },
         { path: "upload", element: <UploadPage /> },

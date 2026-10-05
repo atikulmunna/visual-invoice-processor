@@ -24,6 +24,7 @@ from app.drive_service import is_supported_mime_type
 from app.object_storage_service import ObjectStorageService
 from app.review_queue import dismiss_review_item, list_review_items, resolve_review_item
 from app.web_session import SESSION_COOKIE_NAME, clear_session_cookie
+from app.vendor_api import build_vendor_router
 from app.workspace_api import build_workspace_router, mount_frontend
 
 
@@ -376,6 +377,7 @@ def create_monitoring_app(
             pending_reviews=pending_reviews,
         )
     )
+    app.include_router(build_vendor_router(require_dashboard_auth, active_postgres_dsn))
     mount_frontend(app, Path(frontend_dist))
     return app
 

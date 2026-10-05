@@ -17,7 +17,7 @@ from uuid import uuid4
 import pytest
 
 from app.alpha_store import AlphaAuthenticationError, AlphaNotFoundError, AlphaQuotaError, AlphaStore, AlphaUser
-from app.db_migrate import DEFAULT_MIGRATIONS_DIR, apply_migrations
+from app.db_migrate import DEFAULT_MIGRATIONS_DIR, apply_migrations, migration_files
 from app.object_storage_service import ObjectStorageService
 
 psycopg = pytest.importorskip("psycopg")
@@ -102,7 +102,10 @@ def test_migration_backfills_existing_rows_into_personal_organizations(tmp_path:
             "INSERT INTO document_claims(file_hash, source_id, status) VALUES ('legacy-hash', 'drive-legacy', 'STORED')"
         )
 
-    assert apply_migrations(database) == ["005_organizations.sql", "006_org_base_currency.sql"]
+    # Everything after the legacy set is pending; the organization backfill (005) runs first.
+    pending = [path.name for path in migration_files() if not (legacy_dir / path.name).exists()]
+    assert pending[0] == "005_organizations.sql"
+    assert apply_migrations(database) == pending
 
     with psycopg.connect(database) as conn:
         orgs = dict(conn.execute("SELECT id, name FROM organizations").fetchall())
