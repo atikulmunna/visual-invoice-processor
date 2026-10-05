@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -9,7 +10,7 @@ from fastapi.testclient import TestClient
 
 from app.alpha_store import AlphaAuthenticationError, AlphaUser, Organization
 from app.monitoring_api import create_monitoring_app
-from app.records_store import RecordFilters
+from app.records_store import ExportTooLarge, RecordFilters
 
 PASSWORD = "A-strong-alpha-password"
 ORG_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
@@ -438,8 +439,15 @@ def records_client(review_client: TestClient, monkeypatch: pytest.MonkeyPatch) -
         return {"currency": "BDT", "currencies": ["BDT"], "records_total": 3, "flagged_total": 1,
                 "months": [], "top_vendors": []}
 
+    def export_records(dsn: str, **kwargs: Any) -> list[dict[str, Any]]:
+        calls.append(("export", kwargs))
+        if kwargs["filters"].vendor == "Too many":
+            raise ExportTooLarge(6200, 5000)
+        return [{"id": 7, "added_at": datetime(2026, 10, 1, tzinfo=timezone.utc), "flagged": False, "reviewed": False,
+                 "record": {"vendor_name": "Acme", "currency": "BDT", "total_amount": 10, "line_items": []}}]
+
     fakes = {"search_records": search_records, "record_facets": record_facets, "get_record": get_record,
-             "overview": overview}
+             "overview": overview, "export_records": export_records}
     for name, fake in fakes.items():
         monkeypatch.setattr(f"app.workspace_api.records_store.{name}", fake)
     monkeypatch.setattr("app.monitoring_api.AlphaStore", _RecordsStore)
@@ -583,3 +591,57 @@ def test_spotlight_picks_the_most_pressing_item(
     from app.workspace_api import choose_spotlight
 
     assert choose_spotlight(reviews=reviews, jobs=jobs, flagged_total=flagged, now=NOW) == expected
+
+
+def test_export_downloads_every_record_in_the_filtered_view(records_client: tuple[TestClient, list]) -> None:
+    client, calls = records_client
+
+    response = client.get(
+        "/api/records/export?format=records-csv&q=acme&currency=bdt&flagged=true&sort=total&order=asc",
+        auth=("owner.one", PASSWORD),
+    )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "text/csv; charset=utf-8"
+    assert response.headers["content-disposition"] == 'attachment; filename="ledgerly-records-2026-10-05.csv"'
+    assert response.headers["cache-control"] == "no-store"
+    assert response.content.decode("utf-8-sig").splitlines()[1].startswith("7,Acme,")
+    assert calls == [("export", {
+        "org_id": ORG_ID,
+        "filters": RecordFilters(query="acme", currency="bdt", flagged=True),
+        "sort": "total",
+        "descending": False,
+    })]
+
+
+def test_export_as_a_workbook(records_client: tuple[TestClient, list]) -> None:
+    from openpyxl import load_workbook
+
+    client, _ = records_client
+
+    response = client.get("/api/records/export?format=xlsx", auth=("owner.one", PASSWORD))
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    assert load_workbook(io.BytesIO(response.content)).sheetnames == ["Records", "Line items"]
+
+
+def test_export_refuses_a_view_larger_than_one_file_may_hold(records_client: tuple[TestClient, list]) -> None:
+    client, _ = records_client
+
+    response = client.get("/api/records/export?format=xlsx&vendor=Too%20many", auth=("owner.one", PASSWORD))
+
+    assert response.status_code == 413
+    assert response.json()["detail"] == (
+        "This view has 6,200 records and an export holds at most 5,000. Narrow the filters and try again."
+    )
+
+
+def test_export_needs_a_known_format_and_a_session(records_client: tuple[TestClient, list]) -> None:
+    client, calls = records_client
+
+    assert client.get("/api/records/export", auth=("owner.one", PASSWORD)).status_code == 422
+    assert client.get("/api/records/export?format=pdf", auth=("owner.one", PASSWORD)).status_code == 422
+    assert client.get("/api/records/export?format=xlsx&from=soon", auth=("owner.one", PASSWORD)).status_code == 422
+    assert client.get("/api/records/export?format=xlsx").status_code == 401
+    assert calls == []

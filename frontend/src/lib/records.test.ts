@@ -9,6 +9,7 @@ import {
   paramsFromQuery,
   queryFromParams,
   recordsApiPath,
+  recordsExportPath,
   toggleSort,
   withChange,
 } from "./records";
@@ -69,6 +70,19 @@ describe("recordsApiPath", () => {
   it("spells out sort, page, and page size for the API", () => {
     expect(recordsApiPath({ ...DEFAULT_QUERY, q: "a&b", flagged: true })).toBe(
       "/api/records?q=a%26b&flagged=1&sort=added&order=desc&page=1&page_size=25",
+    );
+  });
+});
+
+describe("recordsExportPath", () => {
+  it("exports the whole filtered list in its order, never one page", () => {
+    const query = { ...DEFAULT_QUERY, vendor: "Star Tech", flagged: true, sort: "total" as const, order: "asc" as const, page: 3 };
+
+    expect(recordsExportPath(query, "xlsx")).toBe(
+      "/api/records/export?vendor=Star+Tech&flagged=1&sort=total&order=asc&format=xlsx",
+    );
+    expect(recordsExportPath(DEFAULT_QUERY, "line-items-csv")).toBe(
+      "/api/records/export?sort=added&order=desc&format=line-items-csv",
     );
   });
 });

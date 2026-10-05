@@ -33,9 +33,25 @@ async function errorMessage(response: Response): Promise<string> {
   return response.statusText || `Request failed with status ${response.status}`;
 }
 
+function redirectToSignIn(): void {
+  window.location.assign(signInUrl(window.location.pathname + window.location.search));
+}
+
+/** Passes a successful response through; otherwise throws with the server's message. */
+async function ensureOk(response: Response, onUnauthorized: () => void): Promise<Response> {
+  if (response.status === 401) {
+    onUnauthorized();
+    throw new ApiError(401, await errorMessage(response));
+  }
+  if (!response.ok) {
+    throw new ApiError(response.status, await errorMessage(response));
+  }
+  return response;
+}
+
 export function createApiClient({
   fetchImpl = (input, init) => fetch(input, init),
-  onUnauthorized = () => window.location.assign(signInUrl(window.location.pathname + window.location.search)),
+  onUnauthorized = redirectToSignIn,
 }: ClientOptions = {}) {
   return async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     const headers = new Headers(init.headers);
@@ -43,14 +59,10 @@ export function createApiClient({
     if (init.body !== undefined && !headers.has("Content-Type")) {
       headers.set("Content-Type", "application/json");
     }
-    const response = await fetchImpl(path, { credentials: "same-origin", ...init, headers });
-    if (response.status === 401) {
-      onUnauthorized();
-      throw new ApiError(401, await errorMessage(response));
-    }
-    if (!response.ok) {
-      throw new ApiError(response.status, await errorMessage(response));
-    }
+    const response = await ensureOk(
+      await fetchImpl(path, { credentials: "same-origin", ...init, headers }),
+      onUnauthorized,
+    );
     if (response.status === 204) {
       return undefined as T;
     }
@@ -125,6 +137,29 @@ export const api = {
   overview: (currency: string | null) =>
     request<Overview>(currency ? `/api/overview?currency=${encodeURIComponent(currency)}` : "/api/overview"),
 };
+
+/** The file name from a Content-Disposition header such as `attachment; filename="records.csv"`. */
+export function fileNameFromDisposition(header: string | null): string | null {
+  const match = header?.match(/filename="([^"]+)"/);
+  return match ? match[1] : null;
+}
+
+/** Fetches a file and saves it through the browser. Fetching first means an error such as an
+ * export that is too large shows as a message instead of being saved as a file. */
+export async function downloadFile(path: string): Promise<string> {
+  const response = await ensureOk(await fetch(path, { credentials: "same-origin" }), redirectToSignIn);
+  const name = fileNameFromDisposition(response.headers.get("Content-Disposition")) ?? "ledgerly-export";
+  const url = URL.createObjectURL(await response.blob());
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = name;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  // Revoking on the next tick lets the browser start the download first.
+  setTimeout(() => URL.revokeObjectURL(url), 0);
+  return name;
+}
 
 /** Send the file straight to S3 with the presigned form; the file field must come last. */
 export async function uploadToStorage(upload: PresignedUpload["upload"], file: File): Promise<void> {

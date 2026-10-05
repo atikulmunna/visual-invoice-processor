@@ -25,7 +25,7 @@ Ledgerly is a private-alpha invoice processing application for a small, controll
 - **Direct uploads:** the browser uploads straight to private S3 with a five-minute presigned policy; document bytes never pass through the web function.
 - **Batch uploads:** drop many files at once and follow each one through upload, extraction, and validation, with a plain reason for anything rejected and retry for failures.
 - **Validation and review:** schema checks, arithmetic checks on totals and line items, and confidence scoring. Doubtful documents open in a review workspace with the original file beside an editable form, live checks, and keyboard shortcuts for approve, reject, and duplicate.
-- **Records and overview:** search, filter, and sort every stored record, and open any one beside its original file. The overview shows monthly spending and top vendors per currency, never mixing currencies, and leads with the single most pressing item, such as review documents about to lose their source file.
+- **Records and overview:** search, filter, and sort every stored record, open any one beside its original file, and export the filtered list as an Excel workbook (records and line items) or CSV. The overview shows monthly spending and top vendors per currency, never mixing currencies, and leads with the single most pressing item, such as review documents about to lose their source file.
 - **Safe reprocessing:** idempotent jobs and duplicate-safe writes; the same file uploaded twice in one organization is caught, while two organizations can process identical files independently.
 - **Operations on a budget:** infrastructure as code, least-privilege IAM, secrets in SSM, seven-day log retention, and an annual AWS budget with alerts.
 
@@ -119,6 +119,7 @@ app/
   monitoring_api.py        FastAPI app, authentication, and review and upload API
   workspace_api.py         Workspace API: sign-in, account, records, overview, review detail; serves /app
   records_store.py         Records search, filters, and overview totals
+  records_export.py        Records and line items as CSV and Excel files
   web_session.py           Session cookie settings
   serverless_worker.py     S3-event processing worker
   extraction_service.py    OpenRouter extraction and PDF text enrichment
@@ -298,10 +299,6 @@ Follow [AWS_DEPLOYMENT.md](AWS_DEPLOYMENT.md) for the one-time AWS, SSM, Supabas
 ## Roadmap
 
 Planned features, roughly in order. The product is heading two ways at once: VAT-ready books for small businesses in Bangladesh, and control over bills before they are paid for teams anywhere.
-
-**Workspace**
-
-- CSV and Excel export of the filtered records list
 
 **Smarter extraction**
 

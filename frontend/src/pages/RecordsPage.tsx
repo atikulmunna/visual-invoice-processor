@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Link, useSearchParams } from "react-router";
 
 import { DataTable, type Column } from "../components/DataTable";
+import { ExportMenu } from "../components/ExportMenu";
 import { Icon } from "../components/Icon";
 import { PageHeader } from "../components/PageHeader";
 import { Pagination } from "../components/Pagination";
@@ -228,9 +229,12 @@ export function RecordsPage() {
         title="Records"
         subtitle={subtitle}
         actions={
-          <Link to="/upload" className={buttonClass("primary")}>
-            <Icon name="upload" size={16} /> Upload documents
-          </Link>
+          <>
+            <ExportMenu query={query} total={page?.total ?? null} />
+            <Link to="/upload" className={buttonClass("primary")}>
+              <Icon name="upload" size={16} /> Upload documents
+            </Link>
+          </>
         }
       />
       <FilterBar query={query} facets={facets} onChange={update} />

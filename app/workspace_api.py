@@ -24,6 +24,7 @@ from app.alpha_store import (
 from app import records_store
 from app.config import Settings, load_dotenv
 from app.object_storage_service import ObjectStorageService
+from app.records_export import ExportKind, build_export
 from app.records_store import RecordFilters, SortKey
 from app.review_queue import load_review_item
 from app.web_session import set_session_cookie
@@ -157,6 +158,35 @@ def choose_spotlight(
     return None
 
 
+def record_filters(
+    q: str | None = Query(default=None, max_length=100),
+    currency: str | None = Query(default=None, pattern=CURRENCY_PATTERN),
+    vendor: str | None = Query(default=None, max_length=200),
+    date_from: date | None = Query(default=None, alias="from"),
+    date_to: date | None = Query(default=None, alias="to"),
+    flagged: bool = False,
+    reviewed: bool = False,
+) -> RecordFilters:
+    """The records filters from the query string, shared by the list and its export."""
+    return RecordFilters(
+        query=q,
+        currency=currency,
+        vendor=vendor,
+        date_from=date_from,
+        date_to=date_to,
+        flagged=flagged,
+        reviewed=reviewed,
+    )
+
+
+def record_order(
+    sort: SortKey = "added",
+    order: str = Query(default="desc", pattern="^(asc|desc)$"),
+) -> tuple[SortKey, bool]:
+    """The sort column and whether it runs descending."""
+    return sort, order == "desc"
+
+
 def _organization_member(principal: str | AlphaUser) -> AlphaUser:
     if not isinstance(principal, AlphaUser) or not principal.org_id:
         raise HTTPException(status_code=403, detail="No organization is available for this account")
@@ -270,35 +300,20 @@ def build_workspace_router(
 
     @router.get("/records")
     def records(
-        q: str | None = Query(default=None, max_length=100),
-        currency: str | None = Query(default=None, pattern=CURRENCY_PATTERN),
-        vendor: str | None = Query(default=None, max_length=200),
-        date_from: date | None = Query(default=None, alias="from"),
-        date_to: date | None = Query(default=None, alias="to"),
-        flagged: bool = False,
-        reviewed: bool = False,
-        sort: SortKey = "added",
-        order: str = Query(default="desc", pattern="^(asc|desc)$"),
+        filters: RecordFilters = Depends(record_filters),
+        ordering: tuple[SortKey, bool] = Depends(record_order),
         page: int = Query(default=1, ge=1, le=10_000),
         page_size: int = Query(default=25, ge=1, le=100),
         principal: str | AlphaUser = Depends(require_auth),
     ) -> dict[str, Any]:
         member = _organization_member(principal)
-        filters = RecordFilters(
-            query=q,
-            currency=currency,
-            vendor=vendor,
-            date_from=date_from,
-            date_to=date_to,
-            flagged=flagged,
-            reviewed=reviewed,
-        )
+        sort, descending = ordering
         result = records_store.search_records(
             postgres_dsn or "",
             org_id=member.org_id or "",
             filters=filters,
             sort=sort,
-            descending=order == "desc",
+            descending=descending,
             page=page,
             page_size=page_size,
         )
@@ -309,6 +324,33 @@ def build_workspace_router(
     def record_facets(principal: str | AlphaUser = Depends(require_auth)) -> dict[str, Any]:
         member = _organization_member(principal)
         return records_store.record_facets(postgres_dsn or "", org_id=member.org_id or "")
+
+    @router.get("/records/export")
+    def export_records(
+        kind: ExportKind = Query(alias="format"),
+        filters: RecordFilters = Depends(record_filters),
+        ordering: tuple[SortKey, bool] = Depends(record_order),
+        principal: str | AlphaUser = Depends(require_auth),
+    ) -> Response:
+        """The records list as a file: every record the filters match, in list order, not one page."""
+        member = _organization_member(principal)
+        sort, descending = ordering
+        try:
+            rows = records_store.export_records(
+                postgres_dsn or "", org_id=member.org_id or "", filters=filters, sort=sort, descending=descending
+            )
+        except records_store.ExportTooLarge as exc:
+            raise HTTPException(
+                status_code=413,
+                detail=f"This view has {exc.total:,} records and an export holds at most {exc.limit:,}. "
+                "Narrow the filters and try again.",
+            ) from exc
+        content, filename, media_type = build_export(kind, rows, _utc_now().date())
+        return Response(
+            content=content,
+            media_type=media_type,
+            headers={"Content-Disposition": f'attachment; filename="{filename}"', "Cache-Control": "no-store"},
+        )
 
     @router.get("/records/{record_id}")
     def record_detail(
