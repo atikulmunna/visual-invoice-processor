@@ -26,6 +26,7 @@ Ledgerly is a private-alpha invoice processing application for a small, controll
 - **Batch uploads:** drop many files at once and follow each one through upload, extraction, and validation, with a plain reason for anything rejected and retry for failures.
 - **Validation and review:** schema checks, arithmetic checks on totals and line items, and confidence scoring. Doubtful documents open in a review workspace with the original file beside an editable form, live checks, and keyboard shortcuts for approve, reject, and duplicate.
 - **Records and overview:** search, filter, and sort every stored record, open any one beside its original file, and export the filtered list as an Excel workbook (records and line items) or CSV. The overview shows monthly spending and top vendors per currency, never mixing currencies, and leads with the single most pressing item, such as review documents about to lose their source file.
+- **Vendor master:** every spelling of a supplier adds up to one vendor. Records link as they are stored, by the same tax ID or BIN or the same name once case, punctuation, and suffixes like Ltd are ignored; look-alike names are suggested for a one-click merge rather than merged silently. Each vendor has a page with its spend by month and the names its documents used.
 - **Safe reprocessing:** idempotent jobs and duplicate-safe writes; the same file uploaded twice in one organization is caught, while two organizations can process identical files independently.
 - **Operations on a budget:** infrastructure as code, least-privilege IAM, secrets in SSM, seven-day log retention, and an annual AWS budget with alerts.
 
@@ -120,6 +121,8 @@ app/
   workspace_api.py         Workspace API: sign-in, account, records, overview, review detail; serves /app
   records_store.py         Records search, filters, and overview totals
   records_export.py        Records and line items as CSV and Excel files
+  vendor_store.py          Vendor matching, merging, and history
+  vendor_api.py            Vendor endpoints
   web_session.py           Session cookie settings
   serverless_worker.py     S3-event processing worker
   extraction_service.py    OpenRouter extraction and PDF text enrichment
@@ -240,6 +243,12 @@ Records created before organizations existed that cannot be traced to an upload 
 python -m app.alpha_admin org-adopt-unowned --org-id <org-id>
 ```
 
+New records link to a vendor as they are stored. Records stored before the vendor master existed are linked once, after migration 007, and the command is safe to run again:
+
+```powershell
+python -m app.alpha_admin vendors-link
+```
+
 ## Testing
 
 ```powershell
@@ -304,7 +313,6 @@ Planned features, roughly in order. The product is heading two ways at once: VAT
 
 **Smarter extraction**
 
-- A vendor master that merges spelling variants and keeps each vendor's history
 - Duplicate detection across different files of the same invoice, not only identical bytes
 - Field-level confidence based on whether each value actually appears in the document
 - Vendor memory: reviewer corrections teach extraction, so repeat vendors are approved automatically

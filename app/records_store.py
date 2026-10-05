@@ -25,21 +25,26 @@ TREND_MONTHS = 12
 TOP_VENDORS = 5
 
 # One row per stored record of an organization, with the fields the workspace filters on.
+# vendor_name is the linked vendor's chosen name, so every spelling of a vendor adds up together;
+# printed_vendor_name keeps the document's own spelling.
 _RECORDS = """
     select
-      id,
-      processed_at_utc,
-      record_json,
-      record_json ->> 'vendor_name' as vendor_name,
-      record_json ->> 'vendor_tax_id' as vendor_tax_id,
-      record_json ->> 'invoice_number' as invoice_number,
-      record_json ->> 'invoice_date' as invoice_date,
-      upper(record_json ->> 'currency') as currency,
-      (record_json ->> 'total_amount')::numeric as total_amount,
-      coalesce((record_json ->> 'needs_review')::boolean, false) as flagged,
-      coalesce(metadata_json ->> 'resolution_source', '') = 'manual_review' as reviewed
-    from public.ledger_records
-    where org_id = %(org_id)s
+      lr.id,
+      lr.processed_at_utc,
+      lr.record_json,
+      lr.vendor_id,
+      coalesce(v.name, lr.record_json ->> 'vendor_name') as vendor_name,
+      lr.record_json ->> 'vendor_name' as printed_vendor_name,
+      lr.record_json ->> 'vendor_tax_id' as vendor_tax_id,
+      lr.record_json ->> 'invoice_number' as invoice_number,
+      lr.record_json ->> 'invoice_date' as invoice_date,
+      upper(lr.record_json ->> 'currency') as currency,
+      (lr.record_json ->> 'total_amount')::numeric as total_amount,
+      coalesce((lr.record_json ->> 'needs_review')::boolean, false) as flagged,
+      coalesce(lr.metadata_json ->> 'resolution_source', '') = 'manual_review' as reviewed
+    from public.ledger_records lr
+    left join public.vendors v on v.id = lr.vendor_id
+    where lr.org_id = %(org_id)s
 """
 
 
@@ -63,7 +68,8 @@ def _filter_clause(filters: RecordFilters) -> tuple[str, dict[str, Any]]:
     params: dict[str, Any] = {}
     if filters.query and filters.query.strip():
         clauses.append(
-            "(vendor_name ilike %(pattern)s or invoice_number ilike %(pattern)s or vendor_tax_id ilike %(pattern)s)"
+            "(vendor_name ilike %(pattern)s or printed_vendor_name ilike %(pattern)s"
+            " or invoice_number ilike %(pattern)s or vendor_tax_id ilike %(pattern)s)"
         )
         params["pattern"] = f"%{_escape_like(filters.query.strip())}%"
     if filters.currency:
@@ -169,14 +175,15 @@ def export_records(
         rows = conn.execute(
             f"""
             with records as ({_RECORDS})
-            select id, processed_at_utc, record_json, flagged, reviewed
+            select id, processed_at_utc, record_json, flagged, reviewed, vendor_name
             from records{where}
             {_order_clause(sort, descending)}
             """,
             params,
         ).fetchall()
     return [
-        {"id": row[0], "added_at": row[1], "record": row[2] or {}, "flagged": row[3], "reviewed": row[4]}
+        {"id": row[0], "added_at": row[1], "record": row[2] or {}, "flagged": row[3], "reviewed": row[4],
+         "vendor_name": row[5]}
         for row in rows
     ]
 
@@ -212,8 +219,10 @@ def get_record(dsn: str, *, org_id: str, record_id: int) -> dict[str, Any] | Non
     with psycopg.connect(dsn, prepare_threshold=None) as conn:
         row = conn.execute(
             """
-            select id, processed_at_utc, drive_file_id, record_json, metadata_json
-            from public.ledger_records where org_id = %s and id = %s
+            select lr.id, lr.processed_at_utc, lr.drive_file_id, lr.record_json, lr.metadata_json, v.id, v.name
+            from public.ledger_records lr
+            left join public.vendors v on v.id = lr.vendor_id
+            where lr.org_id = %s and lr.id = %s
             """,
             (org_id, record_id),
         ).fetchone()
@@ -225,6 +234,7 @@ def get_record(dsn: str, *, org_id: str, record_id: int) -> dict[str, Any] | Non
         "added_at": row[1].isoformat(),
         "source_key": row[2],
         "record": record,
+        "vendor": {"id": row[5], "name": row[6]} if row[5] is not None else None,
         "flagged": bool(record.get("needs_review")),
         "reviewed": metadata.get("resolution_source") == "manual_review",
     }
@@ -289,9 +299,9 @@ def overview(dsn: str, *, org_id: str, currency: str | None, base_currency: str 
         vendors = conn.execute(
             f"""
             with records as ({_RECORDS})
-            select vendor_name, coalesce(sum(total_amount), 0), count(*) from records
+            select vendor_id, vendor_name, coalesce(sum(total_amount), 0), count(*) from records
             where currency = %(currency)s and invoice_date between %(start)s and %(end)s and vendor_name is not null
-            group by 1 order by 2 desc, 1 limit %(limit)s
+            group by 1, 2 order by 3 desc, 2 limit %(limit)s
             """,
             {**params, "limit": TOP_VENDORS},
         ).fetchall()
@@ -301,5 +311,8 @@ def overview(dsn: str, *, org_id: str, currency: str | None, base_currency: str 
         "records_total": counts[0],
         "flagged_total": counts[1],
         "months": [{"month": month, **monthly.get(month, {"total": 0.0, "count": 0})} for month in months],
-        "top_vendors": [{"vendor_name": name, "total": float(total), "count": count} for name, total, count in vendors],
+        "top_vendors": [
+            {"vendor_id": vendor_id, "vendor_name": name, "total": float(total), "count": count}
+            for vendor_id, name, total, count in vendors
+        ],
     }

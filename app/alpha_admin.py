@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import getpass
+import os
 
 from app.alpha_store import ORG_ROLES, AlphaStore, generate_password
 from app.config import load_dotenv
@@ -57,6 +58,11 @@ def main() -> int:
     )
     adopt.add_argument("--org-id", required=True)
 
+    sub.add_parser(
+        "vendors-link",
+        help="Link stored records that have no vendor yet (run once after migration 007)",
+    )
+
     args = parser.parse_args()
     store = AlphaStore.from_env()
     if args.command == "create":
@@ -96,6 +102,10 @@ def main() -> int:
     elif args.command == "org-set-currency":
         code = store.set_base_currency(args.org_id, args.currency)
         print(f"Base currency of {args.org_id} is now {code}")
+    elif args.command == "vendors-link":
+        from app.vendor_store import link_unlinked_records
+
+        print(f"Linked {link_unlinked_records(os.environ.get('POSTGRES_DSN', ''))} records to vendors")
     elif args.command == "org-adopt-unowned":
         counts = store.adopt_unowned_records(args.org_id)
         print(

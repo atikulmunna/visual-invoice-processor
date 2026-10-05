@@ -187,7 +187,7 @@ def record_order(
     return sort, order == "desc"
 
 
-def _organization_member(principal: str | AlphaUser) -> AlphaUser:
+def organization_member(principal: str | AlphaUser) -> AlphaUser:
     if not isinstance(principal, AlphaUser) or not principal.org_id:
         raise HTTPException(status_code=403, detail="No organization is available for this account")
     return principal
@@ -260,13 +260,13 @@ def build_workspace_router(
         limit: int = Query(default=20, ge=1, le=50),
         principal: str | AlphaUser = Depends(require_auth),
     ) -> dict[str, Any]:
-        member = _organization_member(principal)
+        member = organization_member(principal)
         jobs = AlphaStore(postgres_dsn or "").list_jobs(org_id=member.org_id or "", limit=limit)
         return {"jobs": [job_view(job) for job in jobs]}
 
     @router.get("/jobs/{job_id}")
     def job_status(job_id: str, principal: str | AlphaUser = Depends(require_auth)) -> dict[str, Any]:
-        member = _organization_member(principal)
+        member = organization_member(principal)
         try:
             return job_view(AlphaStore(postgres_dsn or "").get_job(job_id, org_id=member.org_id or ""))
         except AlphaNotFoundError as exc:
@@ -274,12 +274,12 @@ def build_workspace_router(
 
     @router.get("/review")
     def review_queue(principal: str | AlphaUser = Depends(require_auth)) -> dict[str, Any]:
-        member = _organization_member(principal)
+        member = organization_member(principal)
         return {"items": [review_summary(item) for item in pending_reviews(member.org_id or "")]}
 
     @router.get("/review/{document_id}")
     def review_detail(document_id: str, principal: str | AlphaUser = Depends(require_auth)) -> dict[str, Any]:
-        member = _organization_member(principal)
+        member = organization_member(principal)
         try:
             item = load_review_item(document_id, queue_dir=review_queue_dir, org_id=member.org_id)
         except FileNotFoundError as exc:
@@ -306,7 +306,7 @@ def build_workspace_router(
         page_size: int = Query(default=25, ge=1, le=100),
         principal: str | AlphaUser = Depends(require_auth),
     ) -> dict[str, Any]:
-        member = _organization_member(principal)
+        member = organization_member(principal)
         sort, descending = ordering
         result = records_store.search_records(
             postgres_dsn or "",
@@ -322,7 +322,7 @@ def build_workspace_router(
     # Declared before /records/{record_id} so "facets" is never read as an id.
     @router.get("/records/facets")
     def record_facets(principal: str | AlphaUser = Depends(require_auth)) -> dict[str, Any]:
-        member = _organization_member(principal)
+        member = organization_member(principal)
         return records_store.record_facets(postgres_dsn or "", org_id=member.org_id or "")
 
     @router.get("/records/export")
@@ -333,7 +333,7 @@ def build_workspace_router(
         principal: str | AlphaUser = Depends(require_auth),
     ) -> Response:
         """The records list as a file: every record the filters match, in list order, not one page."""
-        member = _organization_member(principal)
+        member = organization_member(principal)
         sort, descending = ordering
         try:
             rows = records_store.export_records(
@@ -357,7 +357,7 @@ def build_workspace_router(
         record_id: int = PathParam(ge=1, le=2**63 - 1),
         principal: str | AlphaUser = Depends(require_auth),
     ) -> dict[str, Any]:
-        member = _organization_member(principal)
+        member = organization_member(principal)
         found = records_store.get_record(postgres_dsn or "", org_id=member.org_id or "", record_id=record_id)
         if found is None:
             raise HTTPException(status_code=404, detail="Record not found")
@@ -369,7 +369,7 @@ def build_workspace_router(
         currency: str | None = Query(default=None, pattern=CURRENCY_PATTERN),
         principal: str | AlphaUser = Depends(require_auth),
     ) -> dict[str, Any]:
-        member = _organization_member(principal)
+        member = organization_member(principal)
         org_id = member.org_id or ""
         store = AlphaStore(postgres_dsn or "")
         now = _utc_now()

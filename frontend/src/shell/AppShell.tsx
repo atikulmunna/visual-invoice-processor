@@ -12,6 +12,7 @@ import { UploadQueueProvider, useUploadQueue } from "./uploadQueue";
 const NAV: { to: string; label: string; icon: IconName }[] = [
   { to: "/overview", label: "Overview", icon: "overview" },
   { to: "/records", label: "Records", icon: "records" },
+  { to: "/vendors", label: "Vendors", icon: "vendors" },
   { to: "/review", label: "Review", icon: "review" },
 ];
 

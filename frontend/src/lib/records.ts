@@ -28,6 +28,8 @@ export interface RecordDetail {
   id: number;
   added_at: string;
   record: StoredRecord;
+  /** The vendor the record is linked to; its name can differ from the one printed. */
+  vendor: { id: number; name: string } | null;
   flagged: boolean;
   reviewed: boolean;
   document: ReviewDocument;

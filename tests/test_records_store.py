@@ -187,8 +187,8 @@ def test_overview_totals_one_currency_by_invoice_month(dsn: str, orgs: tuple[str
     # The January 2025 invoice falls outside the twelve-month window.
     assert sum(row["count"] for row in summary["months"]) == 3
     assert summary["top_vendors"] == [
-        {"vendor_name": "Acme Supplies", "total": 3500.0, "count": 2},
-        {"vendor_name": "Daraz", "total": 500.0, "count": 1},
+        {"vendor_id": None, "vendor_name": "Acme Supplies", "total": 3500.0, "count": 2},
+        {"vendor_id": None, "vendor_name": "Daraz", "total": 500.0, "count": 1},
     ]
 
 
@@ -197,7 +197,7 @@ def test_overview_switches_currency_and_falls_back_when_asked_for_one_it_lacks(d
     missing = overview(dsn, org_id=orgs[0], currency="EUR", base_currency="BDT", today=date(2026, 10, 4))
 
     assert usd["currency"] == "USD"
-    assert usd["top_vendors"] == [{"vendor_name": "Cloud Co", "total": 40.0, "count": 1}]
+    assert usd["top_vendors"] == [{"vendor_id": None, "vendor_name": "Cloud Co", "total": 40.0, "count": 1}]
     assert missing["currency"] == "BDT"
 
 

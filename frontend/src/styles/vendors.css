@@ -1,0 +1,40 @@
+.merge-list {
+  display: grid;
+  gap: 4px;
+  margin: 14px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.merge-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 16px;
+  padding: 12px 0;
+  border-top: 1px solid var(--line);
+}
+
+.merge-picker {
+  align-items: flex-end;
+  margin-top: 16px;
+}
+
+.merge-picker .field {
+  flex: 1 1 260px;
+  max-width: 420px;
+}
+
+/* Spend lists and dates are longer than the counts stat tiles usually hold. */
+.vendor-spend,
+.vendor-date {
+  display: block;
+  font-size: 22px;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.fact-note-muted {
+  color: var(--ink-muted);
+}

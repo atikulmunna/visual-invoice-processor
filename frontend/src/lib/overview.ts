@@ -6,6 +6,7 @@ export interface MonthTotal {
 }
 
 export interface VendorTotal {
+  vendor_id: number | null;
   vendor_name: string;
   total: number;
   count: number;

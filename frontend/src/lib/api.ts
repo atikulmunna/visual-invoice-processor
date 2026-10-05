@@ -2,6 +2,7 @@ import { signInUrl } from "./navigation";
 import type { Overview } from "./overview";
 import { recordsApiPath, type RecordDetail, type RecordFacets, type RecordPage, type RecordQuery } from "./records";
 import type { ReviewDetail, ReviewSummary, StoredRecord } from "./review";
+import type { MergeSuggestion, Vendor, VendorDetail } from "./vendors";
 import type { JobView, UploadLimits } from "./uploads";
 
 export class ApiError extends Error {
@@ -136,6 +137,15 @@ export const api = {
   record: (id: number) => request<RecordDetail>(`/api/records/${id}`),
   overview: (currency: string | null) =>
     request<Overview>(currency ? `/api/overview?currency=${encodeURIComponent(currency)}` : "/api/overview"),
+  vendors: () => request<{ vendors: Vendor[]; suggestions: MergeSuggestion[] }>("/api/vendors"),
+  vendor: (id: number) => request<VendorDetail>(`/api/vendors/${id}`),
+  updateVendor: (id: number, changes: { name: string; tax_id: string | null; default_currency: string | null }) =>
+    request<VendorDetail>(`/api/vendors/${id}`, { method: "PUT", body: JSON.stringify(changes) }),
+  mergeVendors: (keepId: number, vendorIds: number[]) =>
+    request<VendorDetail>(`/api/vendors/${keepId}/merge`, {
+      method: "POST",
+      body: JSON.stringify({ vendor_ids: vendorIds }),
+    }),
 };
 
 /** The file name from a Content-Disposition header such as `attachment; filename="records.csv"`. */

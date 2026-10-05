@@ -148,6 +148,20 @@ class PostgresStorageService:
                 )
             conn.commit()
 
+    def _link_vendor(self, cur: Any, record_id: int, org_id: str, record: dict[str, Any]) -> None:
+        """Ties a new record to its vendor in the same transaction, so a stored record is never left unlinked."""
+        from app.vendor_store import link_vendor
+
+        vendor_id = link_vendor(
+            cur,
+            org_id=org_id,
+            name=record.get("vendor_name"),
+            tax_id=record.get("vendor_tax_id"),
+            currency=record.get("currency"),
+        )
+        if vendor_id is not None:
+            cur.execute(f"UPDATE {self._table} SET vendor_id = %s WHERE id = %s", (vendor_id, record_id))
+
     def append_record(self, record: dict[str, Any], metadata: dict[str, Any]) -> dict[str, Any]:
         drive_file_id = metadata.get("drive_file_id")
         file_hash = metadata.get("file_hash")
@@ -175,6 +189,8 @@ class PostgresStorageService:
                     ),
                 )
                 row = cur.fetchone()
+                if row is not None and metadata.get("org_id"):
+                    self._link_vendor(cur, int(row[0]), str(metadata["org_id"]), record)
             conn.commit()
 
         if row is None:
