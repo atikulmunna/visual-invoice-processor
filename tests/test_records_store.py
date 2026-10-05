@@ -8,7 +8,9 @@ import pytest
 
 from app.alpha_store import AlphaStore
 from app.records_store import (
+    ExportTooLarge,
     RecordFilters,
+    export_records,
     get_record,
     overview,
     pick_currency,
@@ -131,6 +133,30 @@ def test_facets_list_the_organization_currencies_and_vendors(dsn: str, orgs: tup
         "currencies": [{"code": "BDT", "count": 4}, {"code": "USD", "count": 1}],
         "vendors": ["Acme Supplies", "Cloud Co", "Daraz", "Old Vendor"],
     }
+
+
+def test_export_holds_every_matching_record_in_list_order(dsn: str, orgs: tuple[str, str]) -> None:
+    mine, other = orgs
+
+    everything = export_records(dsn, org_id=mine, filters=RecordFilters(), sort="total", descending=False)
+    bdt_flagged = export_records(dsn, org_id=mine, filters=RecordFilters(currency="BDT", flagged=True))
+
+    assert [row["record"]["invoice_number"] for row in everything] == ["DX1", "D_1", "O-1", "INV-100", "INV-101"]
+    assert everything[2]["added_at"] == START + timedelta(hours=4)
+    assert (everything[1]["reviewed"], everything[1]["flagged"]) == (True, False)
+    assert everything[1]["record"]["vendor_name"] == "Daraz"
+    assert [row["record"]["invoice_number"] for row in bdt_flagged] == ["INV-101"]
+    assert [row["record"]["total_amount"] for row in export_records(dsn, org_id=other, filters=RecordFilters())] == [
+        99999.0
+    ]
+
+
+def test_export_refuses_more_records_than_it_may_hold(dsn: str, orgs: tuple[str, str]) -> None:
+    with pytest.raises(ExportTooLarge) as refused:
+        export_records(dsn, org_id=orgs[0], filters=RecordFilters(), limit=4)
+
+    assert (refused.value.total, refused.value.limit) == (5, 4)
+    assert len(export_records(dsn, org_id=orgs[0], filters=RecordFilters(), limit=5)) == 5
 
 
 def test_a_record_is_found_only_within_its_organization(dsn: str, orgs: tuple[str, str]) -> None:

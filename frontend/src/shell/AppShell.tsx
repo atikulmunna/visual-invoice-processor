@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { Link, NavLink, Outlet, useLocation, useNavigate } from "react-router";
 
 import { Icon, type IconName } from "../components/Icon";
 import { ToastProvider } from "../components/Toast";
 import { buttonClass } from "../components/ui";
 import { initials } from "../lib/format";
+import { useMenu } from "../lib/menu";
 import { SessionProvider, useSession } from "./session";
 import { UploadQueueProvider, useUploadQueue } from "./uploadQueue";
 
@@ -54,30 +55,7 @@ function SearchForm({ id }: { id: string }) {
 
 function AccountMenu() {
   const { me } = useSession();
-  const [open, setOpen] = useState(false);
-  const containerRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!open) {
-      return;
-    }
-    function closeOutside(event: MouseEvent) {
-      if (!containerRef.current?.contains(event.target as Node)) {
-        setOpen(false);
-      }
-    }
-    function closeOnEscape(event: KeyboardEvent) {
-      if (event.key === "Escape") {
-        setOpen(false);
-      }
-    }
-    document.addEventListener("mousedown", closeOutside);
-    document.addEventListener("keydown", closeOnEscape);
-    return () => {
-      document.removeEventListener("mousedown", closeOutside);
-      document.removeEventListener("keydown", closeOnEscape);
-    };
-  }, [open]);
+  const { open, setOpen, containerRef } = useMenu();
 
   return (
     <div className="menu" ref={containerRef}>

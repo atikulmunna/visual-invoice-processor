@@ -19,6 +19,8 @@ SORT_COLUMNS: dict[SortKey, str] = {
 }
 
 MAX_VENDOR_OPTIONS = 200
+# Keeps an export well inside the 6 MB Lambda response limit.
+MAX_EXPORT_RECORDS = 5000
 TREND_MONTHS = 12
 TOP_VENDORS = 5
 
@@ -27,6 +29,7 @@ _RECORDS = """
     select
       id,
       processed_at_utc,
+      record_json,
       record_json ->> 'vendor_name' as vendor_name,
       record_json ->> 'vendor_tax_id' as vendor_tax_id,
       record_json ->> 'invoice_number' as invoice_number,
@@ -83,6 +86,24 @@ def _filter_clause(filters: RecordFilters) -> tuple[str, dict[str, Any]]:
     return (" where " + " and ".join(clauses)) if clauses else "", params
 
 
+class ExportTooLarge(Exception):
+    """More records match than one export may hold."""
+
+    def __init__(self, total: int, limit: int) -> None:
+        super().__init__(f"{total} records match; an export holds at most {limit}")
+        self.total = total
+        self.limit = limit
+
+
+def _order_clause(sort: SortKey, descending: bool) -> str:
+    direction = "desc" if descending else "asc"
+    return f"order by {SORT_COLUMNS[sort]} {direction} nulls last, id {direction}"
+
+
+def _count(conn: psycopg.Connection, where: str, params: dict[str, Any]) -> int:
+    return conn.execute(f"with records as ({_RECORDS}) select count(*) from records{where}", params).fetchone()[0]
+
+
 def _row_summary(row: tuple[Any, ...]) -> dict[str, Any]:
     return {
         "id": row[0],
@@ -108,24 +129,56 @@ def search_records(
     page_size: int = 25,
 ) -> dict[str, Any]:
     """One page of the organization's records, plus how many match in total."""
-    order = SORT_COLUMNS[sort]
-    direction = "desc" if descending else "asc"
     where, params = _filter_clause(filters)
     params.update(org_id=org_id, limit=page_size, offset=(page - 1) * page_size)
     with psycopg.connect(dsn, prepare_threshold=None) as conn:
-        total = conn.execute(f"with records as ({_RECORDS}) select count(*) from records{where}", params).fetchone()[0]
+        total = _count(conn, where, params)
         rows = conn.execute(
             f"""
             with records as ({_RECORDS})
             select id, processed_at_utc, vendor_name, invoice_number, invoice_date, currency,
                    total_amount, flagged, reviewed
             from records{where}
-            order by {order} {direction} nulls last, id {direction}
+            {_order_clause(sort, descending)}
             limit %(limit)s offset %(offset)s
             """,
             params,
         ).fetchall()
     return {"items": [_row_summary(row) for row in rows], "total": total}
+
+
+def export_records(
+    dsn: str,
+    *,
+    org_id: str,
+    filters: RecordFilters,
+    sort: SortKey = "added",
+    descending: bool = True,
+    limit: int = MAX_EXPORT_RECORDS,
+) -> list[dict[str, Any]]:
+    """Every record matching the filters, in list order, with the full stored record for a file download.
+
+    Raises ExportTooLarge rather than returning a file that silently leaves records out.
+    """
+    where, params = _filter_clause(filters)
+    params.update(org_id=org_id)
+    with psycopg.connect(dsn, prepare_threshold=None) as conn:
+        total = _count(conn, where, params)
+        if total > limit:
+            raise ExportTooLarge(total, limit)
+        rows = conn.execute(
+            f"""
+            with records as ({_RECORDS})
+            select id, processed_at_utc, record_json, flagged, reviewed
+            from records{where}
+            {_order_clause(sort, descending)}
+            """,
+            params,
+        ).fetchall()
+    return [
+        {"id": row[0], "added_at": row[1], "record": row[2] or {}, "flagged": row[3], "reviewed": row[4]}
+        for row in rows
+    ]
 
 
 def record_facets(dsn: str, *, org_id: str) -> dict[str, Any]:

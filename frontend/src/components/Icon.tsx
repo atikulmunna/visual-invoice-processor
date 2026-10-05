@@ -23,6 +23,7 @@ const PATHS = {
   arrowLeft: "M19 12H5M11 6l-6 6 6 6",
   arrowUp: "M12 19V5M6 11l6-6 6 6",
   arrowDown: "M12 5v14M6 13l6 6 6-6",
+  download: "M12 4v11M7 10l5 5 5-5M5 20h14",
 } as const;
 
 export type IconName = keyof typeof PATHS;

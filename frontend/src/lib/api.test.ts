@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { ApiError, createApiClient } from "./api";
+import { ApiError, createApiClient, fileNameFromDisposition } from "./api";
 
 function jsonResponse(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -64,5 +64,18 @@ describe("createApiClient", () => {
     const request = createApiClient({ fetchImpl: async () => new Response(null, { status: 204 }), onUnauthorized: vi.fn() });
 
     await expect(request("/api/thing")).resolves.toBeUndefined();
+  });
+});
+
+describe("fileNameFromDisposition", () => {
+  it("reads the quoted file name", () => {
+    expect(fileNameFromDisposition('attachment; filename="ledgerly-records-2026-10-05.xlsx"')).toBe(
+      "ledgerly-records-2026-10-05.xlsx",
+    );
+  });
+
+  it("is null when the header is missing or has no name", () => {
+    expect(fileNameFromDisposition(null)).toBeNull();
+    expect(fileNameFromDisposition("attachment")).toBeNull();
   });
 });

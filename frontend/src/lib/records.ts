@@ -121,6 +121,17 @@ export function recordsApiPath(query: RecordQuery): string {
   return `/api/records?${params}`;
 }
 
+export type ExportFormat = "xlsx" | "records-csv" | "line-items-csv";
+
+/** The file download for the whole filtered list in its current order, rather than one page. */
+export function recordsExportPath(query: RecordQuery, format: ExportFormat): string {
+  const params = paramsFromQuery({ ...query, page: 1 });
+  params.set("sort", query.sort);
+  params.set("order", query.order);
+  params.set("format", format);
+  return `/api/records/export?${params}`;
+}
+
 /** A new query with some filters changed. Any change other than the page starts again at page one. */
 export function withChange(query: RecordQuery, change: Partial<RecordQuery>): RecordQuery {
   return { ...query, page: 1, ...change };
