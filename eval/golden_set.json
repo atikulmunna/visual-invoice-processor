@@ -44,6 +44,33 @@
         "currency": "BDT",
         "total_amount": 5274.88
       }
+    },
+    {
+      "id": "case-006",
+      "file_path": "eval/samples/invoice_006.pdf",
+      "expected": {
+        "document_type": "invoice",
+        "currency": "BDT",
+        "total_amount": 2300.0
+      }
+    },
+    {
+      "id": "case-007",
+      "file_path": "eval/samples/invoice_007.pdf",
+      "expected": {
+        "document_type": "receipt",
+        "currency": "USD",
+        "total_amount": 86.71
+      }
+    },
+    {
+      "id": "case-008",
+      "file_path": "eval/samples/invoice_008.pdf",
+      "expected": {
+        "document_type": "receipt",
+        "currency": "USD",
+        "total_amount": 10.8
+      }
     }
   ]
 }

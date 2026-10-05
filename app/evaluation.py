@@ -12,7 +12,19 @@ from app.extraction_service import ExtractionError, extract_document
 from app.normalization_engine import NormalizationRuleEngine
 
 
-NUMERIC_FIELDS = {"subtotal", "tax_amount", "total_amount", "model_confidence", "validation_score"}
+# Compared within the amount tolerance. Line item fields are matched by their last name segment.
+NUMERIC_FIELDS = {
+    "subtotal",
+    "tax_amount",
+    "shipping_amount",
+    "discount_amount",
+    "total_amount",
+    "model_confidence",
+    "validation_score",
+    "quantity",
+    "unit_price",
+    "line_total",
+}
 
 
 @dataclass
@@ -40,7 +52,7 @@ def _compare_numeric(expected: Any, actual: Any, tolerance: float) -> bool:
 
 
 def _compare_scalar(field: str, expected: Any, actual: Any, tolerance: float) -> tuple[bool, str | None]:
-    if field in NUMERIC_FIELDS:
+    if field.rsplit(".", 1)[-1] in NUMERIC_FIELDS:
         matched = _compare_numeric(expected, actual, tolerance)
         return matched, None if matched else f"numeric mismatch (tol={tolerance})"
     if isinstance(expected, str):
@@ -183,6 +195,42 @@ def evaluate_case(
     }
 
 
+def _field_key(field: str) -> str:
+    """Every line item's total counts toward one line_items.line_total figure, and so on."""
+    return re.sub(r"\[\d+\]", "", field)
+
+
+def accuracy_breakdown(cases: list[dict[str, Any]], results: list[dict[str, Any]]) -> dict[str, Any]:
+    """Accuracy per field and average score per document type, so a regression shows where it happens."""
+    fields: dict[str, list[int]] = {}
+    types: dict[str, dict[str, Any]] = {}
+    for case, result in zip(cases, results):
+        expected = case.get("expected") if isinstance(case.get("expected"), dict) else {}
+        bucket = types.setdefault(str(expected.get("document_type") or "unspecified"), {"scores": [], "errors": 0})
+        if result.get("status") != "ok":
+            bucket["errors"] += 1
+            continue
+        bucket["scores"].append(float(result["score"]))
+        for row in result["field_results"]:
+            counts = fields.setdefault(_field_key(row["field"]), [0, 0])
+            counts[0] += int(bool(row["matched"]))
+            counts[1] += 1
+    return {
+        "by_field": {
+            name: {"matched": matched, "total": total, "accuracy": round(matched / total, 4)}
+            for name, (matched, total) in sorted(fields.items())
+        },
+        "by_document_type": {
+            name: {
+                "cases": len(bucket["scores"]) + bucket["errors"],
+                "errors": bucket["errors"],
+                "avg_score": round(sum(bucket["scores"]) / len(bucket["scores"]), 4) if bucket["scores"] else 0.0,
+            }
+            for name, bucket in sorted(types.items())
+        },
+    }
+
+
 def run_evaluation(
     dataset_path: Path,
     rules_path: Path,
@@ -232,7 +280,12 @@ def run_evaluation(
             "error_total": len(error_results),
             "avg_score": round(avg_score, 4),
             "provider_mix": provider_mix,
+            # Correct only because the base currency was assumed; the document showed none the model could read.
+            "currency_assumed_total": sum(
+                1 for row in ok_results if (row.get("normalized_output") or {}).get("currency_assumed")
+            ),
         },
+        **accuracy_breakdown(cases, results),
         "results": results,
     }
 
@@ -304,6 +357,11 @@ def main() -> int:
     )
     if summary["provider_mix"]:
         print(f"Provider mix: {summary['provider_mix']}")
+    print(f"Currency taken from the base currency: {summary['currency_assumed_total']} of {summary['ok_total']}")
+    for name, row in report["by_document_type"].items():
+        print(f"  {name}: cases={row['cases']} errors={row['errors']} avg_score={row['avg_score']}")
+    for name, row in report["by_field"].items():
+        print(f"  {name}: {row['matched']}/{row['total']} ({row['accuracy']:.0%})")
     print(f"Report written to: {output_path}")
 
     fail_under = float(args.fail_under)

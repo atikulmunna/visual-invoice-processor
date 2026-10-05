@@ -262,6 +262,8 @@ python -m app.evaluation --dataset eval/golden_set.json --fail-under 0.90
 python -m app.evaluation --dataset eval/golden_set_strict.json --fail-under 0.75 --output logs/golden_eval_strict_report.json
 ```
 
+The report gives accuracy per field and an average score per document type, so a regression shows where it happens, and counts documents whose currency was only assumed from the organization's base currency. The sample documents are redacted: customer names, addresses, phone numbers, and payment details are removed from the page and from its text layer.
+
 ## Deployment
 
 The application is declared in `template.yaml` and deployed through `.github/workflows/deploy-aws.yml` using GitHub OIDC, so no long-lived AWS keys are stored in the repository.

@@ -25,7 +25,8 @@
         "subtotal": 449.0,
         "tax_amount": 0.0,
         "total_amount": 400.0,
-        "payment_method": "cash"
+        "payment_method": "cash",
+        "discount_amount": 49.0
       }
     },
     {
@@ -38,7 +39,7 @@
         "invoice_date": "2012-03-06",
         "currency": "USD",
         "subtotal": 48.71,
-        "tax_amount": 1.39,
+        "tax_amount": 0.0,
         "total_amount": 50.1,
         "payment_method": "unknown",
         "line_items": [
@@ -47,7 +48,9 @@
             "quantity": 1.0,
             "line_total": 48.71
           }
-        ]
+        ],
+        "shipping_amount": 11.13,
+        "discount_amount": 9.74
       }
     },
     {
@@ -58,10 +61,11 @@
         "vendor_name": "Uber",
         "invoice_date": "2026-03-02",
         "currency": "BDT",
-        "subtotal": 291.54,
+        "subtotal": 302.06,
         "tax_amount": 0.0,
         "total_amount": 291.54,
-        "payment_method": "cash"
+        "payment_method": "cash",
+        "discount_amount": 10.52
       }
     },
     {
@@ -87,6 +91,89 @@
             "description": "White Printed Cotton Fatua",
             "quantity": 1.0,
             "line_total": 927.27
+          },
+          {
+            "description": "White/Grey Printed Cotton Shirt",
+            "quantity": 1.0,
+            "line_total": 846.51
+          },
+          {
+            "description": "White Printed Cotton Shirt",
+            "quantity": 1.0,
+            "line_total": 860.47
+          },
+          {
+            "description": "Deep Green Printed Cotton Shirt",
+            "quantity": 1.0,
+            "line_total": 841.86
+          }
+        ],
+        "shipping_amount": 80.0
+      }
+    },
+    {
+      "id": "strict-006",
+      "file_path": "eval/samples/invoice_006.pdf",
+      "expected": {
+        "document_type": "invoice",
+        "vendor_name": "HiFi Heaven",
+        "invoice_number": "16713",
+        "invoice_date": "2026-09-19",
+        "currency": "BDT",
+        "subtotal": 2300.0,
+        "tax_amount": 0.0,
+        "shipping_amount": 0.0,
+        "total_amount": 2300.0,
+        "payment_method": "cash",
+        "line_items": [
+          {
+            "description": "TANGZU Waner SG 2 Red Lion (Bass Edition) - 3.5mm with mic",
+            "quantity": 1.0,
+            "line_total": 2300.0
+          }
+        ]
+      }
+    },
+    {
+      "id": "strict-007",
+      "file_path": "eval/samples/invoice_007.pdf",
+      "expected": {
+        "document_type": "receipt",
+        "vendor_name": "Roboflow, Inc",
+        "invoice_number": "HVYNDAHI-0003",
+        "invoice_date": "2026-10-01",
+        "currency": "USD",
+        "subtotal": 86.71,
+        "tax_amount": 0.0,
+        "total_amount": 86.71,
+        "payment_method": "card",
+        "line_items": [
+          {
+            "description": "Roboflow Credits Flex Usage",
+            "quantity": 14.45247,
+            "line_total": 86.71
+          }
+        ]
+      }
+    },
+    {
+      "id": "strict-008",
+      "file_path": "eval/samples/invoice_008.pdf",
+      "expected": {
+        "document_type": "receipt",
+        "vendor_name": "OpenRouter, Inc",
+        "invoice_number": "LA7TWHRX-0001",
+        "invoice_date": "2026-10-03",
+        "currency": "USD",
+        "subtotal": 10.8,
+        "tax_amount": 0.0,
+        "total_amount": 10.8,
+        "payment_method": "unknown",
+        "line_items": [
+          {
+            "description": "OpenRouter Credits",
+            "quantity": 1.0,
+            "line_total": 10.8
           }
         ]
       }
