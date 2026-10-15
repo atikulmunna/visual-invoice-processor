@@ -24,12 +24,6 @@ def _create_database() -> str:
     name = f"ledgerly_test_{uuid4().hex[:12]}"
     with psycopg.connect(TEST_POSTGRES_DSN, autocommit=True) as conn:
         conn.execute(f'CREATE DATABASE "{name}"')
-        # Supabase roles referenced by the lockdown migrations.
-        for role in ("anon", "authenticated"):
-            conn.execute(
-                f"DO $$ BEGIN CREATE ROLE {role} NOLOGIN; "
-                "EXCEPTION WHEN duplicate_object THEN NULL; END $$"
-            )
     return psycopg.conninfo.make_conninfo(TEST_POSTGRES_DSN, dbname=name)
 
 

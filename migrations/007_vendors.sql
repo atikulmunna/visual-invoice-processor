@@ -36,6 +36,3 @@ create index if not exists ledger_records_org_vendor_idx on public.ledger_record
 -- Same lockdown as 003 for the new tables.
 alter table public.vendors enable row level security;
 alter table public.vendor_aliases enable row level security;
-
-revoke all privileges on table public.vendors, public.vendor_aliases from anon, authenticated;
-revoke all privileges on sequence public.vendors_id_seq from anon, authenticated;
