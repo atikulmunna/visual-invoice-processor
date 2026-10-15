@@ -6,7 +6,7 @@
 
 ---
 
-Ledgerly is a private-alpha invoice processing application for a small, controlled group of testers. Users upload PDF, PNG, or JPEG documents directly to a private Amazon S3 bucket. An event-driven worker extracts the fields with a low-cost model through OpenRouter, normalizes and validates them, and either stores a structured record in Supabase Postgres or sends the document to a human review queue. Every document, record, and review item belongs to an organization, and no organization can see another's data.
+Ledgerly is a private-alpha invoice processing application for a small, controlled group of testers. Users upload PDF, PNG, or JPEG documents directly to a private Amazon S3 bucket. An event-driven worker extracts the fields with a low-cost model through OpenRouter, normalizes and validates them, and either stores a structured record in Neon Postgres or sends the document to a human review queue. Every document, record, and review item belongs to an organization, and no organization can see another's data.
 
 ## Product preview
 
@@ -41,7 +41,7 @@ flowchart LR
     INBOX -->|Object-created event| WORKER[Processing Lambda]
     WORKER --> EXTRACT[OpenRouter extraction]
     EXTRACT --> NORMALIZE[Normalize and validate]
-    NORMALIZE -->|Complete and consistent| DB[(Supabase Postgres)]
+    NORMALIZE -->|Complete and consistent| DB[(Neon Postgres)]
     NORMALIZE -->|Missing or doubtful| REVIEW[Review queue]
     WORKER --> ARCHIVE[(S3 archive)]
     DB --> WEB
@@ -93,7 +93,7 @@ Currency is resolved from the model's answer first, then from the dominant curre
 | Object storage | Amazon S3 | Private inbox, event trigger, short-lived archive |
 | Processing | Python 3.13, AWS Lambda | File inspection, extraction pipeline, validation |
 | AI extraction | OpenRouter (Gemini 2.5 Flash Lite) | Invoice and receipt field extraction |
-| Database | Supabase Postgres | Organizations, users, sessions, jobs, records, reviews |
+| Database | Neon Postgres | Organizations, users, sessions, jobs, records, vendors, reviews |
 | Infrastructure | AWS SAM, CloudFormation | Repeatable serverless provisioning |
 | Delivery | GitHub Actions, GitHub OIDC | Tests, image build, deployment, health check |
 | Quality | Pytest, Vitest, Ruff, golden datasets | Regression, isolation, and extraction-quality checks |
@@ -138,7 +138,7 @@ assets/                     Product icon and the README screenshot collage
 config/                     Data-driven normalization rules
 eval/                       Standard and strict golden datasets
 infra/                      GitHub OIDC bootstrap stack
-migrations/                 Ordered Supabase/Postgres migrations
+migrations/                 Ordered Postgres migrations
 schemas/                    Invoice data model
 tests/                      Unit, API, isolation, storage, and worker tests
 template.yaml               AWS SAM application
@@ -151,7 +151,7 @@ Dockerfile                  Lambda container image, including the frontend build
 
 - Python 3.13 and Node.js 24
 - An AWS account and private S3 bucket
-- A Supabase Postgres project
+- A Postgres database (production uses a Neon project, reached through its connection pooler)
 - An OpenRouter API key
 
 ### Setup
@@ -286,7 +286,7 @@ The stack provisions:
 - Two CloudWatch log groups with seven-day retention
 - An annual AWS cost budget with threshold and forecast alerts
 
-Follow [AWS_DEPLOYMENT.md](AWS_DEPLOYMENT.md) for the one-time AWS, SSM, Supabase, IAM, and repository setup.
+Follow [AWS_DEPLOYMENT.md](AWS_DEPLOYMENT.md) for the one-time AWS, SSM, Neon, IAM, and repository setup.
 
 ## Continuous integration
 
@@ -295,7 +295,6 @@ Follow [AWS_DEPLOYMENT.md](AWS_DEPLOYMENT.md) for the one-time AWS, SSM, Supabas
 | `deploy-aws.yml` | Runs Python tests with a Postgres service, frontend tests and type check, validates SAM, builds the Lambda images, deploys, and checks `/health` |
 | `golden-eval.yml` | Runs the standard extraction-quality gate when application, config, or eval files change |
 | `golden-eval-strict-nightly.yml` | Runs the strict benchmark weekly |
-| `supabase-keepalive.yml` | Pings the database every three days so the free-plan project stays awake |
 
 ## Security
 
@@ -304,7 +303,7 @@ Follow [AWS_DEPLOYMENT.md](AWS_DEPLOYMENT.md) for the one-time AWS, SSM, Supabas
 - Session cookies are secure, HTTP-only, and use `SameSite=Lax`.
 - After sign-in, only same-site return paths are honored, so a crafted link cannot redirect anyone off the site.
 - Production secrets are stored as SSM `SecureString` parameters, and only the processing Lambda can read the model key.
-- Supabase browser roles have no direct access to operational tables.
+- Operational tables have row-level security enabled and grant nothing to any role but the application's own.
 - The web Lambda can authorize inbox uploads and read archived files to sign five-minute view links for reviewers, but it cannot write to or delete from the archive.
 - Never commit `.env`, tester credentials, database passwords, or model keys.
 

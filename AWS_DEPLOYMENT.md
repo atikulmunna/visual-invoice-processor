@@ -1,6 +1,6 @@
 # AWS Private-Alpha Deployment
 
-The AWS deployment is serverless: FastAPI runs behind a Lambda Function URL, browsers upload directly to private S3 with a five-minute presigned policy, and an S3 event invokes the processing Lambda. Supabase remains the durable database and OpenRouter is the only extraction provider.
+The AWS deployment is serverless: FastAPI runs behind a Lambda Function URL, browsers upload directly to private S3 with a five-minute presigned policy, and an S3 event invokes the processing Lambda. Neon Postgres is the durable database and OpenRouter is the only extraction provider.
 
 ## Cost and safety boundaries
 
@@ -17,7 +17,7 @@ The AWS deployment is serverless: FastAPI runs behind a Lambda Function URL, bro
 1. Configure `POSTGRES_DSN`, then apply all ordered migrations with
    `python -m app.db_migrate`. This creates the base tables, analytics views,
    private-alpha state, and browser-role access restrictions.
-2. Create Standard `SecureString` parameters in `ap-southeast-1` for the Supabase DSN and the OpenRouter API key. The OpenRouter key must live at `/invoice-processor/alpha/openrouter-api-key`; only the processing Lambda can read it. Use the AWS-managed SSM key, not a customer-managed monthly KMS key.
+2. Create Standard `SecureString` parameters in `ap-southeast-1` for the Neon DSN (the pooled connection string, whose host contains `-pooler`) and the OpenRouter API key. The OpenRouter key must live at `/invoice-processor/alpha/openrouter-api-key`; only the processing Lambda can read it. Use the AWS-managed SSM key, not a customer-managed monthly KMS key.
 3. Bootstrap GitHub OIDC once. This creates a repository-specific deployment role,
    a least-privilege CloudFormation execution role, two ECR repositories, and a
    seven-day deployment-artifact bucket:
