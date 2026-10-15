@@ -17,6 +17,7 @@ from app.vendor_store import (
     merge_vendors,
     normalize_tax_id,
     normalize_vendor_name,
+    refresh_alias_forms,
     suggest_merges,
     update_vendor,
     vendor_detail,
@@ -34,6 +35,15 @@ PASSWORD = "A-strong-alpha-password"
         ("DARAZ BANGLADESH LIMITED", "daraz bangladesh"),
         ("Fish & Co", "fish and"),
         ("Ltd", "ltd"),  # a name that is only a suffix is kept
+        ("360dialog GmbH", "360dialog"),
+        ("Acme S.A.", "acme"),
+        ("Nestle S.p.A.", "nestle"),
+        ("Shopee Pte. Ltd.", "shopee"),
+        ("Grab Sdn Bhd", "grab"),
+        ("Atlassian Pty Ltd", "atlassian"),
+        ("AG", "ag"),
+        ("U.S.A. Traders", "usa traders"),
+        ("Studio 3.5", "studio 3 5"),  # only letters are joined, never numbers
         ("স্বপ্ন সুপারশপ", "স্বপ্ন সুপারশপ"),  # Bangla vowel signs stay part of their word
         ("  ", None),
         ("...", None),
@@ -216,3 +226,39 @@ def test_records_and_overview_show_the_chosen_vendor_name(dsn: str) -> None:
     assert {row["vendor_name"] for row in found["items"]} == {"RYANS Computers"}
     assert by_printed_name["total"] == 2
     assert summary["top_vendors"] == [{"vendor_id": kept, "vendor_name": "RYANS Computers", "total": 500.0, "count": 2}]
+
+
+def test_a_foreign_legal_form_does_not_split_a_vendor(dsn: str) -> None:
+    org = _org(dsn)
+
+    first = _store(dsn, org, vendor_name="360Dialog")
+    second = _store(dsn, org, vendor_name="360dialog GmbH")
+
+    assert _vendor_of(dsn, first) == _vendor_of(dsn, second)
+
+
+def test_refreshing_alias_forms_keeps_names_saved_under_older_rules_linking(dsn: str) -> None:
+    import psycopg
+
+    org = _org(dsn)
+    smallpdf = _vendor_of(dsn, _store(dsn, org, vendor_name="Smallpdf"))
+    acme = _vendor_of(dsn, _store(dsn, org, vendor_name="Acme"))
+    with psycopg.connect(dsn) as conn:
+        # Names saved before GmbH and AG were recognized as legal forms.
+        older = _vendor_of(dsn, _store(dsn, org, vendor_name="Older Vendor"))
+        conn.execute("update vendor_aliases set normalized = 'older vendor ag', alias = 'Older Vendor AG' "
+                     "where vendor_id = %s", (older,))
+        conn.execute("insert into vendor_aliases (org_id, normalized, vendor_id, alias) values (%s, 'acme gmbh', %s, 'Acme GmbH')",
+                     (org, smallpdf))
+
+    first = refresh_alias_forms(dsn)
+    again = refresh_alias_forms(dsn)
+
+    assert first["added"] >= 1 and first["conflicts"] >= 1  # other modules' orgs may add more
+    assert again["added"] == 0
+    assert _vendor_of(dsn, _store(dsn, org, vendor_name="Older Vendor AG")) == older
+    # "Acme GmbH" now reads as "acme", which already belongs to Acme: left for a person to merge.
+    assert _vendor_of(dsn, _store(dsn, org, vendor_name="Acme")) == acme
+    names = {row["id"]: row["aliases"] for row in list_vendors(dsn, org_id=org)}
+    assert names[smallpdf] == ["Acme GmbH"]
+

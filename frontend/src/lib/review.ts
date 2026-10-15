@@ -52,10 +52,22 @@ export interface ComparisonRow {
 const plainNumber = (value: string | null | undefined) => (value ?? "").toUpperCase().replace(/[^0-9A-Z]/g, "");
 
 // Mirrors the server's vendor matching: case, punctuation, and a trailing legal form are ignored.
-const LEGAL_SUFFIXES = new Set(["co", "company", "corp", "corporation", "inc", "incorporated", "limited", "llc", "ltd", "plc", "pvt", "private"]);
+const LEGAL_SUFFIXES = new Set([
+  "co", "company", "corp", "corporation", "inc", "incorporated", "limited", "llc", "ltd", "plc", "pvt", "private",
+  "gmbh", "ag", "kg", "sa", "sas", "sarl", "srl", "spa", "bv", "nv", "oy", "ab", "aps", "pty", "pte", "sdn", "bhd", "llp",
+]);
+// Dotted single-letter abbreviations such as S.A. or S.p.A.; letters only, so 3.5 is left alone.
+const DOTTED_ABBREVIATION = /(?<![\p{L}\p{N}])\p{L}(?:\.\p{L})+\.?(?![\p{L}\p{N}])/gu;
 
 export function vendorKey(name: string | null | undefined): string {
-  const words = (name ?? "").normalize("NFKC").toLowerCase().replace(/&/g, " and ").replace(/[^\p{L}\p{N}\p{M}]+/gu, " ").split(" ").filter(Boolean);
+  const words = (name ?? "")
+    .normalize("NFKC")
+    .toLowerCase()
+    .replace(/&/g, " and ")
+    .replace(DOTTED_ABBREVIATION, (abbreviation) => abbreviation.replace(/\./g, ""))
+    .replace(/[^\p{L}\p{N}\p{M}]+/gu, " ")
+    .split(" ")
+    .filter(Boolean);
   while (words.length > 1 && LEGAL_SUFFIXES.has(words[words.length - 1])) {
     words.pop();
   }

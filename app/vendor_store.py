@@ -20,7 +20,13 @@ from app.records_store import trend_months
 # Trailing words that name a company's legal form rather than the company itself.
 LEGAL_SUFFIXES = {
     "co", "company", "corp", "corporation", "inc", "incorporated", "limited", "llc", "ltd", "plc", "pvt", "private",
+    # Common forms abroad: Germany, Austria, Switzerland, France, Italy, Spain, the Netherlands, Belgium,
+    # the Nordics, Australia, Singapore, Malaysia, and partnerships.
+    "gmbh", "ag", "kg", "sa", "sas", "sarl", "srl", "spa", "bv", "nv", "oy", "ab", "aps", "pty", "pte", "sdn", "bhd",
+    "llp",
 }
+# Dotted single-letter abbreviations such as S.A. or S.p.A.; letters only, so 3.5 is left alone.
+DOTTED_ABBREVIATION = re.compile(r"(?<![^\W_])[^\W\d_](?:\.[^\W\d_])+\.?(?![^\W_])")
 SIMILAR_NAMES = 0.85
 MAX_SUGGESTIONS = 20
 CURRENCY_CODE = re.compile(r"^[A-Z]{3}$")
@@ -46,6 +52,7 @@ def normalize_vendor_name(name: str | None) -> str | None:
     if not name:
         return None
     text = unicodedata.normalize("NFKC", name).casefold().replace("&", " and ")
+    text = DOTTED_ABBREVIATION.sub(lambda match: match.group(0).replace(".", ""), text)
     kept = "".join(ch if unicodedata.category(ch)[0] in "LNM" else " " for ch in text)
     words = kept.split()
     while len(words) > 1 and words[-1] in LEGAL_SUFFIXES:
@@ -164,6 +171,35 @@ def link_unlinked_records(dsn: str, *, org_id: str | None = None) -> int:
     return linked
 
 
+def refresh_alias_forms(dsn: str) -> dict[str, int]:
+    """Adds each stored name in the current normalized form, beside the form it was saved in.
+
+    Run after the matching rules change (for example a new legal suffix), so names saved under the
+    old rules keep linking. Old forms stay, so earlier code matches too. A new form that already
+    belongs to a different vendor is left alone and counted: merging those is a person's call.
+    """
+    added = conflicts = 0
+    with psycopg.connect(dsn, prepare_threshold=None) as conn:
+        rows = conn.execute("select org_id::text, vendor_id, alias, normalized from public.vendor_aliases").fetchall()
+        for org_id, vendor_id, alias, normalized in rows:
+            current = normalize_vendor_name(alias)
+            if not current or current == normalized:
+                continue
+            owner = conn.execute(
+                """
+                insert into public.vendor_aliases (org_id, normalized, vendor_id, alias) values (%s, %s, %s, %s)
+                on conflict (org_id, normalized) do update set alias = public.vendor_aliases.alias
+                returning vendor_id, (xmax = 0)
+                """,
+                (org_id, current, vendor_id, alias),
+            ).fetchone()
+            if owner[0] != vendor_id:
+                conflicts += 1
+            elif owner[1]:
+                added += 1
+    return {"added": added, "conflicts": conflicts}
+
+
 def _totals(conn: psycopg.Connection, org_id: str, vendor_id: int | None = None) -> dict[int, list[dict[str, Any]]]:
     """Spend per currency for each vendor, largest first."""
     only_one = "and vendor_id = %s" if vendor_id else ""
@@ -185,7 +221,7 @@ def _totals(conn: psycopg.Connection, org_id: str, vendor_id: int | None = None)
 
 _VENDOR_ROWS = """
     select v.id, v.name, v.tax_id, v.default_currency,
-           coalesce((select array_agg(a.alias order by a.alias) from public.vendor_aliases a where a.vendor_id = v.id),
+           coalesce((select array_agg(distinct a.alias order by a.alias) from public.vendor_aliases a where a.vendor_id = v.id),
                     array[]::text[]),
            count(lr.id), min(lr.record_json ->> 'invoice_date'), max(lr.record_json ->> 'invoice_date')
     from public.vendors v

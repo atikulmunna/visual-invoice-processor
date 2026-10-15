@@ -168,6 +168,10 @@ describe("vendorKey", () => {
     expect(vendorKey("Star Tech Pvt. Ltd.")).toBe("star tech");
     expect(vendorKey("স্বপ্ন সুপারশপ")).toBe("স্বপ্ন সুপারশপ");
     expect(vendorKey("Ltd")).toBe("ltd");
+    expect(vendorKey("360dialog GmbH")).toBe(vendorKey("360Dialog"));
+    expect(vendorKey("Acme S.A.")).toBe("acme");
+    expect(vendorKey("Shopee Pte. Ltd.")).toBe("shopee");
+    expect(vendorKey("Studio 3.5")).toBe("studio 3 5");
     expect(vendorKey(null)).toBe("");
   });
 });

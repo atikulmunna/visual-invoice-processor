@@ -62,6 +62,10 @@ def main() -> int:
         "vendors-link",
         help="Link stored records that have no vendor yet (run once after migration 007)",
     )
+    sub.add_parser(
+        "vendors-refresh-aliases",
+        help="Add stored vendor names in the current matching form (run after the matching rules change)",
+    )
 
     args = parser.parse_args()
     store = AlphaStore.from_env()
@@ -106,6 +110,11 @@ def main() -> int:
         from app.vendor_store import link_unlinked_records
 
         print(f"Linked {link_unlinked_records(os.environ.get('POSTGRES_DSN', ''))} records to vendors")
+    elif args.command == "vendors-refresh-aliases":
+        from app.vendor_store import refresh_alias_forms
+
+        result = refresh_alias_forms(os.environ.get("POSTGRES_DSN", ""))
+        print(f"Added {result['added']} alias forms; {result['conflicts']} belong to another vendor (merge them if they match)")
     elif args.command == "org-adopt-unowned":
         counts = store.adopt_unowned_records(args.org_id)
         print(
