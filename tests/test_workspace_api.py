@@ -378,6 +378,20 @@ def test_review_detail_includes_the_record_reasons_and_a_document_link(review_cl
     }
 
 
+def test_review_detail_carries_the_record_it_may_duplicate(review_client: TestClient, tmp_path: Path) -> None:
+    import json
+
+    queue = tmp_path / "queue"
+    item = json.loads((queue / "doc-mine.json").read_text(encoding="utf-8"))
+    match = {"record_id": 12, "match": "invoice_number", "vendor_name": "Acme", "invoice_number": "INV-9",
+             "invoice_date": "2026-03-02", "currency": "BDT", "total_amount": 1954.0, "added_at": "2026-03-03T00:00:00"}
+    item["metadata"]["duplicate_of"] = match
+    (queue / "doc-mine.json").write_text(json.dumps(item), encoding="utf-8")
+
+    assert review_client.get("/api/review/doc-mine", auth=("owner.one", PASSWORD)).json()["duplicate_of"] == match
+    assert review_client.get("/api/review/doc-gone", auth=("owner.one", PASSWORD)).json()["duplicate_of"] is None
+
+
 def test_review_detail_reports_a_deleted_or_unreachable_document_without_failing(review_client: TestClient) -> None:
     gone = review_client.get("/api/review/doc-gone", auth=("owner.one", PASSWORD)).json()["document"]
     _ReviewStorage.broken = True

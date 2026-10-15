@@ -292,6 +292,8 @@ def build_workspace_router(
             "created_at": item.get("created_at_utc"),
             "reason_codes": list(item.get("reason_codes") or []),
             "violation_codes": [v.get("code") for v in violations if isinstance(v, dict) and v.get("code")],
+            # The stored record this one looks like a second copy of, if the worker found one.
+            "duplicate_of": metadata.get("duplicate_of") if isinstance(metadata.get("duplicate_of"), dict) else None,
             "record": metadata.get("normalized_record") or {},
             "document": source_document(
                 metadata.get("source_file_id") or metadata.get("drive_file_id"), member.org_id or ""

@@ -63,6 +63,24 @@ def _currency(value: str | None) -> str | None:
     return code if CURRENCY_CODE.match(code) else None
 
 
+def find_vendor(cur: psycopg.Cursor, *, org_id: str, name: str | None, tax_id: str | None) -> int | None:
+    """The existing vendor a document belongs to, by tax ID or BIN first, then by name. Never creates one."""
+    tax = normalize_tax_id(tax_id)
+    if tax:
+        row = cur.execute(
+            "select id from public.vendors where org_id = %s and tax_id = %s order by id limit 1", (org_id, tax)
+        ).fetchone()
+        if row:
+            return row[0]
+    normalized = normalize_vendor_name(name)
+    if not normalized:
+        return None
+    row = cur.execute(
+        "select vendor_id from public.vendor_aliases where org_id = %s and normalized = %s", (org_id, normalized)
+    ).fetchone()
+    return row[0] if row else None
+
+
 def link_vendor(
     cur: psycopg.Cursor,
     *,
@@ -77,17 +95,7 @@ def link_vendor(
     """
     normalized = normalize_vendor_name(name)
     tax = normalize_tax_id(tax_id)
-    vendor_id = None
-    if tax:
-        row = cur.execute(
-            "select id from public.vendors where org_id = %s and tax_id = %s order by id limit 1", (org_id, tax)
-        ).fetchone()
-        vendor_id = row[0] if row else None
-    if vendor_id is None and normalized:
-        row = cur.execute(
-            "select vendor_id from public.vendor_aliases where org_id = %s and normalized = %s", (org_id, normalized)
-        ).fetchone()
-        vendor_id = row[0] if row else None
+    vendor_id = find_vendor(cur, org_id=org_id, name=name, tax_id=tax_id)
     if vendor_id is None:
         if not normalized:
             return None

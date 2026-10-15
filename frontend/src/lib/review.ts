@@ -27,6 +27,73 @@ export interface ReviewDetail {
   violation_codes: string[];
   record: StoredRecord;
   document: ReviewDocument;
+  duplicate_of?: DuplicateMatch | null;
+}
+
+/** A stored record the worker thinks this document repeats. */
+export interface DuplicateMatch {
+  record_id: number;
+  match: "invoice_number" | "amount_and_date";
+  vendor_name: string | null;
+  invoice_number: string | null;
+  invoice_date: string | null;
+  currency: string | null;
+  total_amount: number | null;
+  added_at: string;
+}
+
+export interface ComparisonRow {
+  label: string;
+  here: string;
+  stored: string;
+  same: boolean;
+}
+
+const plainNumber = (value: string | null | undefined) => (value ?? "").toUpperCase().replace(/[^0-9A-Z]/g, "");
+
+// Mirrors the server's vendor matching: case, punctuation, and a trailing legal form are ignored.
+const LEGAL_SUFFIXES = new Set(["co", "company", "corp", "corporation", "inc", "incorporated", "limited", "llc", "ltd", "plc", "pvt", "private"]);
+
+export function vendorKey(name: string | null | undefined): string {
+  const words = (name ?? "").normalize("NFKC").toLowerCase().replace(/&/g, " and ").replace(/[^\p{L}\p{N}\p{M}]+/gu, " ").split(" ").filter(Boolean);
+  while (words.length > 1 && LEGAL_SUFFIXES.has(words[words.length - 1])) {
+    words.pop();
+  }
+  return words.join(" ");
+}
+
+/** This document beside the stored one, field by field, as the reviewer has it now. */
+export function comparisonRows(form: ReviewForm, match: DuplicateMatch): ComparisonRow[] {
+  const total = parseAmount(form.total_amount);
+  const currency = form.currency.trim().toUpperCase() || null;
+  const storedTotal = match.total_amount != null ? formatMoney(match.total_amount, match.currency) : "";
+  return [
+    {
+      label: "Vendor",
+      here: form.vendor_name.trim(),
+      stored: match.vendor_name ?? "",
+      same: vendorKey(form.vendor_name) !== "" && vendorKey(form.vendor_name) === vendorKey(match.vendor_name),
+    },
+    {
+      label: "Invoice number",
+      here: form.invoice_number.trim(),
+      stored: match.invoice_number ?? "",
+      same: plainNumber(form.invoice_number) !== "" && plainNumber(form.invoice_number) === plainNumber(match.invoice_number),
+    },
+    {
+      label: "Invoice date",
+      here: form.invoice_date,
+      stored: match.invoice_date ?? "",
+      same: form.invoice_date !== "" && form.invoice_date === match.invoice_date,
+    },
+    {
+      label: "Total",
+      here: total != null ? formatMoney(total, currency) : "",
+      stored: storedTotal,
+      same: total != null && match.total_amount != null && currency === match.currency
+        && Math.abs(total - match.total_amount) <= TOLERANCE,
+    },
+  ];
 }
 
 export interface LineItemForm {

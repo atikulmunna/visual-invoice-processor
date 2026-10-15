@@ -236,3 +236,31 @@ kbd {
     grid-column: 1 / -1;
   }
 }
+
+/* Possible duplicate: this document beside the stored record. */
+.compare-table {
+  margin-top: 14px;
+}
+
+.compare-table th[scope="row"] {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--ink-muted);
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.compare-table tr[data-same] td {
+  font-weight: 700;
+}
+
+.compare-same {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 8px;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--success);
+}
+
