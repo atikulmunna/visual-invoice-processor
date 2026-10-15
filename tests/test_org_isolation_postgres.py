@@ -334,6 +334,47 @@ def test_worker_processes_identical_files_independently_per_organization(
     assert owners == {key_one: one.org_id, key_two: two.org_id}
 
 
+class _DistinctFiles(_FakeObjectStorage):
+    """Every upload has different bytes, as two scans of the same invoice would."""
+
+    def download_file(self, object_key: str, out_path: str | Path) -> Path:
+        Path(out_path).write_bytes(self.content + object_key.encode())
+        return Path(out_path)
+
+
+def test_worker_sends_a_second_file_of_a_stored_invoice_to_review(pg_env: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.config import Settings
+    from app.review_queue import load_review_item
+    from app.serverless_worker import process_s3_object
+
+    extracted: dict[str, Any] = {
+        "document_type": "invoice", "vendor_name": "Tech Land BD", "invoice_number": "TL-0091",
+        "invoice_date": "2026-03-04", "currency": "BDT", "subtotal": 216500, "tax_amount": 0,
+        "total_amount": 216500, "model_confidence": 0.97, "line_items": [], "_provider": "fake",
+    }
+    copies = iter([dict(extracted), {**extracted, "invoice_number": "tl 0091", "vendor_name": "TECH LAND BD LTD"}])
+    monkeypatch.setattr("app.main.extract_document", lambda **_: next(copies))
+    store = AlphaStore(pg_env)
+    user = _user(store, "dupe")
+    _, first_key = _upload(store, user)
+    _, second_key = _upload(store, user)
+    settings = Settings.from_env()
+
+    first = process_s3_object(first_key, store=store, storage=_DistinctFiles(), settings=settings)
+    second = process_s3_object(second_key, store=store, storage=_DistinctFiles(), settings=settings)
+
+    assert first["status"] == "STORED"
+    assert second["status"] == "REVIEW_REQUIRED"
+    assert second["reason_codes"] == ["possible_duplicate"]
+    with psycopg.connect(pg_env) as conn:
+        stored_id = conn.execute("SELECT id FROM ledger_records WHERE drive_file_id = %s", (first_key,)).fetchone()[0]
+        document_id = conn.execute(
+            "SELECT document_id FROM review_queue_items WHERE metadata_json ->> 'source_file_id' = %s", (second_key,)
+        ).fetchone()[0]
+    duplicate_of = load_review_item(document_id, org_id=user.org_id)["metadata"]["duplicate_of"]
+    assert (duplicate_of["record_id"], duplicate_of["match"]) == (stored_id, "invoice_number")
+
+
 def test_base_currency_is_validated_and_listed(dsn: str) -> None:
     store = AlphaStore(dsn)
     owner = _user(store, "currency")

@@ -13,6 +13,7 @@ from uuid import uuid4
 from app.auth import get_google_credentials
 from app.config import Settings, load_dotenv
 from app.dead_letter import DeadLetterStore
+from app.duplicates import check_for_duplicate
 from app.drive_service import DriveService
 from app.extraction_service import ExtractionError, extract_document
 from app.idempotency_store import DocumentClaimStore
@@ -176,10 +177,13 @@ def _process_candidate(
             extracted,
             base_currency=candidate.get("base_currency"),
         )
+        # A different file of an invoice already stored: never stored twice without a person deciding.
+        duplicate = check_for_duplicate(settings, normalized_payload, org_id)
+        duplicate_reasons = ["possible_duplicate"] if duplicate else []
         try:
             validation = validate_and_score(normalized_payload)
         except ValidationError as exc:
-            reason_codes = review_reason_codes(normalized_payload, exc)
+            reason_codes = review_reason_codes(normalized_payload, exc) + duplicate_reasons
             route_to_review_queue(
                 document_id=document_id,
                 reason_codes=reason_codes,
@@ -190,6 +194,7 @@ def _process_candidate(
                     "raw_extracted": extracted,
                     "normalized_record": normalized_payload,
                     "used_provider": used_provider,
+                    "duplicate_of": duplicate,
                 },
                 org_id=org_id,
             )
@@ -221,16 +226,18 @@ def _process_candidate(
             confidence_threshold=review_threshold,
         )
 
-        if decision.status == "REVIEW_REQUIRED":
+        if decision.status == "REVIEW_REQUIRED" or duplicate:
+            reason_codes = list(decision.reason_codes) + duplicate_reasons
             route_to_review_queue(
                 document_id=document_id,
-                reason_codes=list(decision.reason_codes),
+                reason_codes=reason_codes,
                 metadata={
                     "source_file_id": file_id,
                     "file_hash": file_hash,
                     "normalized_record": normalized_payload,
                     "violations": validation["violations"],
                     "used_provider": used_provider,
+                    "duplicate_of": duplicate,
                 },
                 org_id=org_id,
             )
@@ -240,7 +247,7 @@ def _process_candidate(
                     "drive_file_id": file_id,
                     "file_hash": file_hash,
                     "status": "REVIEW_REQUIRED",
-                    "error_code": ",".join(decision.reason_codes),
+                    "error_code": ",".join(reason_codes),
                     "error_message": "Routed to review queue",
                     "used_provider": used_provider,
                 }
@@ -252,7 +259,7 @@ def _process_candidate(
                 "source_id": file_id,
                 "document_id": document_id,
                 "status": "REVIEW_REQUIRED",
-                "reason_codes": list(decision.reason_codes),
+                "reason_codes": reason_codes,
                 "file_hash": file_hash,
                 "record": normalized_payload,
             }

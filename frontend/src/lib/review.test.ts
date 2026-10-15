@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { checkForm, formFromRecord, nextAfter, recordFromForm, type ReviewForm } from "./review";
+import { checkForm, comparisonRows, formFromRecord, nextAfter, recordFromForm, vendorKey, type ReviewForm } from "./review";
 
 const RECORD = {
   document_type: "receipt",
@@ -127,3 +127,48 @@ describe("nextAfter", () => {
     expect(nextAfter(["a", "b"], "gone")).toBe("a");
   });
 });
+
+describe("comparisonRows", () => {
+  const match = {
+    record_id: 12,
+    match: "invoice_number" as const,
+    vendor_name: "Tech Land BD",
+    invoice_number: "TL-0091",
+    invoice_date: "2026-03-04",
+    currency: "BDT",
+    total_amount: 216500,
+    added_at: "2026-03-05T10:00:00+00:00",
+  };
+
+  it("marks the fields that agree with the stored record", () => {
+    const form = formFromRecord({ vendor_name: "tech land bd", invoice_number: "tl 0091", invoice_date: "2026-03-09",
+      currency: "BDT", total_amount: 216500 });
+
+    expect(comparisonRows(form, match).map((row) => [row.label, row.same])).toEqual([
+      ["Vendor", true],
+      ["Invoice number", true],
+      ["Invoice date", false],
+      ["Total", true],
+    ]);
+  });
+
+  it("does not call empty or different values the same", () => {
+    const form = formFromRecord({ vendor_name: "Tech Land BD", invoice_number: "", invoice_date: "",
+      currency: "USD", total_amount: 216500 });
+
+    const rows = comparisonRows(form, match);
+    expect(rows.find((row) => row.label === "Invoice number")?.same).toBe(false);
+    expect(rows.find((row) => row.label === "Total")).toMatchObject({ same: false, stored: "BDT 2,16,500.00" });
+  });
+});
+
+describe("vendorKey", () => {
+  it("matches vendor names the way the server does", () => {
+    expect(vendorKey("TECH LAND BD LTD")).toBe(vendorKey("Tech Land BD"));
+    expect(vendorKey("Star Tech Pvt. Ltd.")).toBe("star tech");
+    expect(vendorKey("স্বপ্ন সুপারশপ")).toBe("স্বপ্ন সুপারশপ");
+    expect(vendorKey("Ltd")).toBe("ltd");
+    expect(vendorKey(null)).toBe("");
+  });
+});
+

@@ -12,12 +12,14 @@ import { reasonLabel, statusLabel } from "../lib/labels";
 import {
   AMOUNT_LABELS,
   checkForm,
+  comparisonRows,
   DOCUMENT_TYPE_OPTIONS,
   formFromRecord,
   nextAfter,
   PAYMENT_METHOD_OPTIONS,
   recordFromForm,
   type AmountField,
+  type DuplicateMatch,
   type Issue,
   type LineItemForm,
   type ReviewDetail,
@@ -63,6 +65,48 @@ function ReasonsPanel({ detail }: { detail: ReviewDetail }) {
         </ul>
       </div>
     </div>
+  );
+}
+
+function DuplicatePanel({ match, form }: { match: DuplicateMatch; form: ReviewForm }) {
+  const rows = comparisonRows(form, match);
+  return (
+    <Card className="duplicate-panel">
+      <div className="row" style={{ justifyContent: "space-between" }}>
+        <h2 className="card-title">Possible duplicate of record #{match.record_id}</h2>
+        <a className={buttonClass("ghost", "sm")} href={`/app/records?record=${match.record_id}`} target="_blank" rel="noopener noreferrer">
+          Open stored record
+        </a>
+      </div>
+      <p className="muted chart-subtitle">
+        {match.match === "invoice_number"
+          ? "Same vendor and invoice number as a record already stored."
+          : "Same vendor and amount as a record stored within a week of this date."}{" "}
+        If it is the same bill, choose Duplicate. If it is a new bill, approve it.
+      </p>
+      <table className="table table-compact compare-table">
+        <caption className="visually-hidden">This document compared with stored record {match.record_id}</caption>
+        <thead>
+          <tr>
+            <th scope="col">Field</th>
+            <th scope="col">This document</th>
+            <th scope="col">Stored record</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.label} data-same={row.same || undefined}>
+              <th scope="row">{row.label}</th>
+              <td>{row.here || <span className="muted">Not shown</span>}</td>
+              <td>
+                {row.stored || <span className="muted">Not shown</span>}
+                {row.same && <span className="compare-same"><Icon name="check" size={14} /> Same</span>}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </Card>
   );
 }
 
@@ -316,6 +360,7 @@ export function ReviewWorkspacePage() {
                 This document was already handled: {statusLabel(detail.status).label}.
               </div>
             )}
+            {active && detail.duplicate_of && <DuplicatePanel match={detail.duplicate_of} form={form} />}
             <DetailFields form={form} issues={issues} set={set} />
             <AmountFields form={form} issues={issues} set={set} />
             <LineItemsEditor lines={form.line_items} issues={issues}

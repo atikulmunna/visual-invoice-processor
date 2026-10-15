@@ -28,6 +28,7 @@ Ledgerly is a private-alpha invoice processing application for a small, controll
 - **Records and overview:** search, filter, and sort every stored record, open any one beside its original file, and export the filtered list as an Excel workbook (records and line items) or CSV. The overview shows monthly spending and top vendors per currency, never mixing currencies, and leads with the single most pressing item, such as review documents about to lose their source file.
 - **Vendor master:** every spelling of a supplier adds up to one vendor. Records link as they are stored, by the same tax ID or BIN or the same name once case, punctuation, and suffixes like Ltd are ignored; look-alike names are suggested for a one-click merge rather than merged silently. Each vendor has a page with its spend by month and the names its documents used.
 - **Safe reprocessing:** idempotent jobs and duplicate-safe writes; the same file uploaded twice in one organization is caught, while two organizations can process identical files independently.
+- **Duplicate bills:** a different file of a bill already stored (a scan and a PDF, or a copy someone forwarded) is held for review instead of being stored twice. It matches on the same vendor plus the same invoice number, or the same amount within a week, and review shows it side by side with the stored record.
 - **Operations on a budget:** infrastructure as code, least-privilege IAM, secrets in SSM, seven-day log retention, and an annual AWS budget with alerts.
 
 ## Architecture
@@ -313,7 +314,6 @@ Planned features, roughly in order. The product is heading two ways at once: VAT
 
 **Smarter extraction**
 
-- Duplicate detection across different files of the same invoice, not only identical bytes
 - Field-level confidence based on whether each value actually appears in the document
 - Vendor memory: reviewer corrections teach extraction, so repeat vendors are approved automatically
 

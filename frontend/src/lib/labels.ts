@@ -18,6 +18,7 @@ const REVIEW_REASONS: Record<string, string> = {
   missing_invoice_date: "Invoice date not found on the document",
   missing_currency: "Currency not found on the document",
   low_confidence: "Low extraction confidence",
+  possible_duplicate: "Looks like an invoice already stored",
   validation_failed: "Amounts do not add up",
   schema_validation_failed: "Some fields could not be read",
   amount_mismatch: "Subtotal, tax, and total do not agree",
