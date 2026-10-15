@@ -11,5 +11,3 @@ create index if not exists alpha_sessions_user_expiry_idx
   on public.alpha_sessions(user_id, expires_at_utc desc);
 
 alter table public.alpha_sessions enable row level security;
-
-revoke all privileges on table public.alpha_sessions from anon, authenticated;

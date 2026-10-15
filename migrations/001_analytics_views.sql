@@ -1,5 +1,5 @@
 -- Analytics views for PostgreSQL ledger backend.
--- Apply in Supabase SQL Editor (or psql) after data exists in `ledger_records`.
+-- Applied in order by app.db_migrate.
 
 create or replace view public.ledger_records_flat as
 select

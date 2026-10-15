@@ -147,5 +147,3 @@ alter view public.ledger_line_items_flat set (security_invoker = true);
 -- Same lockdown as 003 for the new tables.
 alter table public.organizations enable row level security;
 alter table public.memberships enable row level security;
-
-revoke all privileges on table public.organizations, public.memberships from anon, authenticated;
