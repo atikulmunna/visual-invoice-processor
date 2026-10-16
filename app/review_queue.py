@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+import psycopg
+
+from app.config import Settings, load_dotenv
 
 
 @dataclass(frozen=True)
@@ -14,14 +19,9 @@ class ReviewDecision:
     reason_codes: tuple[str, ...]
 
 
-def _settings_or_none() -> Any | None:
-    try:
-        from app.config import Settings, load_dotenv
-
-        load_dotenv()
-        return Settings.from_env()
-    except Exception:  # noqa: BLE001
-        return None
+def _settings() -> Settings:
+    load_dotenv()
+    return Settings.from_env()
 
 
 def _queue_backend(queue_dir: str | Path) -> str:
@@ -29,12 +29,7 @@ def _queue_backend(queue_dir: str | Path) -> str:
     if queue_path != "review_queue":
         return "filesystem"
 
-    settings = _settings_or_none()
-    if settings is None:
-        return "filesystem"
-
-    import os
-
+    settings = _settings()
     configured = os.getenv("REVIEW_QUEUE_BACKEND", "auto").strip().lower()
     if configured in {"filesystem", "postgres"}:
         return configured
@@ -74,7 +69,7 @@ def _row_to_item(row: Any) -> dict[str, Any]:
     }
 
 
-def _org_clause(org_id: str | None, *, prefix: str) -> tuple[str, tuple[Any, ...]]:
+def org_clause(org_id: str | None, *, prefix: str) -> tuple[str, tuple[Any, ...]]:
     """SQL filter for an organization; None means the caller is an unscoped operator."""
     if org_id is None:
         return "", ()
@@ -82,39 +77,13 @@ def _org_clause(org_id: str | None, *, prefix: str) -> tuple[str, tuple[Any, ...
 
 
 class PostgresReviewQueueStore:
-    def __init__(self, dsn: str, table_name: str = "review_queue_items") -> None:
+    """Review items in Postgres. The table comes from the migrations."""
+
+    def __init__(self, dsn: str) -> None:
         self._dsn = dsn
-        self._table = table_name
-        self._ensure_schema()
 
-    def _connect(self) -> Any:
-        try:
-            import psycopg
-        except ImportError as exc:
-            raise RuntimeError("psycopg package is required for PostgreSQL review queue backend") from exc
+    def _connect(self) -> psycopg.Connection:
         return psycopg.connect(self._dsn, prepare_threshold=None)
-
-    def _ensure_schema(self) -> None:
-        with self._connect() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    f"""
-                    CREATE TABLE IF NOT EXISTS {self._table} (
-                        document_id TEXT PRIMARY KEY,
-                        status TEXT NOT NULL,
-                        reason_codes JSONB NOT NULL DEFAULT '[]'::jsonb,
-                        metadata_json JSONB,
-                        source_file_moved_to TEXT,
-                        created_at_utc TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                        resolved_at_utc TIMESTAMPTZ,
-                        resolved_record JSONB,
-                        storage_result JSONB,
-                        resolution_note TEXT,
-                        org_id UUID
-                    )
-                    """
-                )
-            conn.commit()
 
     def create_item(
         self,
@@ -129,8 +98,8 @@ class PostgresReviewQueueStore:
         with self._connect() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    f"""
-                    INSERT INTO {self._table}
+                    """
+                    INSERT INTO public.review_queue_items
                         (document_id, status, reason_codes, metadata_json, source_file_moved_to,
                          created_at_utc, org_id)
                     VALUES
@@ -165,13 +134,13 @@ class PostgresReviewQueueStore:
         }
 
     def list_items(self, org_id: str | None = None) -> list[dict[str, Any]]:
-        org_sql, org_params = _org_clause(org_id, prefix="WHERE")
+        org_sql, org_params = org_clause(org_id, prefix="WHERE")
         with self._connect() as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     f"""
                     SELECT {_SELECT_COLUMNS}
-                    FROM {self._table}{org_sql}
+                    FROM public.review_queue_items{org_sql}
                     ORDER BY created_at_utc ASC
                     """,
                     org_params,
@@ -180,13 +149,13 @@ class PostgresReviewQueueStore:
         return [_row_to_item(row) for row in rows]
 
     def load_item(self, document_id: str, org_id: str | None = None) -> dict[str, Any]:
-        org_sql, org_params = _org_clause(org_id, prefix="AND")
+        org_sql, org_params = org_clause(org_id, prefix="AND")
         with self._connect() as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     f"""
                     SELECT {_SELECT_COLUMNS}
-                    FROM {self._table}
+                    FROM public.review_queue_items
                     WHERE document_id = %s{org_sql}
                     """,
                     (document_id, *org_params),
@@ -207,12 +176,12 @@ class PostgresReviewQueueStore:
         org_id: str | None = None,
     ) -> dict[str, Any]:
         resolved_at = datetime.now(timezone.utc).isoformat()
-        org_sql, org_params = _org_clause(org_id, prefix="AND")
+        org_sql, org_params = org_clause(org_id, prefix="AND")
         with self._connect() as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     f"""
-                    UPDATE {self._table}
+                    UPDATE public.review_queue_items
                     SET
                         status = %s,
                         resolved_at_utc = %s,
@@ -238,14 +207,10 @@ class PostgresReviewQueueStore:
 
 
 def _postgres_store() -> PostgresReviewQueueStore:
-    settings = _settings_or_none()
-    if settings is None or not settings.postgres_dsn:
+    settings = _settings()
+    if not settings.postgres_dsn:
         raise ValueError("POSTGRES_DSN is required for postgres review queue backend")
-
-    import os
-
-    table_name = os.getenv("REVIEW_QUEUE_TABLE", "review_queue_items")
-    return PostgresReviewQueueStore(dsn=settings.postgres_dsn, table_name=table_name)
+    return PostgresReviewQueueStore(dsn=settings.postgres_dsn)
 
 
 def decide_review_status(

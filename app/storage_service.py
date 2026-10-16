@@ -5,6 +5,8 @@ import re
 from datetime import datetime, timezone
 from typing import Any
 
+import psycopg
+
 from app.auth import get_google_credentials
 from app.config import Settings, load_dotenv
 
@@ -116,37 +118,13 @@ class SheetsStorageService:
 
 
 class PostgresStorageService:
-    def __init__(self, dsn: str, table_name: str = "ledger_records") -> None:
+    """Stored records in Postgres. The table comes from the migrations."""
+
+    def __init__(self, dsn: str) -> None:
         self._dsn = dsn
-        self._table = table_name
-        self._ensure_schema()
 
-    def _connect(self) -> Any:
-        try:
-            import psycopg
-        except ImportError as exc:
-            raise RuntimeError("psycopg package is required for PostgreSQL backend") from exc
+    def _connect(self) -> psycopg.Connection:
         return psycopg.connect(self._dsn, prepare_threshold=None)
-
-    def _ensure_schema(self) -> None:
-        with self._connect() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    f"""
-                    CREATE TABLE IF NOT EXISTS {self._table} (
-                        id BIGSERIAL PRIMARY KEY,
-                        drive_file_id TEXT NOT NULL,
-                        file_hash TEXT NOT NULL,
-                        status TEXT NOT NULL,
-                        record_json JSONB NOT NULL,
-                        metadata_json JSONB NOT NULL,
-                        processed_at_utc TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                        org_id UUID,
-                        UNIQUE (drive_file_id, file_hash)
-                    )
-                    """
-                )
-            conn.commit()
 
     def _link_vendor(self, cur: Any, record_id: int, org_id: str, record: dict[str, Any]) -> None:
         """Ties a new record to its vendor in the same transaction, so a stored record is never left unlinked."""
@@ -160,7 +138,7 @@ class PostgresStorageService:
             currency=record.get("currency"),
         )
         if vendor_id is not None:
-            cur.execute(f"UPDATE {self._table} SET vendor_id = %s WHERE id = %s", (vendor_id, record_id))
+            cur.execute("UPDATE public.ledger_records SET vendor_id = %s WHERE id = %s", (vendor_id, record_id))
 
     def append_record(self, record: dict[str, Any], metadata: dict[str, Any]) -> dict[str, Any]:
         drive_file_id = metadata.get("drive_file_id")
@@ -171,8 +149,8 @@ class PostgresStorageService:
         with self._connect() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    f"""
-                    INSERT INTO {self._table}
+                    """
+                    INSERT INTO public.ledger_records
                         (drive_file_id, file_hash, status, record_json, metadata_json, processed_at_utc, org_id)
                     VALUES
                         (%s, %s, %s, %s::jsonb, %s::jsonb, NOW(), %s)
@@ -216,11 +194,7 @@ def append_record(record: dict[str, Any], metadata: dict[str, Any]) -> dict[str,
     if settings.ledger_backend == "postgres":
         if not settings.postgres_dsn:
             raise StorageError("POSTGRES_DSN is required when LEDGER_BACKEND=postgres.")
-        service = PostgresStorageService(
-            dsn=settings.postgres_dsn,
-            table_name=settings.postgres_table,
-        )
-        return service.append_record(record=record, metadata=metadata)
+        return PostgresStorageService(dsn=settings.postgres_dsn).append_record(record=record, metadata=metadata)
 
     if not settings.ledger_spreadsheet_id:
         raise StorageError("LEDGER_SPREADSHEET_ID is required for Sheets storage.")

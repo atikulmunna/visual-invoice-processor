@@ -77,9 +77,7 @@ class Settings:
     ledger_spreadsheet_id: str | None = None
     ledger_range: str = "Ledger!A:Z"
     postgres_dsn: str | None = None
-    postgres_table: str = "ledger_records"
     review_queue_backend: str = "auto"
-    review_queue_table: str = "review_queue_items"
     normalization_rules_path: str = "config/normalization_rules.json"
     alpha_auth_enabled: bool = False
     alpha_max_users: int = 10
@@ -170,9 +168,7 @@ class Settings:
             ledger_spreadsheet_id=os.getenv("LEDGER_SPREADSHEET_ID"),
             ledger_range=os.getenv("LEDGER_RANGE", "Ledger!A:Z"),
             postgres_dsn=postgres_dsn,
-            postgres_table=os.getenv("POSTGRES_TABLE", "ledger_records"),
             review_queue_backend=os.getenv("REVIEW_QUEUE_BACKEND", "auto").strip().lower(),
-            review_queue_table=os.getenv("REVIEW_QUEUE_TABLE", "review_queue_items"),
             normalization_rules_path=os.getenv(
                 "NORMALIZATION_RULES_PATH", "config/normalization_rules.json"
             ),

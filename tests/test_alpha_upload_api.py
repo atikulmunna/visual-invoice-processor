@@ -116,6 +116,30 @@ def test_presign_and_owner_scoped_status(monkeypatch: Any) -> None:
     assert status.json()["status"] == "AUTHORIZED"
 
 
+def test_presign_refuses_disabled_accounts_and_hides_server_faults(monkeypatch: Any) -> None:
+    _configure(monkeypatch)
+    client = TestClient(create_monitoring_app(postgres_dsn="postgresql://example"), raise_server_exceptions=False)
+    auth = ("tester.one", "A-strong-alpha-password")
+    body = {"filename": "invoice.pdf", "content_type": "application/pdf", "size": 1200}
+
+    def disabled(self: Any, user: AlphaUser, **kwargs: Any) -> str:
+        raise AlphaAuthenticationError("Tester account is disabled")
+
+    monkeypatch.setattr(_FakeAlphaStore, "authorize_upload", disabled)
+    refused = client.post("/uploads/presign", auth=auth, json=body)
+
+    def broken(self: Any, object_key: str, **kwargs: Any) -> dict[str, Any]:
+        raise RuntimeError("AccessDenied for arn:aws:iam::123456789012:role/worker")
+
+    monkeypatch.setattr(_FakeAlphaStore, "authorize_upload", lambda self, user, **kwargs: "job")
+    monkeypatch.setattr(_FakeStorage, "create_presigned_upload", broken)
+    faulty = client.post("/uploads/presign", auth=auth, json=body)
+
+    assert (refused.status_code, refused.json()["detail"]) == (403, "Tester account is disabled")
+    assert faulty.status_code == 500
+    assert "arn:aws" not in faulty.text
+
+
 def test_alpha_login_creates_secure_session_and_logout_clears_it(monkeypatch: Any) -> None:
     _configure(monkeypatch)
     _FakeAlphaStore.sessions.clear()

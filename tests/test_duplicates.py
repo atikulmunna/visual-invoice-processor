@@ -28,7 +28,7 @@ def _org(dsn: str) -> str:
 def _store(dsn: str, org_id: str, **record: Any) -> int:
     base = {"vendor_name": "RYANS Computers", "invoice_number": None, "invoice_date": "2026-09-10",
             "currency": "BDT", "total_amount": 1954.0}
-    result = PostgresStorageService(dsn, "ledger_records").append_record(
+    result = PostgresStorageService(dsn).append_record(
         record={**base, **record},
         metadata={"drive_file_id": f"inbox/{uuid4()}.pdf", "file_hash": uuid4().hex, "org_id": org_id},
     )

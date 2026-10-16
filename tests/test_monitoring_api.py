@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+
+import pytest
 from fastapi.testclient import TestClient
 
 from app.monitoring_api import (
@@ -298,3 +300,31 @@ def test_review_action_endpoint_supports_duplicate_and_reject(tmp_path: Path, mo
         ("doc-3", "RESOLVED_DUPLICATE_MANUAL", "already stored"),
         ("doc-3", "REJECTED", "invalid document"),
     ]
+
+
+@pytest.mark.parametrize(
+    ("failure", "status", "detail"),
+    [
+        (ValueError("Fill in the Total before approving this document"), 400,
+         "Fill in the Total before approving this document"),
+        (RuntimeError("connection to server at 10.0.0.5 failed: password authentication failed"), 500, None),
+    ],
+)
+def test_review_resolve_explains_reviewer_mistakes_but_hides_server_faults(
+    tmp_path: Path, monkeypatch, failure: Exception, status: int, detail: str | None
+) -> None:
+    monkeypatch.delenv("DASHBOARD_BASIC_AUTH_USERNAME", raising=False)
+    monkeypatch.delenv("DASHBOARD_BASIC_AUTH_PASSWORD", raising=False)
+
+    def _failing_resolve(*_: object, **__: object) -> dict[str, object]:
+        raise failure
+
+    monkeypatch.setattr("app.monitoring_api.resolve_review_item", _failing_resolve)
+    client = TestClient(create_monitoring_app(review_queue_dir=tmp_path), raise_server_exceptions=False)
+
+    response = client.post("/review-items/doc-2/resolve", json={})
+
+    assert response.status_code == status
+    assert "10.0.0.5" not in response.text
+    if detail:
+        assert response.json()["detail"] == detail

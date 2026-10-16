@@ -12,15 +12,17 @@ from __future__ import annotations
 import re
 import unicodedata
 from datetime import date, timedelta
+from itertools import product
 from typing import Any
 
-from app.vendor_store import normalize_vendor_name
+from app.vendor_store import normalize_vendor_name, word_characters
 
 # A value from one of these that the document does not show sends the document to review.
 KEY_FIELDS = ("vendor_name", "invoice_number", "invoice_date", "total_amount")
 CONFIDENCE = {"found": 0.95, "unverified": None, "not_found": 0.3, "implausible": 0.1}
 EARLIEST_DATE = date(2000, 1, 1)
 VENDOR_WORDS_NEEDED = 0.6
+DATE_SEPARATORS = ("/", "-", ".", " ")
 
 MONTHS = [
     ("january", "jan"), ("february", "feb"), ("march", "mar"), ("april", "apr"), ("may", "may"), ("june", "jun"),
@@ -38,9 +40,9 @@ class DocumentText:
 
     def __init__(self, raw: str) -> None:
         text = unicodedata.normalize("NFKC", raw).casefold()
-        # Words: letters, digits, and combining marks, single-spaced, for names and dates.
-        words = "".join(ch if unicodedata.category(ch)[0] in "LNM" else " " for ch in text)
-        self.words = " " + re.sub(r"(\d)(st|nd|rd|th)\b", r"\1", " ".join(words.split())) + " "
+        # Words, single-spaced, for names and dates.
+        words = " ".join(word_characters(text).split())
+        self.words = " " + re.sub(r"(\d)(st|nd|rd|th)\b", r"\1", words) + " "
         # Dates keep their separators so 06-03-2025 and 06/03/2025 stay distinguishable from prose.
         self.dated = " ".join(re.sub(r"(\d)(st|nd|rd|th)\b", r"\1", text.replace(",", " ")).split())
         self.compact = re.sub(r"[^0-9a-z]", "", text)
@@ -68,21 +70,14 @@ def _amounts_in(text: str) -> set[float]:
 
 def _date_renderings(day: date) -> set[str]:
     """How a date might be printed: numeric in either order with any separator, or with the month named."""
-    shapes: set[str] = set()
     days = {f"{day.day}", f"{day.day:02d}"}
     months = {f"{day.month}", f"{day.month:02d}"}
-    years = {f"{day.year}", f"{day.year % 100:02d}"}
-    for separator in ("/", "-", ".", " "):
-        for d in days:
-            for m in months:
-                for y in years:
-                    shapes.add(separator.join((d, m, y)))
-                    shapes.add(separator.join((m, d, y)))
-                shapes.add(separator.join((f"{day.year}", m, d)))
-    for name in MONTHS[day.month - 1]:
-        for d in days:
-            for y in (f"{day.year}",):
-                shapes.update({f"{d} {name} {y}", f"{name} {d} {y}", f"{d}-{name}-{y}", f"{d}.{name}.{y}"})
+    year = f"{day.year}"
+    shapes: set[str] = set()
+    for separator, d, m, y in product(DATE_SEPARATORS, days, months, (year, f"{day.year % 100:02d}")):
+        shapes.update({separator.join((d, m, y)), separator.join((m, d, y)), separator.join((year, m, d))})
+    for name, d in product(MONTHS[day.month - 1], days):
+        shapes.update({f"{d} {name} {year}", f"{name} {d} {year}", f"{d}-{name}-{year}", f"{d}.{name}.{year}"})
     return shapes
 
 
@@ -119,7 +114,8 @@ def _check_currency(value: str, text: DocumentText) -> bool:
     return any((mark in text.raw) if not mark.isalpha() else _found_text(mark, text.words) for mark in marks)
 
 
-def _as_date(value: Any) -> date | None:
+def iso_day(value: Any) -> date | None:
+    """A record's YYYY-MM-DD value as a date, or None when it is missing or malformed."""
     try:
         return date.fromisoformat(str(value))
     except ValueError:
@@ -132,7 +128,7 @@ def _plausible(field: str, value: date, record: dict[str, Any], today: date) -> 
     if value < EARLIEST_DATE:
         return False
     if field == "due_date":
-        issued = _as_date(record.get("invoice_date"))
+        issued = iso_day(record.get("invoice_date"))
         return issued is None or value >= issued
     return True
 
@@ -164,7 +160,7 @@ def assess_fields(record: dict[str, Any], document_text: str | None, today: date
         if field == "currency" and record.get("currency_assumed"):
             continue  # not read from the document, already marked as assumed
         if field in ("invoice_date", "due_date"):
-            value = _as_date(value)
+            value = iso_day(value)
             if value is None:
                 continue
             if not _plausible(field, value, record, today):

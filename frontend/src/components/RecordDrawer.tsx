@@ -9,6 +9,7 @@ import {
   AMOUNT_FIELDS,
   AMOUNT_LABELS,
   DOCUMENT_TYPE_OPTIONS,
+  FIELD_LABELS,
   optionLabel,
   PAYMENT_METHOD_OPTIONS,
   type StoredRecord,
@@ -85,10 +86,10 @@ function RecordFacts({ detail }: { detail: RecordDetail }) {
               <span className="fact-note fact-note-muted">Printed as {printed}</span>
             )}
           </Fact>
-          <Fact label="Invoice number">{text(record.invoice_number)}</Fact>
-          <Fact label="Invoice date">{formatDate(text(record.invoice_date))}</Fact>
-          <Fact label="Due date">{formatDate(text(record.due_date))}</Fact>
-          <Fact label="Currency">
+          <Fact label={FIELD_LABELS.invoice_number}>{text(record.invoice_number)}</Fact>
+          <Fact label={FIELD_LABELS.invoice_date}>{formatDate(text(record.invoice_date))}</Fact>
+          <Fact label={FIELD_LABELS.due_date}>{formatDate(text(record.due_date))}</Fact>
+          <Fact label={FIELD_LABELS.currency}>
             {currency && (
               <>
                 {currency}
@@ -96,9 +97,9 @@ function RecordFacts({ detail }: { detail: RecordDetail }) {
               </>
             )}
           </Fact>
-          <Fact label="Vendor tax ID or BIN">{text(record.vendor_tax_id)}</Fact>
-          <Fact label="Document type">{optionLabel(DOCUMENT_TYPE_OPTIONS, record.document_type)}</Fact>
-          <Fact label="Payment method">{optionLabel(PAYMENT_METHOD_OPTIONS, record.payment_method)}</Fact>
+          <Fact label={FIELD_LABELS.vendor_tax_id}>{text(record.vendor_tax_id)}</Fact>
+          <Fact label={FIELD_LABELS.document_type}>{optionLabel(DOCUMENT_TYPE_OPTIONS, record.document_type)}</Fact>
+          <Fact label={FIELD_LABELS.payment_method}>{optionLabel(PAYMENT_METHOD_OPTIONS, record.payment_method)}</Fact>
         </dl>
       </section>
       <section>

@@ -39,25 +39,26 @@ FORM_DEFAULTS = {"document_type": "invoice", "payment_method": "unknown"}
 
 logger = logging.getLogger(__name__)
 
-# Approved reviews of one vendor, newest first. The stored record carries the vendor link.
-_REVIEWS = """
-    select r.resolved_at_utc, r.metadata_json -> 'normalized_record', r.resolved_record
+# Approved reviews with the record each one stored, which carries the vendor link.
+_APPROVED_REVIEWS = """
     from public.review_queue_items r
     join public.ledger_records lr on lr.id = (r.storage_result ->> 'row_id')::bigint and lr.org_id = r.org_id
-    where r.org_id = %s and r.status = 'RESOLVED_STORED' and lr.vendor_id = %s
+    where r.status = 'RESOLVED_STORED'
+"""
+
+# One vendor's approved reviews, newest first.
+_REVIEWS = f"""
+    select r.resolved_at_utc, r.metadata_json -> 'normalized_record', r.resolved_record
+    {_APPROVED_REVIEWS} and r.org_id = %s and lr.vendor_id = %s
     order by r.resolved_at_utc desc
     limit %s
 """
 
 # Names of the organization's vendors that reviewers have approved documents for.
-_REVIEWED_VENDOR_NAMES = """
+_REVIEWED_VENDOR_NAMES = f"""
     select a.vendor_id, a.normalized
     from public.vendor_aliases a
-    where a.org_id = %s and exists (
-        select 1 from public.review_queue_items r
-        join public.ledger_records lr on lr.id = (r.storage_result ->> 'row_id')::bigint and lr.org_id = r.org_id
-        where r.org_id = a.org_id and r.status = 'RESOLVED_STORED' and lr.vendor_id = a.vendor_id
-    )
+    where a.org_id = %s and exists (select 1 {_APPROVED_REVIEWS} and r.org_id = a.org_id and lr.vendor_id = a.vendor_id)
 """
 
 

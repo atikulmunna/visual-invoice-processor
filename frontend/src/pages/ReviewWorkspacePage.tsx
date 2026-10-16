@@ -15,6 +15,7 @@ import {
   comparisonRows,
   DOCUMENT_TYPE_OPTIONS,
   evidenceWarning,
+  FIELD_LABELS,
   formFromRecord,
   nextAfter,
   PAYMENT_METHOD_OPTIONS,
@@ -124,22 +125,22 @@ function DetailFields({ form, issues, set, warn }: FieldsProps) {
     <Card>
       <h2 className="card-title">Details</h2>
       <div className="form-grid">
-        <TextField label="Vendor name" name="vendor_name" value={form.vendor_name} onChange={set("vendor_name")}
+        <TextField label={FIELD_LABELS.vendor_name} name="vendor_name" value={form.vendor_name} onChange={set("vendor_name")}
           error={issueText(issues, "vendor_name")} warning={warn("vendor_name")} autoComplete="off" />
-        <TextField label="Invoice number" name="invoice_number" value={form.invoice_number}
+        <TextField label={FIELD_LABELS.invoice_number} name="invoice_number" value={form.invoice_number}
           onChange={set("invoice_number")} warning={warn("invoice_number")} autoComplete="off" />
-        <TextField label="Invoice date" name="invoice_date" type="date" value={form.invoice_date}
+        <TextField label={FIELD_LABELS.invoice_date} name="invoice_date" type="date" value={form.invoice_date}
           onChange={set("invoice_date")} error={issueText(issues, "invoice_date")} warning={warn("invoice_date")} />
-        <TextField label="Due date" name="due_date" type="date" value={form.due_date} onChange={set("due_date")}
+        <TextField label={FIELD_LABELS.due_date} name="due_date" type="date" value={form.due_date} onChange={set("due_date")}
           error={issueText(issues, "due_date")} warning={warn("due_date")} />
-        <TextField label="Currency" name="currency" value={form.currency} maxLength={3} autoComplete="off"
+        <TextField label={FIELD_LABELS.currency} name="currency" value={form.currency} maxLength={3} autoComplete="off"
           onChange={set("currency")} error={issueText(issues, "currency")} warning={warn("currency")}
           spellCheck={false} />
-        <TextField label="Vendor tax ID or BIN" name="vendor_tax_id" value={form.vendor_tax_id}
+        <TextField label={FIELD_LABELS.vendor_tax_id} name="vendor_tax_id" value={form.vendor_tax_id}
           onChange={set("vendor_tax_id")} warning={warn("vendor_tax_id")} autoComplete="off" />
-        <SelectField label="Document type" name="document_type" value={form.document_type}
+        <SelectField label={FIELD_LABELS.document_type} name="document_type" value={form.document_type}
           onChange={set("document_type")} options={DOCUMENT_TYPE_OPTIONS} />
-        <SelectField label="Payment method" name="payment_method" value={form.payment_method}
+        <SelectField label={FIELD_LABELS.payment_method} name="payment_method" value={form.payment_method}
           onChange={set("payment_method")} options={PAYMENT_METHOD_OPTIONS} />
       </div>
     </Card>

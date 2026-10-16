@@ -157,6 +157,7 @@ def test_existing_api_routes_are_not_shadowed(tmp_path: Path, monkeypatch: pytes
     monkeypatch.delenv("ALPHA_AUTH_ENABLED", raising=False)
     monkeypatch.delenv("DASHBOARD_BASIC_AUTH_USERNAME", raising=False)
     monkeypatch.delenv("DASHBOARD_BASIC_AUTH_PASSWORD", raising=False)
+    monkeypatch.setenv("POSTGRES_DSN", "")  # never the developer's database
     client = TestClient(create_monitoring_app(frontend_dist=_built_frontend(tmp_path), review_queue_dir=tmp_path / "q"))
 
     response: Any = client.get("/backlog")

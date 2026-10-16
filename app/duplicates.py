@@ -9,12 +9,13 @@ from __future__ import annotations
 
 import logging
 import re
-from datetime import date, timedelta
+from datetime import timedelta
 from typing import Any
 
 import psycopg
 
 from app.config import Settings
+from app.evidence import iso_day
 from app.vendor_store import find_vendor
 
 DATE_WINDOW_DAYS = 7
@@ -48,13 +49,6 @@ def _summary(row: tuple[Any, ...], match: str) -> dict[str, Any]:
     }
 
 
-def _iso_day(value: Any) -> date | None:
-    try:
-        return date.fromisoformat(str(value))
-    except ValueError:
-        return None
-
-
 def find_possible_duplicate(dsn: str, *, org_id: str, record: dict[str, Any]) -> dict[str, Any] | None:
     """The stored record this one most likely repeats, or None. Invoice number matches win over amount matches."""
     with psycopg.connect(dsn, prepare_threshold=None) as conn:
@@ -74,7 +68,7 @@ def find_possible_duplicate(dsn: str, *, org_id: str, record: dict[str, Any]) ->
             ).fetchone()
             if row:
                 return _summary(row, "invoice_number")
-        day, total = _iso_day(record.get("invoice_date")), record.get("total_amount")
+        day, total = iso_day(record.get("invoice_date")), record.get("total_amount")
         currency = str(record.get("currency") or "").upper()
         if day is None or not isinstance(total, (int, float)) or not currency:
             return None

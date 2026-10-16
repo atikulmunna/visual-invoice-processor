@@ -12,6 +12,7 @@ from app.extraction_service import (
     ExtractionError,
     OpenRouterClient,
     extract_document,
+    native_pdf_text,
 )
 
 
@@ -178,3 +179,13 @@ def test_openrouter_client_reports_http_errors(monkeypatch: pytest.MonkeyPatch, 
         OpenRouterClient("sk-test").extract_json(_image(tmp_path), "m/model", "prompt")
 
     assert exc_info.value.code == "provider_request_failed"
+
+
+def test_a_damaged_pdf_has_no_text_and_says_why(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    damaged = tmp_path / "damaged.pdf"
+    damaged.write_bytes(b"%PDF-1.7 this is not really a PDF")
+
+    with caplog.at_level("WARNING", logger="app.extraction_service"):
+        assert native_pdf_text(damaged) is None
+    assert native_pdf_text(_image(tmp_path)) is None
+    assert "Could not read the text layer of damaged.pdf" in caplog.text

@@ -2,7 +2,6 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { createBrowserRouter, Navigate, RouterProvider } from "react-router";
 
-import { KitPage } from "./pages/KitPage";
 import { LoginPage } from "./pages/LoginPage";
 import { OverviewPage } from "./pages/OverviewPage";
 import { NotFoundPage } from "./pages/NotFoundPage";
@@ -41,7 +40,6 @@ const router = createBrowserRouter(
         { path: "review/:documentId", element: <ReviewWorkspacePage /> },
         { path: "upload", element: <UploadPage /> },
         { path: "settings", element: <SettingsPage /> },
-        { path: "kit", element: <KitPage /> },
         { path: "*", element: <NotFoundPage /> },
       ],
     },
