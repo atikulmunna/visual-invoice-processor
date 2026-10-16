@@ -8,6 +8,7 @@ import pytest
 
 from app.alpha_store import AlphaStore
 from app.config import Settings
+from app.review_queue import resolve_review_item, route_to_review_queue
 from app.vendor_memory import (
     corrections_between,
     extraction_hints,
@@ -101,7 +102,7 @@ def test_hints_quote_the_newest_correction_of_each_field() -> None:
     assert hint_text([CLEAN, CLEAN]) is None
 
 
-def test_the_worker_lookups_only_run_on_postgres_and_never_block(
+def test_the_worker_lookups_need_a_database_and_an_organization_and_never_block(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     def broken(*_: Any, **__: Any) -> None:
@@ -109,45 +110,34 @@ def test_the_worker_lookups_only_run_on_postgres_and_never_block(
 
     monkeypatch.setattr("app.vendor_memory.extraction_hints", broken)
     monkeypatch.setattr("app.vendor_memory.vendor_is_trusted", broken)
-    sheets = Settings(ledger_backend="sheets")
-    postgres = Settings(ledger_backend="postgres", postgres_dsn="postgresql://example")
+    no_database = Settings()
+    postgres = Settings(postgres_dsn="postgresql://example")
     pdf = tmp_path / "invoice.pdf"
 
-    assert hints_for_worker(sheets, pdf, "org") is None
+    assert hints_for_worker(no_database, pdf, "org") is None
     assert hints_for_worker(postgres, pdf, None) is None
     assert hints_for_worker(postgres, pdf, "org") is None
-    assert trusted_for_worker(sheets, EXTRACTED, "org") is False
+    assert trusted_for_worker(no_database, EXTRACTED, "org") is False
     assert trusted_for_worker(postgres, EXTRACTED, None) is False
     assert trusted_for_worker(postgres, EXTRACTED, "org") is False
-
-
-@pytest.fixture
-def reviews_env(dsn: str, monkeypatch: pytest.MonkeyPatch) -> str:
-    monkeypatch.setenv("INGESTION_BACKEND", "s3")
-    monkeypatch.setenv("S3_BUCKET_NAME", "alpha-invoices")
-    monkeypatch.setenv("LEDGER_BACKEND", "postgres")
-    monkeypatch.setenv("POSTGRES_DSN", dsn)
-    monkeypatch.setenv("REVIEW_QUEUE_BACKEND", "postgres")
-    return dsn
 
 
 def _org(dsn: str) -> str:
     return AlphaStore(dsn).create_user(f"memory-{uuid4().hex[:8]}", PASSWORD, max_users=1000).org_id
 
 
-def _review(org_id: str, **changes: Any) -> None:
+def _review(dsn: str, org_id: str, **changes: Any) -> None:
     """One document sent to review and approved, with the reviewer's changes."""
-    from app.review_queue import resolve_review_item, route_to_review_queue
-
     document_id = uuid4().hex
     route_to_review_queue(
+        dsn,
         document_id=document_id,
         reason_codes=["low_confidence"],
         metadata={"source_file_id": f"inbox/{org_id}/{document_id}.pdf", "file_hash": document_id,
                   "normalized_record": EXTRACTED},
         org_id=org_id,
     )
-    resolve_review_item(document_id, record_override={**EXTRACTED, **FORM_FILLED, **changes}, org_id=org_id)
+    resolve_review_item(dsn, document_id, record_override={**EXTRACTED, **FORM_FILLED, **changes}, org_id=org_id)
 
 
 def _vendor_id(dsn: str, org_id: str) -> int:
@@ -157,39 +147,39 @@ def _vendor_id(dsn: str, org_id: str) -> int:
         return conn.execute("select id from vendors where org_id = %s", (org_id,)).fetchone()[0]
 
 
-def test_reviews_build_a_vendor_track_record(reviews_env: str) -> None:
-    org, other = _org(reviews_env), _org(reviews_env)
-    _review(org, currency="USD", invoice_number="SHW-2406")
+def test_reviews_build_a_vendor_track_record(dsn: str) -> None:
+    org, other = _org(dsn), _org(dsn)
+    _review(dsn, org, currency="USD", invoice_number="SHW-2406")
     for _ in range(4):
-        _review(org, vendor_name="SHWAPNO LTD")  # a spelling, not a correction
-    vendor_id = _vendor_id(reviews_env, org)
+        _review(dsn, org, vendor_name="SHWAPNO LTD")  # a spelling, not a correction
+    vendor_id = _vendor_id(dsn, org)
 
-    memory = vendor_memory(reviews_env, org_id=org, vendor_id=vendor_id)
+    memory = vendor_memory(dsn, org_id=org, vendor_id=vendor_id)
 
     assert (memory["reviews"], memory["unchanged"], memory["trusted"], memory["trusted_after"]) == (5, 4, False, 5)
     assert [(c["field"], c["before"], c["after"]) for c in memory["corrections"]] == [
         ("invoice_number", "SHW-2405", "SHW-2406"),
         ("currency", "BDT", "USD"),
     ]
-    assert not vendor_is_trusted(reviews_env, org_id=org, record={"vendor_name": "Shwapno"})
+    assert not vendor_is_trusted(dsn, org_id=org, record={"vendor_name": "Shwapno"})
 
-    _review(org)
+    _review(dsn, org)
 
-    assert vendor_is_trusted(reviews_env, org_id=org, record={"vendor_name": "Shwapno Ltd"})
-    assert not vendor_is_trusted(reviews_env, org_id=org, record={"vendor_name": "Agora"})
-    assert not vendor_is_trusted(reviews_env, org_id=other, record={"vendor_name": "Shwapno"})
-    assert vendor_memory(reviews_env, org_id=other, vendor_id=vendor_id)["reviews"] == 0
+    assert vendor_is_trusted(dsn, org_id=org, record={"vendor_name": "Shwapno Ltd"})
+    assert not vendor_is_trusted(dsn, org_id=org, record={"vendor_name": "Agora"})
+    assert not vendor_is_trusted(dsn, org_id=other, record={"vendor_name": "Shwapno"})
+    assert vendor_memory(dsn, org_id=other, vendor_id=vendor_id)["reviews"] == 0
 
 
-def test_hints_come_from_the_vendor_the_pdf_text_names(reviews_env: str, monkeypatch: pytest.MonkeyPatch) -> None:
-    org, other = _org(reviews_env), _org(reviews_env)
-    _review(org, currency="USD")
+def test_hints_come_from_the_vendor_the_pdf_text_names(dsn: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    org, other = _org(dsn), _org(dsn)
+    _review(dsn, org, currency="USD")
     texts = {"shwapno.pdf": "SHWAPNO\nCash memo\nTotal 4,208.46", "agora.pdf": "Agora Superstore\nTotal 99"}
     monkeypatch.setattr("app.vendor_memory.native_pdf_text", lambda path: texts.get(Path(path).name))
 
-    hint = extraction_hints(reviews_env, org_id=org, file_path=Path("shwapno.pdf"))
+    hint = extraction_hints(dsn, org_id=org, file_path=Path("shwapno.pdf"))
 
     assert hint is not None and 'currency was read as "BDT" but the reviewer corrected it to "USD"' in hint
-    assert extraction_hints(reviews_env, org_id=org, file_path=Path("agora.pdf")) is None
-    assert extraction_hints(reviews_env, org_id=org, file_path=Path("photo.jpg")) is None
-    assert extraction_hints(reviews_env, org_id=other, file_path=Path("shwapno.pdf")) is None
+    assert extraction_hints(dsn, org_id=org, file_path=Path("agora.pdf")) is None
+    assert extraction_hints(dsn, org_id=org, file_path=Path("photo.jpg")) is None
+    assert extraction_hints(dsn, org_id=other, file_path=Path("shwapno.pdf")) is None

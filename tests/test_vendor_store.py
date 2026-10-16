@@ -8,7 +8,7 @@ import pytest
 
 from app.alpha_store import AlphaStore
 from app.records_store import RecordFilters, overview, search_records
-from app.storage_service import PostgresStorageService
+from app.storage_service import append_record
 from app.vendor_store import (
     VendorConflict,
     VendorNotFound,
@@ -83,7 +83,8 @@ def _org(dsn: str) -> str:
 def _store(dsn: str, org_id: str, **record: object) -> int:
     base = {"vendor_name": None, "vendor_tax_id": None, "currency": "BDT", "invoice_date": "2026-09-10",
             "total_amount": 100.0}
-    result = PostgresStorageService(dsn).append_record(
+    result = append_record(
+        dsn,
         record={**base, **record},
         metadata={"drive_file_id": f"inbox/{uuid4()}.pdf", "file_hash": uuid4().hex, "org_id": org_id},
     )

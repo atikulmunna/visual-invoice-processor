@@ -170,13 +170,9 @@ def vendor_is_trusted(dsn: str, *, org_id: str, record: dict[str, Any]) -> bool:
         return is_trusted(_reviews(conn, org_id=org_id, vendor_id=vendor_id, limit=TRUSTED_AFTER))
 
 
-def _memory_available(settings: Settings, org_id: str | None) -> bool:
-    return settings.ledger_backend == "postgres" and bool(settings.postgres_dsn) and bool(org_id)
-
-
 def hints_for_worker(settings: Settings, file_path: Path, org_id: str | None) -> str | None:
     """The worker's lookup. Hints only help, so a failure is logged and extraction goes ahead without them."""
-    if not _memory_available(settings, org_id):
+    if not settings.postgres_dsn or not org_id:
         return None
     try:
         return extraction_hints(settings.postgres_dsn or "", org_id=str(org_id), file_path=file_path)
@@ -187,7 +183,7 @@ def hints_for_worker(settings: Settings, file_path: Path, org_id: str | None) ->
 
 def trusted_for_worker(settings: Settings, record: dict[str, Any], org_id: str | None) -> bool:
     """The worker's check. When it fails the document goes to review as it would have anyway."""
-    if not _memory_available(settings, org_id):
+    if not settings.postgres_dsn or not org_id:
         return False
     try:
         return vendor_is_trusted(settings.postgres_dsn or "", org_id=str(org_id), record=record)

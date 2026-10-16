@@ -8,7 +8,7 @@ import pytest
 from app.alpha_store import AlphaStore
 from app.config import Settings
 from app.duplicates import check_for_duplicate, find_possible_duplicate, normalize_invoice_number
-from app.storage_service import PostgresStorageService
+from app.storage_service import append_record
 
 PASSWORD = "A-strong-alpha-password"
 
@@ -28,7 +28,8 @@ def _org(dsn: str) -> str:
 def _store(dsn: str, org_id: str, **record: Any) -> int:
     base = {"vendor_name": "RYANS Computers", "invoice_number": None, "invoice_date": "2026-09-10",
             "currency": "BDT", "total_amount": 1954.0}
-    result = PostgresStorageService(dsn).append_record(
+    result = append_record(
+        dsn,
         record={**base, **record},
         metadata={"drive_file_id": f"inbox/{uuid4()}.pdf", "file_hash": uuid4().hex, "org_id": org_id},
     )
@@ -102,14 +103,14 @@ def test_new_vendors_and_other_organizations_have_no_duplicates(dsn: str) -> Non
     assert _check(dsn, org, vendor_name=None, invoice_number="INV-9") is None
 
 
-def test_the_worker_check_only_runs_on_postgres_and_never_blocks(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_the_worker_check_needs_a_database_and_an_organization_and_never_blocks(monkeypatch: pytest.MonkeyPatch) -> None:
     def broken(*_: Any, **__: Any) -> None:
         raise RuntimeError("database unreachable")
 
     monkeypatch.setattr("app.duplicates.find_possible_duplicate", broken)
-    sheets = Settings(ledger_backend="sheets")
-    postgres = Settings(ledger_backend="postgres", postgres_dsn="postgresql://example")
+    no_database = Settings()
+    postgres = Settings(postgres_dsn="postgresql://example")
 
-    assert check_for_duplicate(sheets, {"vendor_name": "A"}, "org") is None
+    assert check_for_duplicate(no_database, {"vendor_name": "A"}, "org") is None
     assert check_for_duplicate(postgres, {"vendor_name": "A"}, None) is None
     assert check_for_duplicate(postgres, {"vendor_name": "A"}, "org") is None

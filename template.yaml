@@ -16,14 +16,11 @@ Globals:
     Environment:
       Variables:
         LOG_LEVEL: INFO
-        INGESTION_BACKEND: s3
         S3_BUCKET_NAME: !Sub "invoice-processor-alpha-${AWS::AccountId}-${AWS::Region}"
         S3_REGION: !Ref AWS::Region
         S3_INBOX_PREFIX: inbox/
         S3_ARCHIVE_PREFIX: archive/
-        LEDGER_BACKEND: postgres
         POSTGRES_PARAMETER_NAME: !Ref PostgresParameterName
-        REVIEW_QUEUE_BACKEND: postgres
         ALPHA_AUTH_ENABLED: "true"
         ALPHA_MAX_USERS: "10"
         ALPHA_DOCUMENT_LIMIT: "20"

@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 from pypdf import PdfWriter
 
-from app.main import DocumentRejectedError
+from app.pipeline import DocumentRejectedError
 from app.serverless_worker import inspect_document
 
 

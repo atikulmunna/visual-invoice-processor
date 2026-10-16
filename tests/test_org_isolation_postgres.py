@@ -30,11 +30,8 @@ PASSWORD = "A-strong-alpha-password"
 
 @pytest.fixture
 def pg_env(dsn: str, monkeypatch: pytest.MonkeyPatch) -> str:
-    monkeypatch.setenv("INGESTION_BACKEND", "s3")
     monkeypatch.setenv("S3_BUCKET_NAME", "alpha-invoices")
-    monkeypatch.setenv("LEDGER_BACKEND", "postgres")
     monkeypatch.setenv("POSTGRES_DSN", dsn)
-    monkeypatch.setenv("REVIEW_QUEUE_BACKEND", "postgres")
     return dsn
 
 
@@ -199,12 +196,11 @@ def test_deduplication_is_scoped_per_organization(dsn: str) -> None:
 
 
 def test_review_queue_and_records_queries_are_scoped(pg_env: str) -> None:
-    from app.monitoring_api import _resolved_file_hashes
     from app.records_store import RecordFilters, overview, record_facets, search_records
     from app.review_queue import (
         dismiss_review_item,
-        list_review_items,
         load_review_item,
+        pending_review_items,
         resolve_review_item,
         route_to_review_queue,
     )
@@ -228,10 +224,12 @@ def test_review_queue_and_records_queries_are_scoped(pg_env: str) -> None:
     for user in (one, two):
         _, key = _upload(store, user)
         append_record(
+            pg_env,
             record={**record, "vendor_name": f"Vendor {user.username}"},
             metadata={"drive_file_id": key, "file_hash": f"stored-{user.id}", "org_id": user.org_id},
         )
         route_to_review_queue(
+            pg_env,
             document_id=f"review-{user.id}",
             reason_codes=["low_confidence"],
             metadata={"source_file_id": key, "file_hash": f"review-{user.id}", "normalized_record": record},
@@ -239,20 +237,20 @@ def test_review_queue_and_records_queries_are_scoped(pg_env: str) -> None:
         )
 
     def _ids(org_id: str | None) -> set[str]:
-        return {item["document_id"] for item in list_review_items(org_id=org_id)}
+        return {item["document_id"] for item in pending_review_items(pg_env, org_id=org_id)}
 
     assert _ids(one.org_id) == {f"review-{one.id}"}
     assert {f"review-{one.id}", f"review-{two.id}"} <= _ids(None)
 
     with pytest.raises(FileNotFoundError):
-        load_review_item(f"review-{two.id}", org_id=one.org_id)
+        load_review_item(pg_env, f"review-{two.id}", org_id=one.org_id)
     with pytest.raises(FileNotFoundError):
-        resolve_review_item(f"review-{two.id}", org_id=one.org_id)
+        resolve_review_item(pg_env, f"review-{two.id}", org_id=one.org_id)
     with pytest.raises(FileNotFoundError):
-        dismiss_review_item(f"review-{two.id}", resolution_status="REJECTED", org_id=one.org_id)
-    assert load_review_item(f"review-{two.id}", org_id=two.org_id)["status"] == "REVIEW_REQUIRED"
+        dismiss_review_item(pg_env, f"review-{two.id}", resolution_status="REJECTED", org_id=one.org_id)
+    assert load_review_item(pg_env, f"review-{two.id}", org_id=two.org_id)["status"] == "REVIEW_REQUIRED"
 
-    resolved = resolve_review_item(f"review-{one.id}", org_id=one.org_id)
+    resolved = resolve_review_item(pg_env, f"review-{one.id}", org_id=one.org_id)
     assert resolved["storage_result"]["status"] == "appended"
 
     found = search_records(pg_env, org_id=one.org_id, filters=RecordFilters())
@@ -262,7 +260,7 @@ def test_review_queue_and_records_queries_are_scoped(pg_env: str) -> None:
     summary = overview(pg_env, org_id=one.org_id, currency=None, base_currency="BDT", today=date(2026, 1, 15))
     assert summary["records_total"] == 2
     assert {row["vendor_name"] for row in summary["top_vendors"]} == {f"Vendor {one.username}", "Acme"}
-    assert _resolved_file_hashes(pg_env, org_id=one.org_id) == {f"stored-{one.id}", f"review-{one.id}"}
+    assert _ids(one.org_id) == set()
     assert search_records(pg_env, org_id=two.org_id, filters=RecordFilters())["total"] == 1
 
 
@@ -306,7 +304,7 @@ def test_worker_processes_identical_files_independently_per_organization(
         "line_items": [],
         "_provider": "fake",
     }
-    monkeypatch.setattr("app.main.extract_document", lambda **_: dict(extracted))
+    monkeypatch.setattr("app.pipeline.extract_document", lambda **_: dict(extracted))
     storage = _FakeObjectStorage()
 
     store = AlphaStore(pg_env)
@@ -351,7 +349,7 @@ def test_worker_sends_a_second_file_of_a_stored_invoice_to_review(pg_env: str, m
         "total_amount": 216500, "model_confidence": 0.97, "line_items": [], "_provider": "fake",
     }
     copies = iter([dict(extracted), {**extracted, "invoice_number": "tl 0091", "vendor_name": "TECH LAND BD LTD"}])
-    monkeypatch.setattr("app.main.extract_document", lambda **_: next(copies))
+    monkeypatch.setattr("app.pipeline.extract_document", lambda **_: next(copies))
     store = AlphaStore(pg_env)
     user = _user(store, "dupe")
     _, first_key = _upload(store, user)
@@ -369,7 +367,7 @@ def test_worker_sends_a_second_file_of_a_stored_invoice_to_review(pg_env: str, m
         document_id = conn.execute(
             "SELECT document_id FROM review_queue_items WHERE metadata_json ->> 'source_file_id' = %s", (second_key,)
         ).fetchone()[0]
-    duplicate_of = load_review_item(document_id, org_id=user.org_id)["metadata"]["duplicate_of"]
+    duplicate_of = load_review_item(pg_env, document_id, org_id=user.org_id)["metadata"]["duplicate_of"]
     assert (duplicate_of["record_id"], duplicate_of["match"]) == (stored_id, "invoice_number")
 
 
@@ -385,7 +383,7 @@ def test_worker_checks_values_against_the_pdf_text(pg_env: str, monkeypatch: pyt
     }
     misread = {**extracted, "total_amount": 23000, "subtotal": 23000, "invoice_number": "16731"}
     reads = iter([dict(extracted), misread])
-    monkeypatch.setattr("app.main.extract_document", lambda **_: next(reads))
+    monkeypatch.setattr("app.pipeline.extract_document", lambda **_: next(reads))
     store = AlphaStore(pg_env)
     user = _user(store, "evidence")
     _, faithful_key = _upload(store, user)
@@ -419,11 +417,11 @@ def test_worker_learns_from_a_vendor_reviews(pg_env: str, monkeypatch: pytest.Mo
                   "payment_method": "unknown", "validation_score": 1.0}
         document_id = f"seed-{user.id}-{index}"
         route_to_review_queue(
-            document_id=document_id, reason_codes=["low_confidence"], org_id=user.org_id,
+            pg_env, document_id=document_id, reason_codes=["low_confidence"], org_id=user.org_id,
             metadata={"source_file_id": f"inbox/{user.id}/seed-{index}.png", "file_hash": document_id,
                       "normalized_record": {**record, "invoice_number": "ORDER-9"} if index == 0 else record},
         )
-        resolve_review_item(document_id, record_override=record, org_id=user.org_id)
+        resolve_review_item(pg_env, document_id, record_override=record, org_id=user.org_id)
 
     reads = iter([
         {**base, "invoice_number": "SHW-50", "subtotal": 950, "total_amount": 950},
@@ -437,7 +435,7 @@ def test_worker_learns_from_a_vendor_reviews(pg_env: str, monkeypatch: pytest.Mo
         hints.append(kwargs.get("hints"))
         return next(reads)
 
-    monkeypatch.setattr("app.main.extract_document", extract)
+    monkeypatch.setattr("app.pipeline.extract_document", extract)
     monkeypatch.setattr("app.vendor_memory.native_pdf_text", lambda path: "SHWAPNO Invoice" if path.suffix == ".pdf" else None)
     settings = Settings.from_env()
     keys = [_upload(store, user, name)[1] for name in ("photo.png", "invoice.pdf", "agora.png")]
@@ -499,7 +497,7 @@ def test_worker_uses_each_organization_base_currency_and_never_invents_fields(
         dict(no_currency),
         {**no_currency, "vendor_name": None, "invoice_date": None},
     ]
-    monkeypatch.setattr("app.main.extract_document", lambda **_: outputs.pop(0))
+    monkeypatch.setattr("app.pipeline.extract_document", lambda **_: outputs.pop(0))
 
     store = AlphaStore(pg_env)
     bdt_org, usd_org = _user(store, "bdt"), _user(store, "usd")

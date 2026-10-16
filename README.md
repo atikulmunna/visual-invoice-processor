@@ -128,12 +128,14 @@ app/
   vendor_api.py            Vendor endpoints
   vendor_memory.py         Corrections per vendor, track records, and extraction hints
   web_session.py           Session cookie settings
-  serverless_worker.py     S3-event processing worker
+  serverless_worker.py     S3-event handler: file checks, job claims, and status
+  pipeline.py              One document from download to a stored record or a review item
   extraction_service.py    OpenRouter extraction and PDF text enrichment
   normalization_engine.py  Field normalization, recovery, and currency resolution
   validation.py            Schema checks, business rules, and review reasons
   evidence.py              Extracted values checked against the document text, with per-field confidence
-  review_queue.py          Organization-scoped review queue
+  review_queue.py          Review routing and the organization-scoped review queue
+  storage_service.py       Stored records, linked to their vendor
   alpha_store.py           Organizations, users, sessions, quotas, jobs, and claims
   alpha_admin.py           Administrator command line
   db_migrate.py            Ordered migration runner
@@ -171,11 +173,9 @@ cd frontend; npm install; npm run build; cd ..
 Configure `.env` with the required values:
 
 ```dotenv
-INGESTION_BACKEND=s3
 S3_BUCKET_NAME=your-private-bucket
 S3_REGION=ap-southeast-1
 
-LEDGER_BACKEND=postgres
 POSTGRES_DSN=postgresql://...
 ALPHA_AUTH_ENABLED=true
 

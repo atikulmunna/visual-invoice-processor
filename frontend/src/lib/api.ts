@@ -93,8 +93,6 @@ export interface PresignedUpload {
 
 export interface Backlog {
   review_queue_total: number;
-  dead_letter_total: number;
-  attention_total: number;
 }
 
 const request = createApiClient();

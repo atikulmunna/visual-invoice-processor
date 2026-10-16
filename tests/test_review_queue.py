@@ -1,16 +1,28 @@
 from __future__ import annotations
 
-import json
-from pathlib import Path
+from typing import Any
+from uuid import uuid4
 
+import pytest
+from pydantic import ValidationError
+
+from app.alpha_store import AlphaStore
 from app.review_queue import (
     decide_review_status,
     dismiss_review_item,
-    list_review_items,
     load_review_item,
-    mark_review_resolved,
+    pending_review_items,
+    resolve_review_item,
     route_to_review_queue,
 )
+from app.storage_service import append_record
+
+PASSWORD = "A-strong-alpha-password"
+RECORD = {
+    "document_type": "invoice", "vendor_name": "Acme", "invoice_number": "INV-7", "invoice_date": "2026-03-02",
+    "currency": "BDT", "subtotal": 100.0, "tax_amount": 15.0, "total_amount": 115.0, "model_confidence": 0.4,
+    "validation_score": 0.5, "line_items": [],
+}
 
 
 def test_decide_review_status_requires_review_on_invalid() -> None:
@@ -41,86 +53,103 @@ def test_decide_review_status_validated_when_high_confidence_and_valid() -> None
     assert not decision.reason_codes
 
 
-def test_route_to_review_queue_writes_reason_record_and_moves_file(tmp_path: Path) -> None:
-    src = tmp_path / "invoice.pdf"
-    src.write_bytes(b"pdf")
-    queue = tmp_path / "Needs_Review"
-
-    result = route_to_review_queue(
-        document_id="doc-9",
-        reason_codes=["low_confidence"],
-        queue_dir=queue,
-        source_file=src,
-        metadata={"error_code": "low_confidence"},
-    )
-
-    assert result["status"] == "REVIEW_REQUIRED"
-    assert result["source_file_moved_to"] is not None
-    assert (queue / "invoice.pdf").exists()
-    assert not src.exists()
-
-    record_file = queue / "doc-9.json"
-    payload = json.loads(record_file.read_text(encoding="utf-8"))
-    assert payload["reason_codes"] == ["low_confidence"]
+def _org(dsn: str) -> str:
+    return AlphaStore(dsn).create_user(f"queue-{uuid4().hex[:8]}", PASSWORD, max_users=1000).org_id
 
 
-def test_list_and_load_review_items(tmp_path: Path) -> None:
-    queue = tmp_path / "review_queue"
+def _queue(dsn: str, org_id: str, record: dict[str, Any] | None = None, reasons: list[str] | None = None) -> str:
+    document_id = uuid4().hex
     route_to_review_queue(
-        document_id="doc-10",
-        reason_codes=["validation_failed"],
-        queue_dir=queue,
-        metadata={"file_hash": "hash-10"},
+        dsn,
+        document_id=document_id,
+        reason_codes=reasons or ["low_confidence"],
+        metadata={"source_file_id": f"inbox/{org_id}/{document_id}.pdf", "file_hash": document_id,
+                  "normalized_record": record or RECORD},
+        org_id=org_id,
     )
-
-    items = list_review_items(queue_dir=queue)
-    assert len(items) == 1
-    assert items[0]["document_id"] == "doc-10"
-
-    loaded = load_review_item("doc-10", queue_dir=queue)
-    assert loaded["status"] == "REVIEW_REQUIRED"
-    assert loaded["metadata"]["file_hash"] == "hash-10"
+    return document_id
 
 
-def test_mark_review_resolved_updates_record(tmp_path: Path) -> None:
-    queue = tmp_path / "review_queue"
-    route_to_review_queue(
-        document_id="doc-11",
-        reason_codes=["low_confidence"],
-        queue_dir=queue,
-        metadata={"file_hash": "hash-11"},
-    )
+def test_items_wait_oldest_first_and_only_for_their_organization(dsn: str) -> None:
+    org, other = _org(dsn), _org(dsn)
+    first, second = _queue(dsn, org), _queue(dsn, org, reasons=["possible_duplicate"])
+    theirs = _queue(dsn, other)
 
-    updated = mark_review_resolved(
-        "doc-11",
-        queue_dir=queue,
-        resolution_status="RESOLVED_STORED",
-        resolved_record={"vendor_name": "Acme"},
-        storage_result={"status": "appended", "row_id": 5},
-        note="reviewed manually",
-    )
+    pending = pending_review_items(dsn, org_id=org)
 
-    assert updated["status"] == "RESOLVED_STORED"
-    assert updated["resolved_record"]["vendor_name"] == "Acme"
-    assert updated["storage_result"]["row_id"] == 5
-    assert updated["resolution_note"] == "reviewed manually"
+    assert [item["document_id"] for item in pending] == [first, second]
+    assert pending[1]["reason_codes"] == ["possible_duplicate"]
+    assert pending[0]["metadata"]["normalized_record"]["vendor_name"] == "Acme"
+    assert load_review_item(dsn, theirs, org_id=other)["status"] == "REVIEW_REQUIRED"
+    with pytest.raises(FileNotFoundError):
+        load_review_item(dsn, theirs, org_id=org)
+    with pytest.raises(FileNotFoundError):
+        dismiss_review_item(dsn, theirs, resolution_status="REJECTED", org_id=org)
+    with pytest.raises(FileNotFoundError):
+        resolve_review_item(dsn, theirs, org_id=org)
+    # An unscoped operator sees every organization.
+    assert {first, second, theirs} <= {item["document_id"] for item in pending_review_items(dsn, org_id=None)}
 
 
-def test_dismiss_review_item_marks_rejected(tmp_path: Path) -> None:
-    queue = tmp_path / "review_queue"
-    route_to_review_queue(
-        document_id="doc-12",
-        reason_codes=["validation_failed"],
-        queue_dir=queue,
-        metadata={"file_hash": "hash-12"},
-    )
+def test_an_item_whose_file_was_stored_another_way_is_no_longer_waiting(dsn: str) -> None:
+    org = _org(dsn)
+    document_id = _queue(dsn, org)
+    append_record(dsn, record=RECORD, metadata={"drive_file_id": "inbox/other-copy.pdf", "file_hash": document_id,
+                                                  "org_id": org})
 
-    updated = dismiss_review_item(
-        "doc-12",
-        queue_dir=queue,
-        resolution_status="REJECTED",
-        note="not a valid business document",
-    )
+    assert pending_review_items(dsn, org_id=org) == []
 
-    assert updated["review_item"]["status"] == "REJECTED"
-    assert updated["storage_result"]["action"] == "REJECTED"
+
+def test_approving_stores_the_record_as_read_or_as_corrected(dsn: str) -> None:
+    org = _org(dsn)
+    as_read, corrected = _queue(dsn, org), _queue(dsn, org)
+
+    first = resolve_review_item(dsn, as_read, note="looks right", org_id=org)
+    second = resolve_review_item(dsn, corrected, record_override={**RECORD, "vendor_name": "Acme Ltd"}, org_id=org)
+
+    assert first["storage_result"]["status"] == "appended"
+    assert first["review_item"]["status"] == "RESOLVED_STORED"
+    assert first["review_item"]["resolution_note"] == "looks right"
+    assert first["resolved_record"]["vendor_name"] == "Acme"
+    assert first["resolved_record"]["needs_review"] is False
+    assert second["review_item"]["resolved_record"]["vendor_name"] == "Acme Ltd"
+    assert pending_review_items(dsn, org_id=org) == []
+    with pytest.raises(ValueError, match="not active"):
+        resolve_review_item(dsn, as_read, org_id=org)
+
+
+def test_approval_waits_until_required_fields_are_filled_and_valid(dsn: str) -> None:
+    org = _org(dsn)
+    document_id = _queue(dsn, org, record={**RECORD, "vendor_name": None, "total_amount": None})
+
+    with pytest.raises(ValueError, match="Fill in the"):
+        resolve_review_item(dsn, document_id, org_id=org)
+    with pytest.raises(ValidationError):
+        resolve_review_item(dsn, document_id, record_override={**RECORD, "currency": "taka"}, org_id=org)
+    assert load_review_item(dsn, document_id, org_id=org)["status"] == "REVIEW_REQUIRED"
+
+
+def test_rejected_and_duplicate_items_leave_the_queue_without_a_record(dsn: str) -> None:
+    org = _org(dsn)
+    rejected, duplicate = _queue(dsn, org), _queue(dsn, org)
+
+    dismiss_review_item(dsn, rejected, resolution_status="REJECTED", note="not ours", org_id=org)
+    result = dismiss_review_item(dsn, duplicate, resolution_status="RESOLVED_DUPLICATE_MANUAL", org_id=org)
+
+    assert load_review_item(dsn, rejected, org_id=org)["resolution_note"] == "not ours"
+    assert result["review_item"]["status"] == "RESOLVED_DUPLICATE_MANUAL"
+    assert result["storage_result"] == {"status": "dismissed", "action": "RESOLVED_DUPLICATE_MANUAL"}
+    assert pending_review_items(dsn, org_id=org) == []
+    with pytest.raises(ValueError, match="Unsupported dismissal"):
+        dismiss_review_item(dsn, rejected, resolution_status="STORED", org_id=org)
+
+
+def test_storing_the_same_file_twice_keeps_one_record(dsn: str) -> None:
+    org = _org(dsn)
+    metadata = {"drive_file_id": f"inbox/{org}/a.pdf", "file_hash": uuid4().hex, "org_id": org}
+
+    first = append_record(dsn, record=RECORD, metadata=metadata)
+    second = append_record(dsn, record=RECORD, metadata=metadata)
+
+    assert first["status"] == "appended" and isinstance(first["row_id"], int)
+    assert second["status"] == "skipped_duplicate"

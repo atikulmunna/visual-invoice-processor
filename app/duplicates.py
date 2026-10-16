@@ -87,7 +87,7 @@ def find_possible_duplicate(dsn: str, *, org_id: str, record: dict[str, Any]) ->
 
 def check_for_duplicate(settings: Settings, record: dict[str, Any], org_id: str | None) -> dict[str, Any] | None:
     """The worker's check. It only advises, so a failed lookup is logged and the document carries on."""
-    if settings.ledger_backend != "postgres" or not settings.postgres_dsn or not org_id:
+    if not settings.postgres_dsn or not org_id:
         return None
     try:
         return find_possible_duplicate(settings.postgres_dsn, org_id=org_id, record=record)

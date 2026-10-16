@@ -1,82 +1,42 @@
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 
 from app.config import Settings
 
 
 @pytest.fixture
-def service_account_file(tmp_path: Path) -> Path:
-    p = tmp_path / "svc.json"
-    p.write_text("{}", encoding="utf-8")
-    return p
-
-
-def test_settings_load_service_account(monkeypatch: pytest.MonkeyPatch, service_account_file: Path) -> None:
-    monkeypatch.setenv("DRIVE_INBOX_FOLDER_ID", "folder-123")
-    monkeypatch.setenv("GOOGLE_AUTH_MODE", "service_account")
-    monkeypatch.setenv("GOOGLE_SERVICE_ACCOUNT_FILE", str(service_account_file))
-
-    settings = Settings.from_env()
-    assert settings.drive_inbox_folder_id == "folder-123"
-    assert settings.google_auth_mode == "service_account"
-    assert "application/pdf" in settings.allowed_mime_types
-
-
-def test_settings_missing_required_env(
-    monkeypatch: pytest.MonkeyPatch, service_account_file: Path
-) -> None:
-    monkeypatch.delenv("DRIVE_INBOX_FOLDER_ID", raising=False)
-    monkeypatch.setenv("GOOGLE_AUTH_MODE", "service_account")
-    monkeypatch.setenv("GOOGLE_SERVICE_ACCOUNT_FILE", str(service_account_file))
-    with pytest.raises(ValueError, match="DRIVE_INBOX_FOLDER_ID"):
-        Settings.from_env()
-
-
-def test_settings_requires_existing_service_account_file(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("DRIVE_INBOX_FOLDER_ID", "folder-123")
-    monkeypatch.setenv("GOOGLE_AUTH_MODE", "service_account")
-    monkeypatch.setenv("GOOGLE_SERVICE_ACCOUNT_FILE", "missing-file.json")
-    with pytest.raises(ValueError, match="not found"):
-        Settings.from_env()
-
-
-def test_settings_rejects_invalid_ledger_backend(
-    monkeypatch: pytest.MonkeyPatch, service_account_file: Path
-) -> None:
-    monkeypatch.setenv("DRIVE_INBOX_FOLDER_ID", "folder-123")
-    monkeypatch.setenv("GOOGLE_AUTH_MODE", "service_account")
-    monkeypatch.setenv("GOOGLE_SERVICE_ACCOUNT_FILE", str(service_account_file))
-    monkeypatch.setenv("LEDGER_BACKEND", "mongo")
-    with pytest.raises(ValueError, match="LEDGER_BACKEND"):
-        Settings.from_env()
-
-
-def test_settings_s3_uses_native_aws_configuration(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("INGESTION_BACKEND", "s3")
+def production_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("S3_BUCKET_NAME", "alpha-invoices")
     monkeypatch.setenv("S3_REGION", "ap-southeast-1")
-    monkeypatch.setenv("LEDGER_BACKEND", "postgres")
     monkeypatch.setenv("POSTGRES_DSN", "postgresql://user:pass@localhost:5432/db")
-    monkeypatch.delenv("GOOGLE_SERVICE_ACCOUNT_FILE", raising=False)
-    monkeypatch.delenv("DRIVE_INBOX_FOLDER_ID", raising=False)
+    monkeypatch.delenv("ALLOWED_MIME_TYPES", raising=False)
+
+
+def test_settings_come_from_the_environment(production_env: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MAX_PDF_PAGES", "3")
 
     settings = Settings.from_env()
 
-    assert settings.ingestion_backend == "s3"
     assert settings.s3_bucket_name == "alpha-invoices"
     assert settings.s3_region == "ap-southeast-1"
+    assert settings.postgres_dsn == "postgresql://user:pass@localhost:5432/db"
+    assert settings.allowed_mime_types == ("image/jpeg", "image/png", "application/pdf")
+    assert settings.max_pdf_pages == 3
 
 
-def test_settings_s3_requires_bucket(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("INGESTION_BACKEND", "s3")
-    monkeypatch.setenv("LEDGER_BACKEND", "postgres")
-    monkeypatch.setenv("POSTGRES_DSN", "postgresql://user:pass@localhost:5432/db")
-    monkeypatch.delenv("S3_BUCKET_NAME", raising=False)
+@pytest.mark.parametrize("missing", ["S3_BUCKET_NAME", "POSTGRES_DSN"])
+def test_the_bucket_and_the_database_are_required(
+    production_env: None, monkeypatch: pytest.MonkeyPatch, missing: str
+) -> None:
+    monkeypatch.setenv(missing, " ")
 
-    with pytest.raises(ValueError, match="S3_BUCKET_NAME"):
+    with pytest.raises(ValueError, match=missing):
+        Settings.from_env()
+
+
+def test_at_least_one_file_type_must_be_allowed(production_env: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ALLOWED_MIME_TYPES", " , ")
+
+    with pytest.raises(ValueError, match="ALLOWED_MIME_TYPES"):
         Settings.from_env()
