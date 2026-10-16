@@ -29,6 +29,7 @@ Ledgerly is a private-alpha invoice processing application for a small, controll
 - **Vendor master:** every spelling of a supplier adds up to one vendor. Records link as they are stored, by the same tax ID or BIN or the same name once case, punctuation, and suffixes like Ltd are ignored; look-alike names are suggested for a one-click merge rather than merged silently. Each vendor has a page with its spend by month and the names its documents used.
 - **Safe reprocessing:** idempotent jobs and duplicate-safe writes; the same file uploaded twice in one organization is caught, while two organizations can process identical files independently.
 - **Duplicate bills:** a different file of a bill already stored (a scan and a PDF, or a copy someone forwarded) is held for review instead of being stored twice. It matches on the same vendor plus the same invoice number, or the same amount within a week, and review shows it side by side with the stored record.
+- **Field evidence:** for PDFs with a text layer, the vendor, invoice number, date, and total are looked up in the document's own text in whatever format it prints them, so a misread value goes to review even when the model is sure of it. Dates are checked for sense (not in the future, a due date not before the invoice date), and review marks the fields that need a second look.
 - **Operations on a budget:** infrastructure as code, least-privilege IAM, secrets in SSM, seven-day log retention, and an annual AWS budget with alerts.
 
 ## Architecture
@@ -129,6 +130,7 @@ app/
   extraction_service.py    OpenRouter extraction and PDF text enrichment
   normalization_engine.py  Field normalization, recovery, and currency resolution
   validation.py            Schema checks, business rules, and review reasons
+  evidence.py              Extracted values checked against the document text, with per-field confidence
   review_queue.py          Organization-scoped review queue
   alpha_store.py           Organizations, users, sessions, quotas, jobs, and claims
   alpha_admin.py           Administrator command line

@@ -375,6 +375,35 @@ def test_worker_sends_a_second_file_of_a_stored_invoice_to_review(pg_env: str, m
     assert (duplicate_of["record_id"], duplicate_of["match"]) == (stored_id, "invoice_number")
 
 
+def test_worker_checks_values_against_the_pdf_text(pg_env: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.config import Settings
+    from app.serverless_worker import process_s3_object
+
+    text_layer = "INVOICE\nFrom HiFi Heaven, Uttara\nInvoice no: 16713\nOrder date: 09-19-2026\nTotal 2,300.00"
+    extracted: dict[str, Any] = {
+        "document_type": "invoice", "vendor_name": "HiFi Heaven", "invoice_number": "16713",
+        "invoice_date": "2026-09-19", "currency": "BDT", "subtotal": 2300, "tax_amount": 0, "total_amount": 2300,
+        "model_confidence": 0.2, "line_items": [], "_provider": "fake", "_ocr_text": text_layer,
+    }
+    misread = {**extracted, "total_amount": 23000, "subtotal": 23000, "invoice_number": "16731"}
+    reads = iter([dict(extracted), misread])
+    monkeypatch.setattr("app.main.extract_document", lambda **_: next(reads))
+    store = AlphaStore(pg_env)
+    user = _user(store, "evidence")
+    _, faithful_key = _upload(store, user)
+    _, misread_key = _upload(store, user)
+    settings = Settings.from_env()
+
+    faithful = process_s3_object(faithful_key, store=store, storage=_DistinctFiles(), settings=settings)
+    misread_result = process_s3_object(misread_key, store=store, storage=_DistinctFiles(), settings=settings)
+
+    # The model doubted itself (0.2), but every value is printed on the document, so it is stored.
+    assert faithful["status"] == "STORED"
+    assert faithful["record"]["field_evidence"]["fields"]["total_amount"]["status"] == "found"
+    assert misread_result["status"] == "REVIEW_REQUIRED"
+    assert misread_result["reason_codes"] == ["value_not_on_document"]
+
+
 def test_base_currency_is_validated_and_listed(dsn: str) -> None:
     store = AlphaStore(dsn)
     owner = _user(store, "currency")

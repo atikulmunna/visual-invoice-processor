@@ -19,6 +19,16 @@ def test_decide_review_status_requires_review_on_invalid() -> None:
     assert "validation_failed" in decision.reason_codes
 
 
+def test_values_checked_against_the_document_text_overrule_the_model_score() -> None:
+    unchecked = decide_review_status(is_valid=True, model_confidence=0.3, confidence_threshold=0.5)
+    checked = decide_review_status(is_valid=True, model_confidence=0.3, confidence_threshold=0.5, checked_against_text=True)
+    invalid = decide_review_status(is_valid=False, model_confidence=0.3, confidence_threshold=0.5, checked_against_text=True)
+
+    assert unchecked.reason_codes == ("low_confidence",)
+    assert checked.status == "VALIDATED"
+    assert invalid.reason_codes == ("validation_failed",)
+
+
 def test_decide_review_status_requires_review_on_low_confidence() -> None:
     decision = decide_review_status(is_valid=True, model_confidence=0.5, confidence_threshold=0.8)
     assert decision.status == "REVIEW_REQUIRED"

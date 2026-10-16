@@ -392,6 +392,19 @@ def test_review_detail_carries_the_record_it_may_duplicate(review_client: TestCl
     assert review_client.get("/api/review/doc-gone", auth=("owner.one", PASSWORD)).json()["duplicate_of"] is None
 
 
+def test_review_detail_carries_the_field_evidence(review_client: TestClient, tmp_path: Path) -> None:
+    import json
+
+    queue = tmp_path / "queue"
+    item = json.loads((queue / "doc-mine.json").read_text(encoding="utf-8"))
+    evidence = {"text_available": True, "fields": {"total_amount": {"status": "not_found", "confidence": 0.3}}}
+    item["metadata"]["field_evidence"] = evidence
+    (queue / "doc-mine.json").write_text(json.dumps(item), encoding="utf-8")
+
+    assert review_client.get("/api/review/doc-mine", auth=("owner.one", PASSWORD)).json()["field_evidence"] == evidence
+    assert review_client.get("/api/review/doc-gone", auth=("owner.one", PASSWORD)).json()["field_evidence"] is None
+
+
 def test_review_detail_reports_a_deleted_or_unreachable_document_without_failing(review_client: TestClient) -> None:
     gone = review_client.get("/api/review/doc-gone", auth=("owner.one", PASSWORD)).json()["document"]
     _ReviewStorage.broken = True

@@ -14,6 +14,7 @@ import {
   checkForm,
   comparisonRows,
   DOCUMENT_TYPE_OPTIONS,
+  evidenceWarning,
   formFromRecord,
   nextAfter,
   PAYMENT_METHOD_OPTIONS,
@@ -24,6 +25,7 @@ import {
   type LineItemForm,
   type ReviewDetail,
   type ReviewForm,
+  type TextFormField,
 } from "../lib/review";
 import { useShortcuts } from "../lib/shortcuts";
 import { useSession } from "../shell/session";
@@ -114,25 +116,27 @@ interface FieldsProps {
   form: ReviewForm;
   issues: Issue[];
   set: (field: keyof ReviewForm) => (event: ChangeEvent<HTMLInputElement | HTMLSelectElement>) => void;
+  warn: (field: TextFormField) => string | null;
 }
 
-function DetailFields({ form, issues, set }: FieldsProps) {
+function DetailFields({ form, issues, set, warn }: FieldsProps) {
   return (
     <Card>
       <h2 className="card-title">Details</h2>
       <div className="form-grid">
         <TextField label="Vendor name" name="vendor_name" value={form.vendor_name} onChange={set("vendor_name")}
-          error={issueText(issues, "vendor_name")} autoComplete="off" />
+          error={issueText(issues, "vendor_name")} warning={warn("vendor_name")} autoComplete="off" />
         <TextField label="Invoice number" name="invoice_number" value={form.invoice_number}
-          onChange={set("invoice_number")} autoComplete="off" />
+          onChange={set("invoice_number")} warning={warn("invoice_number")} autoComplete="off" />
         <TextField label="Invoice date" name="invoice_date" type="date" value={form.invoice_date}
-          onChange={set("invoice_date")} error={issueText(issues, "invoice_date")} />
+          onChange={set("invoice_date")} error={issueText(issues, "invoice_date")} warning={warn("invoice_date")} />
         <TextField label="Due date" name="due_date" type="date" value={form.due_date} onChange={set("due_date")}
-          error={issueText(issues, "due_date")} />
+          error={issueText(issues, "due_date")} warning={warn("due_date")} />
         <TextField label="Currency" name="currency" value={form.currency} maxLength={3} autoComplete="off"
-          onChange={set("currency")} error={issueText(issues, "currency")} spellCheck={false} />
+          onChange={set("currency")} error={issueText(issues, "currency")} warning={warn("currency")}
+          spellCheck={false} />
         <TextField label="Vendor tax ID or BIN" name="vendor_tax_id" value={form.vendor_tax_id}
-          onChange={set("vendor_tax_id")} autoComplete="off" />
+          onChange={set("vendor_tax_id")} warning={warn("vendor_tax_id")} autoComplete="off" />
         <SelectField label="Document type" name="document_type" value={form.document_type}
           onChange={set("document_type")} options={DOCUMENT_TYPE_OPTIONS} />
         <SelectField label="Payment method" name="payment_method" value={form.payment_method}
@@ -142,14 +146,14 @@ function DetailFields({ form, issues, set }: FieldsProps) {
   );
 }
 
-function AmountFields({ form, issues, set }: FieldsProps) {
+function AmountFields({ form, issues, set, warn }: FieldsProps) {
   return (
     <Card>
       <h2 className="card-title">Amounts</h2>
       <div className="form-grid">
         {(Object.keys(AMOUNT_LABELS) as AmountField[]).map((field) => (
           <TextField key={field} label={AMOUNT_LABELS[field]} name={field} value={form[field]} inputMode="decimal"
-            onChange={set(field)} error={issueText(issues, field)} autoComplete="off" />
+            onChange={set(field)} error={issueText(issues, field)} warning={warn(field)} autoComplete="off" />
         ))}
       </div>
     </Card>
@@ -255,6 +259,9 @@ export function ReviewWorkspacePage() {
 
   const set = (field: keyof ReviewForm) => (event: ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
     setForm((current) => (current ? { ...current, [field]: event.target.value } : current));
+  const extracted = detail ? formFromRecord(detail.record) : null;
+  const warn = (field: TextFormField) =>
+    active && form && extracted ? evidenceWarning(detail?.field_evidence, field, form, extracted) : null;
 
   function open(id: string | null) {
     navigate(id ? `/review/${encodeURIComponent(id)}` : "/review", { replace: true });
@@ -361,8 +368,8 @@ export function ReviewWorkspacePage() {
               </div>
             )}
             {active && detail.duplicate_of && <DuplicatePanel match={detail.duplicate_of} form={form} />}
-            <DetailFields form={form} issues={issues} set={set} />
-            <AmountFields form={form} issues={issues} set={set} />
+            <DetailFields form={form} issues={issues} set={set} warn={warn} />
+            <AmountFields form={form} issues={issues} set={set} warn={warn} />
             <LineItemsEditor lines={form.line_items} issues={issues}
               onChange={(lines) => setForm((current) => (current ? { ...current, line_items: lines } : current))} />
             <div className="review-actions">
