@@ -1,6 +1,6 @@
 import { formatMoney } from "./format";
 import { plural, type MonthTotal } from "./overview";
-import { AMOUNT_LABELS } from "./review";
+import { FIELD_LABELS } from "./review";
 
 export interface CurrencyTotal {
   currency: string;
@@ -44,20 +44,8 @@ export interface VendorMemory {
   corrections: Correction[];
 }
 
-const FIELD_LABELS: Record<string, string> = {
-  document_type: "Document type",
-  vendor_name: "Vendor name",
-  vendor_tax_id: "Vendor tax ID or BIN",
-  invoice_number: "Invoice number",
-  invoice_date: "Invoice date",
-  due_date: "Due date",
-  currency: "Currency",
-  payment_method: "Payment method",
-  ...AMOUNT_LABELS,
-};
-
 export function fieldLabel(field: string): string {
-  return FIELD_LABELS[field] ?? field;
+  return (FIELD_LABELS as Record<string, string>)[field] ?? field;
 }
 
 export function correctionValue(value: unknown): string {

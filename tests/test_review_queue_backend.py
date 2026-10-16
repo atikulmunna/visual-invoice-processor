@@ -17,5 +17,18 @@ def test_queue_backend_prefers_postgres_when_auto_and_postgres_enabled(monkeypat
         ledger_backend = "postgres"
         postgres_dsn = "postgresql://example"
 
-    monkeypatch.setattr(review_queue, "_settings_or_none", lambda: _Settings())
+    monkeypatch.setattr(review_queue, "_settings", lambda: _Settings())
     assert review_queue._queue_backend("review_queue") == "postgres"
+
+
+def test_settings_that_fail_to_load_are_reported_not_hidden(monkeypatch) -> None:
+    import pytest
+
+    def broken() -> None:
+        raise ValueError("LEDGER_BACKEND must be one of: sheets, postgres")
+
+    monkeypatch.setattr(review_queue, "_settings", broken)
+
+    # Before, this quietly fell back to writing review items to the local disk.
+    with pytest.raises(ValueError, match="LEDGER_BACKEND"):
+        review_queue._queue_backend("review_queue")

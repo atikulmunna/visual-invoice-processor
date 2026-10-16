@@ -187,6 +187,19 @@ export const AMOUNT_LABELS: Record<AmountField, string> = {
   total_amount: "Total",
 };
 
+/** What each field is called wherever it is shown. */
+export const FIELD_LABELS: Record<TextFormField, string> = {
+  document_type: "Document type",
+  vendor_name: "Vendor name",
+  vendor_tax_id: "Vendor tax ID or BIN",
+  invoice_number: "Invoice number",
+  invoice_date: "Invoice date",
+  due_date: "Due date",
+  currency: "Currency",
+  payment_method: "Payment method",
+  ...AMOUNT_LABELS,
+};
+
 /** The label shown for a stored value, such as "Bank transfer" for "bank". */
 export function optionLabel(options: { value: string; label: string }[], value: unknown): string | null {
   return options.find((option) => option.value === value)?.label ?? null;

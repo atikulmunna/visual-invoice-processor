@@ -89,6 +89,8 @@ def native_pdf_text(file_path: Path) -> str | None:
 
         chunks = [page.extract_text() or "" for page in PdfReader(str(file_path)).pages]
     except Exception:  # noqa: BLE001
+        # pypdf raises many error types on damaged PDFs; the model still reads the document itself.
+        logger.warning("Could not read the text layer of %s; continuing without it", file_path.name, exc_info=True)
         return None
     text = "\n".join(chunk.strip() for chunk in chunks if chunk.strip()).strip()
     return text or None

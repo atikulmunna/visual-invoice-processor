@@ -34,9 +34,7 @@ def pg_env(dsn: str, monkeypatch: pytest.MonkeyPatch) -> str:
     monkeypatch.setenv("S3_BUCKET_NAME", "alpha-invoices")
     monkeypatch.setenv("LEDGER_BACKEND", "postgres")
     monkeypatch.setenv("POSTGRES_DSN", dsn)
-    monkeypatch.setenv("POSTGRES_TABLE", "ledger_records")
     monkeypatch.setenv("REVIEW_QUEUE_BACKEND", "postgres")
-    monkeypatch.setenv("REVIEW_QUEUE_TABLE", "review_queue_items")
     return dsn
 
 

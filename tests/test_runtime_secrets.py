@@ -26,8 +26,9 @@ class _FakeSsmClient:
 
 
 def test_load_aws_parameter_secrets(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("POSTGRES_DSN", raising=False)
-    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    # Empty rather than deleted, so monkeypatch restores them and the loaded values never leak into later tests.
+    monkeypatch.setenv("POSTGRES_DSN", "")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "")
     monkeypatch.setenv("POSTGRES_PARAMETER_NAME", "/app/postgres")
     monkeypatch.setenv("OPENROUTER_PARAMETER_NAME", "/app/openrouter")
     client = _FakeSsmClient({"/app/postgres": "postgresql://example", "/app/openrouter": "key"})
@@ -42,8 +43,9 @@ def test_load_aws_parameter_secrets(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_load_aws_parameter_secrets_reports_missing(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("POSTGRES_DSN", raising=False)
-    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    # Empty rather than deleted, so monkeypatch restores them and the loaded values never leak into later tests.
+    monkeypatch.setenv("POSTGRES_DSN", "")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "")
     monkeypatch.setenv("POSTGRES_PARAMETER_NAME", "/app/postgres")
     monkeypatch.delenv("OPENROUTER_PARAMETER_NAME", raising=False)
 

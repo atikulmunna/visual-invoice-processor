@@ -23,9 +23,7 @@ Globals:
         S3_ARCHIVE_PREFIX: archive/
         LEDGER_BACKEND: postgres
         POSTGRES_PARAMETER_NAME: !Ref PostgresParameterName
-        POSTGRES_TABLE: ledger_records
         REVIEW_QUEUE_BACKEND: postgres
-        REVIEW_QUEUE_TABLE: review_queue_items
         ALPHA_AUTH_ENABLED: "true"
         ALPHA_MAX_USERS: "10"
         ALPHA_DOCUMENT_LIMIT: "20"

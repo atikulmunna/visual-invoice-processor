@@ -22,7 +22,7 @@ from app.alpha_store import (
 from app.config import Settings, load_dotenv
 from app.drive_service import is_supported_mime_type
 from app.object_storage_service import ObjectStorageService
-from app.review_queue import dismiss_review_item, list_review_items, resolve_review_item
+from app.review_queue import dismiss_review_item, list_review_items, org_clause, resolve_review_item
 from app.web_session import SESSION_COOKIE_NAME, clear_session_cookie
 from app.vendor_api import build_vendor_router
 from app.workspace_api import build_workspace_router, mount_frontend
@@ -264,7 +264,8 @@ def create_monitoring_app(
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except ValidationError as exc:
             raise HTTPException(status_code=400, detail=_validation_message(exc)) from exc
-        except Exception as exc:  # noqa: BLE001
+        except ValueError as exc:
+            # Fields left empty, an item already handled, or an unknown action: the reviewer can act on these.
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.post("/uploads/presign")
@@ -309,8 +310,8 @@ def create_monitoring_app(
             )
         except AlphaQuotaError as exc:
             raise HTTPException(status_code=429, detail=str(exc)) from exc
-        except Exception as exc:  # noqa: BLE001
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except AlphaAuthenticationError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
         return {
             "job_id": job_id,
             "object_key": object_key,
@@ -497,32 +498,15 @@ def _active_dead_letters(path: str | Path, resolved_hashes: set[str]) -> list[di
     return list(latest_by_key.values())
 
 
-def _org_where(org_id: str | None, *, prefix: str = "where") -> tuple[str, tuple[Any, ...]]:
-    if org_id is None:
-        return "", ()
-    return f"{prefix} org_id = %s", (org_id,)
-
-
 def _resolved_file_hashes(postgres_dsn: str | None, *, org_id: str | None = None) -> set[str]:
     if not postgres_dsn:
         return set()
-    try:
-        import psycopg
-    except ImportError:
-        return set()
+    import psycopg
 
-    try:
-        with psycopg.connect(postgres_dsn, prepare_threshold=None) as conn:
-            with conn.cursor() as cur:
-                org_sql, org_params = _org_where(org_id, prefix="and")
-                cur.execute(
-                    f"""
-                    select distinct file_hash
-                    from public.ledger_records
-                    where status in ('STORED', 'ARCHIVED') {org_sql}
-                    """,
-                    org_params,
-                )
-                return {str(row[0]) for row in cur.fetchall() if row and row[0]}
-    except Exception:  # noqa: BLE001
-        return set()
+    org_sql, org_params = org_clause(org_id, prefix="and")
+    with psycopg.connect(postgres_dsn, prepare_threshold=None) as conn:
+        rows = conn.execute(
+            f"select distinct file_hash from public.ledger_records where status in ('STORED', 'ARCHIVED'){org_sql}",
+            org_params,
+        ).fetchall()
+    return {str(row[0]) for row in rows if row[0]}

@@ -44,17 +44,18 @@ class VendorConflict(Exception):
         self.other_id = other_id
 
 
-def normalize_vendor_name(name: str | None) -> str | None:
-    """The form names are matched in: casefolded, punctuation dropped, legal suffixes removed.
+def word_characters(text: str) -> str:
+    """Letters, digits, and combining marks kept, everything else a space, so Bangla vowel signs stay in their word."""
+    return "".join(ch if unicodedata.category(ch)[0] in "LNM" else " " for ch in text)
 
-    Letters, digits, and combining marks are kept, so Bangla vowel signs stay part of their word.
-    """
+
+def normalize_vendor_name(name: str | None) -> str | None:
+    """The form names are matched in: casefolded, punctuation dropped, legal suffixes removed."""
     if not name:
         return None
     text = unicodedata.normalize("NFKC", name).casefold().replace("&", " and ")
     text = DOTTED_ABBREVIATION.sub(lambda match: match.group(0).replace(".", ""), text)
-    kept = "".join(ch if unicodedata.category(ch)[0] in "LNM" else " " for ch in text)
-    words = kept.split()
+    words = word_characters(text).split()
     while len(words) > 1 and words[-1] in LEGAL_SUFFIXES:
         words.pop()
     return " ".join(words) or None

@@ -48,7 +48,7 @@ class _FakeConn:
 class _TestPostgresStorageService(PostgresStorageService):
     def __init__(self, conn: _FakeConn) -> None:
         self._conn = conn
-        super().__init__(dsn="postgres://unused", table_name="ledger_records")
+        super().__init__(dsn="postgres://unused")
 
     def _connect(self) -> _FakeConn:
         return self._conn
