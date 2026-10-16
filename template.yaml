@@ -13,9 +13,12 @@ Parameters:
 Globals:
   Function:
     Architectures: [x86_64]
+    # The runtime writes each log record as one JSON line with its level, request ID, and any stack trace.
+    LoggingConfig:
+      LogFormat: JSON
+      ApplicationLogLevel: INFO
     Environment:
       Variables:
-        LOG_LEVEL: INFO
         S3_BUCKET_NAME: !Sub "invoice-processor-alpha-${AWS::AccountId}-${AWS::Region}"
         S3_REGION: !Ref AWS::Region
         S3_INBOX_PREFIX: inbox/
@@ -110,6 +113,10 @@ Resources:
             - Effect: Allow
               Action: s3:GetObject
               Resource: !Sub "arn:${AWS::Partition}:s3:::invoice-processor-alpha-${AWS::AccountId}-${AWS::Region}/archive/*"
+            # Without it S3 answers "access denied" for an archive copy past its 30 days, not "not found".
+            - Effect: Allow
+              Action: s3:ListBucket
+              Resource: !Sub "arn:${AWS::Partition}:s3:::invoice-processor-alpha-${AWS::AccountId}-${AWS::Region}"
             - Effect: Allow
               Action: ssm:GetParameters
               Resource:

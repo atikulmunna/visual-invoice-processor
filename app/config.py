@@ -64,7 +64,6 @@ class Settings:
     s3_inbox_prefix: str = "inbox/"
     s3_archive_prefix: str = "archive/"
     allowed_mime_types: tuple[str, ...] = ("image/jpeg", "image/png", "application/pdf")
-    log_level: str = "INFO"
     postgres_dsn: str | None = None
     normalization_rules_path: str = "config/normalization_rules.json"
     alpha_auth_enabled: bool = False
@@ -86,7 +85,6 @@ class Settings:
             s3_inbox_prefix=os.getenv("S3_INBOX_PREFIX", "inbox/"),
             s3_archive_prefix=os.getenv("S3_ARCHIVE_PREFIX", "archive/"),
             allowed_mime_types=allowed_mimes,
-            log_level=os.getenv("LOG_LEVEL", "INFO").upper(),
             postgres_dsn=_require("POSTGRES_DSN"),
             normalization_rules_path=os.getenv("NORMALIZATION_RULES_PATH", "config/normalization_rules.json"),
             alpha_auth_enabled=_parse_bool(os.getenv("ALPHA_AUTH_ENABLED"), False),

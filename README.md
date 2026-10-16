@@ -287,7 +287,7 @@ The stack provisions:
 - A web Lambda with a public Function URL and application-level authentication
 - An S3-triggered processing Lambda, the only function allowed to read the OpenRouter key
 - A private encrypted S3 bucket with lifecycle rules
-- Two CloudWatch log groups with seven-day retention
+- Two CloudWatch log groups with seven-day retention; Lambda writes each log record as one JSON line with its level, request ID, and any stack trace
 - An annual AWS cost budget with threshold and forecast alerts
 
 Follow [AWS_DEPLOYMENT.md](AWS_DEPLOYMENT.md) for the one-time AWS, SSM, Neon, IAM, and repository setup.
