@@ -1,6 +1,19 @@
 import { describe, expect, it } from "vitest";
 
-import { contentTypeFor, fileProblem, formatBytes, pollDelay, stepStates, type UploadLimits } from "./uploads";
+import {
+  batchCounts,
+  contentTypeFor,
+  fileProblem,
+  formatBytes,
+  hasUnsentUploads,
+  nextToStart,
+  pollDelay,
+  queuedItem,
+  stepStates,
+  type UploadItem,
+  type UploadLimits,
+  type UploadPhase,
+} from "./uploads";
 
 const LIMITS: UploadLimits = {
   max_upload_bytes: 5 * 1024 * 1024,
@@ -65,5 +78,54 @@ describe("stepStates", () => {
     expect(stepStates("finished", "REJECTED")).toEqual(["done", "done", "error", "pending"]);
     expect(stepStates("failed", null, 0)).toEqual(["error", "pending", "pending", "pending"]);
     expect(stepStates("failed", null, 1)).toEqual(["done", "error", "pending", "pending"]);
+  });
+});
+
+function item(id: string, phase: UploadPhase, status: string | null = null): UploadItem {
+  const job = status ? ({ id, status } as UploadItem["job"]) : null;
+  return { id, name: `${id}.pdf`, size: 10, phase, failedStep: 0, job, error: null, canRetry: false };
+}
+
+describe("queuedItem", () => {
+  it("queues a file within the limits and fails one outside them at once", () => {
+    const fine = queuedItem("a", { name: "a.pdf", type: "application/pdf", size: 1000 }, LIMITS);
+    const huge = queuedItem("b", { name: "b.pdf", type: "application/pdf", size: 6 * 1024 * 1024 }, LIMITS);
+
+    expect(fine).toMatchObject({ id: "a", phase: "queued", error: null });
+    expect(huge.phase).toBe("failed");
+    expect(huge.error).toBeTruthy();
+  });
+});
+
+describe("nextToStart", () => {
+  it("starts queued files only while fewer than the limit are transferring", () => {
+    const items = [item("a", "uploading"), item("b", "queued"), item("c", "queued"), item("d", "queued")];
+
+    expect(nextToStart(items, new Set(), 2).map((next) => next.id)).toEqual(["b"]);
+    expect(nextToStart(items, new Set(["b"]), 2).map((next) => next.id)).toEqual(["c"]);
+    expect(nextToStart([item("a", "uploading"), item("b", "authorizing"), item("c", "queued")], new Set(), 2)).toEqual([]);
+  });
+});
+
+describe("hasUnsentUploads", () => {
+  it("is true only while a file has not reached storage", () => {
+    expect(hasUnsentUploads([item("a", "queued")])).toBe(true);
+    expect(hasUnsentUploads([item("a", "uploading")])).toBe(true);
+    expect(hasUnsentUploads([item("a", "processing"), item("b", "finished"), item("c", "failed")])).toBe(false);
+  });
+});
+
+describe("batchCounts", () => {
+  it("counts the batch by outcome", () => {
+    const items = [
+      item("a", "uploading"),
+      item("b", "finished", "STORED"),
+      item("c", "finished", "REVIEW_REQUIRED"),
+      item("d", "finished", "REJECTED"),
+      item("e", "failed"),
+      item("f", "processing", "PROCESSING"),
+    ];
+
+    expect(batchCounts(items)).toEqual({ active: 2, stored: 1, review: 1, failed: 2 });
   });
 });

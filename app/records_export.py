@@ -199,6 +199,24 @@ def _excel_value(value: Any) -> Any:
     return value
 
 
+def _append_row(sheet: Any, values: list[Any]) -> None:
+    sheet.append([_excel_value(value) for value in values])
+    for cell in sheet[sheet.max_row]:
+        # openpyxl reads text starting with "=" as a formula; keep it as text.
+        if cell.data_type == "f":
+            cell.data_type = "s"
+
+
+def _format_column(sheet: Any, index: int, column: Column) -> None:
+    letter = get_column_letter(index)
+    sheet.column_dimensions[letter].width = column.width
+    number_format = EXCEL_FORMATS.get(column.kind)
+    if not number_format:
+        return
+    for cell in sheet[letter][1:]:
+        cell.number_format = number_format
+
+
 def to_workbook(sheets: list[tuple[str, tuple[Column, ...], list[list[Any]]]]) -> bytes:
     """One sheet per table: bold frozen header, filters, column widths, and typed number and date cells."""
     workbook = Workbook()
@@ -209,18 +227,9 @@ def to_workbook(sheets: list[tuple[str, tuple[Column, ...], list[list[Any]]]]) -
         for cell in sheet[1]:
             cell.font = Font(bold=True)
         for row in rows:
-            sheet.append([_excel_value(value) for value in row])
-            for cell in sheet[sheet.max_row]:
-                # openpyxl reads text starting with "=" as a formula; keep it as text.
-                if cell.data_type == "f":
-                    cell.data_type = "s"
+            _append_row(sheet, row)
         for index, column in enumerate(columns, 1):
-            letter = get_column_letter(index)
-            sheet.column_dimensions[letter].width = column.width
-            number_format = EXCEL_FORMATS.get(column.kind)
-            if number_format:
-                for cell in sheet[letter][1:]:
-                    cell.number_format = number_format
+            _format_column(sheet, index, column)
         sheet.freeze_panes = "A2"
         sheet.auto_filter.ref = sheet.dimensions
     buffer = io.BytesIO()

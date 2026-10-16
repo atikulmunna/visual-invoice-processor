@@ -14,6 +14,8 @@ from app.normalization_engine import NormalizationRuleEngine
 from app.object_storage_service import ObjectStorageService
 from app.pipeline import DocumentRejectedError, Thresholds, process_document
 
+logger = logging.getLogger(__name__)
+
 PDF_LEADING_WHITESPACE_LIMIT = 16
 PDF_LEADING_WHITESPACE = b" \t\n\f\r"
 
@@ -55,6 +57,49 @@ def inspect_document(path: Path, *, max_bytes: int, max_pdf_pages: int) -> tuple
     raise DocumentRejectedError("The uploaded file signature is unsupported", code="unsupported_signature")
 
 
+# How a pipeline result is recorded on the upload job; anything unexpected counts as a failure.
+JOB_STATUS = {
+    "STORED": "STORED",
+    "REVIEW_REQUIRED": "REVIEW_REQUIRED",
+    "SKIPPED_DUPLICATE": "DUPLICATE",
+    "REJECTED": "REJECTED",
+    "FAILED": "FAILED",
+}
+
+
+def _check_upload(path: Path, job: dict[str, Any], settings: Settings, store: AlphaStore) -> dict[str, Any]:
+    """The file must be what the browser declared, and its pages must fit the shared allowance."""
+    detected_type, page_count = inspect_document(
+        path, max_bytes=settings.max_upload_bytes, max_pdf_pages=settings.max_pdf_pages
+    )
+    if detected_type != job["content_type"]:
+        raise DocumentRejectedError("Declared content type does not match the file", code="content_type_mismatch")
+    try:
+        store.reserve_pages(job["id"], page_count, global_limit=settings.alpha_global_page_limit)
+    except AlphaQuotaError as exc:
+        raise DocumentRejectedError(str(exc), code="global_page_limit_exceeded") from exc
+    return {"page_count": page_count}
+
+
+def _finish_job(
+    result: dict[str, Any], job_id: str, object_key: str, storage: ObjectStorageService, store: AlphaStore
+) -> None:
+    """Keeps the file only while someone may still need it, then records the outcome on the job."""
+    status = JOB_STATUS.get(str(result.get("status")), "FAILED")
+    try:
+        if status == "REVIEW_REQUIRED":
+            storage.move_to_archive(object_key)
+        elif status in {"DUPLICATE", "REJECTED"}:
+            storage.delete_object(object_key)
+    except Exception:  # noqa: BLE001
+        logger.exception("Could not clean up S3 object %s after status %s", object_key, status)
+    store.complete_job(
+        job_id, status=status, result=result, error_code=result.get("error_code"),
+        error_message=result.get("error_message"),
+    )
+    logger.info("Completed S3 job %s with status %s", job_id, status)
+
+
 def process_s3_object(
     object_key: str,
     *,
@@ -64,87 +109,30 @@ def process_s3_object(
 ) -> dict[str, Any]:
     load_dotenv()
     active_settings = settings or Settings.from_env()
-    inbox_prefix = active_settings.s3_inbox_prefix.rstrip("/") + "/"
-    if not object_key.startswith(inbox_prefix):
+    if not object_key.startswith(active_settings.s3_inbox_prefix.rstrip("/") + "/"):
         return {"status": "IGNORED", "object_key": object_key}
-
     active_store = store or AlphaStore(active_settings.postgres_dsn or "")
     job = active_store.claim_job(object_key)
     if job is None:
         return {"status": "IGNORED", "object_key": object_key}
     active_storage = storage or ObjectStorageService.from_settings(active_settings)
-    job_id = job["id"]
 
-    def before_extract(path: Path, _: str) -> dict[str, Any]:
-        detected_type, page_count = inspect_document(
-            path,
-            max_bytes=active_settings.max_upload_bytes,
-            max_pdf_pages=active_settings.max_pdf_pages,
-        )
-        if detected_type != job["content_type"]:
-            raise DocumentRejectedError(
-                "Declared content type does not match the file",
-                code="content_type_mismatch",
-            )
-        try:
-            active_store.reserve_pages(
-                job_id,
-                page_count,
-                global_limit=active_settings.alpha_global_page_limit,
-            )
-        except AlphaQuotaError as exc:
-            raise DocumentRejectedError(str(exc), code="global_page_limit_exceeded") from exc
-        return {"page_count": page_count}
-
-    normalization_engine = NormalizationRuleEngine.from_path(active_settings.normalization_rules_path)
-    candidate = {
-        "id": object_key,
-        "name": job["original_name"],
-        "job_id": job_id,
-        "org_id": job["org_id"],
-        "base_currency": job["base_currency"],
-    }
     result = process_document(
-        candidate,
+        {"id": object_key, "name": job["original_name"], "job_id": job["id"], "org_id": job["org_id"],
+         "base_currency": job["base_currency"]},
         settings=active_settings,
         storage=active_storage,
         store=active_store,
-        normalization_engine=normalization_engine,
+        normalization_engine=NormalizationRuleEngine.from_path(active_settings.normalization_rules_path),
         extraction_model=os.getenv("EXTRACTION_MODEL", "auto"),
         thresholds=Thresholds(
             review_confidence=float(os.getenv("REVIEW_CONFIDENCE_THRESHOLD", "0.5")),
             store_review_score=float(os.getenv("STORE_REVIEW_SCORE_THRESHOLD", "0.6")),
         ),
-        worker_id=f"lambda:{job_id}",
-        before_extract=before_extract,
+        worker_id=f"lambda:{job['id']}",
+        before_extract=lambda path, _: _check_upload(path, job, active_settings, active_store),
     )
-    status_map = {
-        "STORED": "STORED",
-        "REVIEW_REQUIRED": "REVIEW_REQUIRED",
-        "SKIPPED_DUPLICATE": "DUPLICATE",
-        "REJECTED": "REJECTED",
-        "FAILED": "FAILED",
-    }
-    final_status = status_map.get(str(result.get("status")), "FAILED")
-    try:
-        if final_status == "REVIEW_REQUIRED":
-            active_storage.move_to_archive(object_key)
-        elif final_status in {"DUPLICATE", "REJECTED"}:
-            active_storage.delete_object(object_key)
-    except Exception:  # noqa: BLE001
-        logging.getLogger(__name__).exception(
-            "Could not clean up S3 object %s after status %s",
-            object_key,
-            final_status,
-        )
-    active_store.complete_job(
-        job_id,
-        status=final_status,
-        result=result,
-        error_code=result.get("error_code"),
-        error_message=result.get("error_message"),
-    )
-    logging.getLogger(__name__).info("Completed S3 job %s with status %s", job_id, final_status)
+    _finish_job(result, job["id"], object_key, active_storage, active_store)
     return result
 
 

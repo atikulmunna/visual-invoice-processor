@@ -191,34 +191,33 @@ def organization_member(principal: str | AlphaUser) -> AlphaUser:
     return principal
 
 
-def build_workspace_router(
-    require_auth: Callable[..., Any],
-    postgres_dsn: str | None,
-) -> APIRouter:
-    router = APIRouter(prefix="/api")
+def source_document(dsn: str, source_key: str | None, org_id: str) -> dict[str, Any]:
+    """An uploaded document's name, type, and a five-minute inline link, when it still exists."""
+    if not source_key:
+        return {"name": None, "content_type": None, "url": None}
+    job = AlphaStore(dsn).find_job_by_object_key(source_key, org_id=org_id)
+    name = job["original_name"] if job else source_key.rsplit("/", 1)[-1]
+    content_type = job["content_type"] if job else (mimetypes.guess_type(name)[0] or "application/octet-stream")
+    try:
+        load_dotenv()
+        storage = ObjectStorageService.from_settings(Settings.from_env())
+        archived = storage.archive_key_for(source_key)
+        url = storage.create_presigned_download(archived, content_type=content_type) if storage.object_exists(archived) else None
+    except Exception:  # noqa: BLE001
+        logger.exception("Could not prepare a link for document %s", source_key)
+        url = None
+    return {"name": name, "content_type": content_type, "url": url}
 
-    def source_document(source_key: str | None, org_id: str) -> dict[str, Any]:
-        """An uploaded document's name, type, and a five-minute inline link, when it still exists."""
-        if not source_key:
-            return {"name": None, "content_type": None, "url": None}
-        job = AlphaStore(postgres_dsn or "").find_job_by_object_key(source_key, org_id=org_id)
-        name = job["original_name"] if job else source_key.rsplit("/", 1)[-1]
-        content_type = job["content_type"] if job else (mimetypes.guess_type(name)[0] or "application/octet-stream")
-        try:
-            load_dotenv()
-            storage = ObjectStorageService.from_settings(Settings.from_env())
-            archived = storage.archive_key_for(source_key)
-            url = storage.create_presigned_download(archived, content_type=content_type) if storage.object_exists(archived) else None
-        except Exception:  # noqa: BLE001
-            logger.exception("Could not prepare a link for document %s", source_key)
-            url = None
-        return {"name": name, "content_type": content_type, "url": url}
+
+def _account_routes(require_auth: Callable[..., Any], dsn: str) -> APIRouter:
+    """Signing in, the account and its organization, upload limits, and processing jobs."""
+    router = APIRouter()
 
     @router.post("/session")
     def sign_in(credentials: SignInRequest, response: Response) -> dict[str, str]:
-        if not postgres_dsn:
+        if not dsn:
             raise HTTPException(status_code=503, detail="Sign-in is not configured")
-        store = AlphaStore(postgres_dsn)
+        store = AlphaStore(dsn)
         try:
             user = store.authenticate(credentials.username, credentials.password)
         except AlphaAuthenticationError as exc:
@@ -234,10 +233,27 @@ def build_workspace_router(
             return {"username": username, "organization": None, "documents_remaining": None, "document_limit": None}
         return {
             "username": principal.username,
-            "organization": _organization_payload(AlphaStore(postgres_dsn or ""), principal),
+            "organization": _organization_payload(AlphaStore(dsn), principal),
             "documents_remaining": principal.documents_remaining,
             "document_limit": principal.document_limit,
         }
+
+    @router.put("/organization")
+    def update_organization(
+        changes: OrganizationUpdate,
+        principal: str | AlphaUser = Depends(require_auth),
+    ) -> dict[str, Any]:
+        member = organization_member(principal)
+        if member.role != "owner":
+            raise HTTPException(status_code=403, detail="Only organization owners can change settings")
+        store = AlphaStore(dsn)
+        try:
+            store.set_base_currency(member.org_id or "", changes.base_currency)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except AlphaNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return _organization_payload(store, member)
 
     @router.get("/upload-limits")
     def upload_limits(_: str | AlphaUser = Depends(require_auth)) -> dict[str, Any]:
@@ -255,28 +271,33 @@ def build_workspace_router(
         principal: str | AlphaUser = Depends(require_auth),
     ) -> dict[str, Any]:
         member = organization_member(principal)
-        jobs = AlphaStore(postgres_dsn or "").list_jobs(org_id=member.org_id or "", limit=limit)
-        return {"jobs": [job_view(job) for job in jobs]}
+        return {"jobs": [job_view(job) for job in AlphaStore(dsn).list_jobs(org_id=member.org_id or "", limit=limit)]}
 
     @router.get("/jobs/{job_id}")
     def job_status(job_id: str, principal: str | AlphaUser = Depends(require_auth)) -> dict[str, Any]:
         member = organization_member(principal)
         try:
-            return job_view(AlphaStore(postgres_dsn or "").get_job(job_id, org_id=member.org_id or ""))
+            return job_view(AlphaStore(dsn).get_job(job_id, org_id=member.org_id or ""))
         except AlphaNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    return router
+
+
+def _review_routes(require_auth: Callable[..., Any], dsn: str) -> APIRouter:
+    """The review queue and one item with everything the reviewer needs."""
+    router = APIRouter()
 
     @router.get("/review")
     def review_queue(principal: str | AlphaUser = Depends(require_auth)) -> dict[str, Any]:
         member = organization_member(principal)
-        items = pending_review_items(postgres_dsn or "", org_id=member.org_id or "")
-        return {"items": [review_summary(item) for item in items]}
+        return {"items": [review_summary(item) for item in pending_review_items(dsn, org_id=member.org_id or "")]}
 
     @router.get("/review/{document_id}")
     def review_detail(document_id: str, principal: str | AlphaUser = Depends(require_auth)) -> dict[str, Any]:
         member = organization_member(principal)
         try:
-            item = load_review_item(postgres_dsn or "", document_id, org_id=member.org_id or "")
+            item = load_review_item(dsn, document_id, org_id=member.org_id or "")
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail="Review item not found") from exc
         metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
@@ -293,9 +314,16 @@ def build_workspace_router(
             "field_evidence": metadata.get("field_evidence") if isinstance(metadata.get("field_evidence"), dict) else None,
             "record": metadata.get("normalized_record") or {},
             "document": source_document(
-                metadata.get("source_file_id") or metadata.get("drive_file_id"), member.org_id or ""
+                dsn, metadata.get("source_file_id") or metadata.get("drive_file_id"), member.org_id or ""
             ),
         }
+
+    return router
+
+
+def _records_routes(require_auth: Callable[..., Any], dsn: str) -> APIRouter:
+    """Stored records: the list, its facets and export, one record, and the overview."""
+    router = APIRouter()
 
     @router.get("/records")
     def records(
@@ -308,7 +336,7 @@ def build_workspace_router(
         member = organization_member(principal)
         sort, descending = ordering
         result = records_store.search_records(
-            postgres_dsn or "",
+            dsn,
             org_id=member.org_id or "",
             filters=filters,
             sort=sort,
@@ -321,8 +349,7 @@ def build_workspace_router(
     # Declared before /records/{record_id} so "facets" is never read as an id.
     @router.get("/records/facets")
     def record_facets(principal: str | AlphaUser = Depends(require_auth)) -> dict[str, Any]:
-        member = organization_member(principal)
-        return records_store.record_facets(postgres_dsn or "", org_id=member.org_id or "")
+        return records_store.record_facets(dsn, org_id=organization_member(principal).org_id or "")
 
     @router.get("/records/export")
     def export_records(
@@ -336,7 +363,7 @@ def build_workspace_router(
         sort, descending = ordering
         try:
             rows = records_store.export_records(
-                postgres_dsn or "", org_id=member.org_id or "", filters=filters, sort=sort, descending=descending
+                dsn, org_id=member.org_id or "", filters=filters, sort=sort, descending=descending
             )
         except records_store.ExportTooLarge as exc:
             raise HTTPException(
@@ -357,54 +384,39 @@ def build_workspace_router(
         principal: str | AlphaUser = Depends(require_auth),
     ) -> dict[str, Any]:
         member = organization_member(principal)
-        found = records_store.get_record(postgres_dsn or "", org_id=member.org_id or "", record_id=record_id)
+        found = records_store.get_record(dsn, org_id=member.org_id or "", record_id=record_id)
         if found is None:
             raise HTTPException(status_code=404, detail="Record not found")
         source_key = found.pop("source_key")
-        return {**found, "document": source_document(source_key, member.org_id or "")}
+        return {**found, "document": source_document(dsn, source_key, member.org_id or "")}
 
     @router.get("/overview")
     def overview(
         currency: str | None = Query(default=None, pattern=CURRENCY_PATTERN),
         principal: str | AlphaUser = Depends(require_auth),
     ) -> dict[str, Any]:
-        member = organization_member(principal)
-        org_id = member.org_id or ""
-        store = AlphaStore(postgres_dsn or "")
+        org_id = organization_member(principal).org_id or ""
+        store = AlphaStore(dsn)
         now = _utc_now()
         data = records_store.overview(
-            postgres_dsn or "",
-            org_id=org_id,
-            currency=currency,
-            base_currency=store.get_organization(org_id).base_currency,
+            dsn, org_id=org_id, currency=currency, base_currency=store.get_organization(org_id).base_currency,
             today=now.date(),
         )
         data["spotlight"] = choose_spotlight(
-            reviews=pending_review_items(postgres_dsn or "", org_id=org_id),
+            reviews=pending_review_items(dsn, org_id=org_id),
             jobs=store.list_jobs(org_id=org_id, limit=20),
             flagged_total=data["flagged_total"],
             now=now,
         )
         return data
 
-    @router.put("/organization")
-    def update_organization(
-        changes: OrganizationUpdate,
-        principal: str | AlphaUser = Depends(require_auth),
-    ) -> dict[str, Any]:
-        if not isinstance(principal, AlphaUser) or not principal.org_id:
-            raise HTTPException(status_code=403, detail="No organization is available for this account")
-        if principal.role != "owner":
-            raise HTTPException(status_code=403, detail="Only organization owners can change settings")
-        store = AlphaStore(postgres_dsn or "")
-        try:
-            store.set_base_currency(principal.org_id, changes.base_currency)
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        except AlphaNotFoundError as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from exc
-        return _organization_payload(store, principal)
+    return router
 
+
+def build_workspace_router(require_auth: Callable[..., Any], dsn: str) -> APIRouter:
+    router = APIRouter(prefix="/api")
+    for area in (_account_routes(require_auth, dsn), _review_routes(require_auth, dsn), _records_routes(require_auth, dsn)):
+        router.include_router(area)
     return router
 
 

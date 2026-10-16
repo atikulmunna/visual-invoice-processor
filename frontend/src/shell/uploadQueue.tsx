@@ -3,27 +3,17 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState, ty
 import { api, ApiError, uploadToStorage } from "../lib/api";
 import {
   contentTypeFor,
-  fileProblem,
+  hasUnsentUploads,
+  nextToStart,
   POLL_GIVE_UP_MS,
   pollDelay,
+  queuedItem,
   TERMINAL_STATUSES,
   type JobView,
+  type UploadItem,
   type UploadLimits,
-  type UploadPhase,
 } from "../lib/uploads";
 import { useSession } from "./session";
-
-export interface UploadItem {
-  id: string;
-  name: string;
-  size: number;
-  phase: UploadPhase;
-  /** Which step failed when phase is "failed": 0 authorize, 1 upload, 2 processing. */
-  failedStep: number;
-  job: JobView | null;
-  error: string | null;
-  canRetry: boolean;
-}
 
 interface UploadQueue {
   items: UploadItem[];
@@ -37,7 +27,6 @@ interface UploadQueue {
 
 // Two transfers at a time keeps a large batch from starving the connection.
 const MAX_PARALLEL = 2;
-const TRANSFERRING: UploadPhase[] = ["authorizing", "uploading"];
 
 const UploadQueueContext = createContext<UploadQueue | null>(null);
 
@@ -142,9 +131,7 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
 
   // Start queued files while fewer than MAX_PARALLEL are transferring.
   useEffect(() => {
-    const transferring = items.filter((item) => TRANSFERRING.includes(item.phase)).length;
-    const waiting = items.filter((item) => item.phase === "queued" && !started.current.has(item.id));
-    for (const item of waiting.slice(0, Math.max(MAX_PARALLEL - transferring, 0))) {
+    for (const item of nextToStart(items, started.current, MAX_PARALLEL)) {
       started.current.add(item.id);
       void transfer(item.id);
     }
@@ -152,8 +139,7 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
 
   // Leaving mid-transfer would abandon the upload, so ask first.
   useEffect(() => {
-    const busy = items.some((item) => item.phase === "queued" || TRANSFERRING.includes(item.phase));
-    if (!busy) {
+    if (!hasUnsentUploads(items)) {
       return;
     }
     const warn = (event: BeforeUnloadEvent) => event.preventDefault();
@@ -162,22 +148,12 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
   }, [items]);
 
   const addFiles = useCallback((incoming: File[], limits: UploadLimits) => {
-    const added = incoming.map((file): UploadItem => {
-      const id = crypto.randomUUID();
-      const problem = fileProblem(file, limits);
-      if (!problem) {
-        files.current.set(id, file);
+    const added = incoming.map((file) => {
+      const item = queuedItem(crypto.randomUUID(), file, limits);
+      if (item.phase === "queued") {
+        files.current.set(item.id, file);
       }
-      return {
-        id,
-        name: file.name,
-        size: file.size,
-        phase: problem ? "failed" : "queued",
-        failedStep: 0,
-        job: null,
-        error: problem,
-        canRetry: false,
-      };
+      return item;
     });
     setItems((list) => [...added, ...list]);
   }, []);

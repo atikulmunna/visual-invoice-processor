@@ -162,14 +162,18 @@ def link_unlinked_records(dsn: str, *, org_id: str | None = None) -> int:
             """,
             (org_id,) if org_id else (),
         ).fetchall()
-        linked = 0
         with conn.cursor() as cur:
-            for record_id, record_org, name, tax_id, currency in rows:
-                vendor_id = link_vendor(cur, org_id=record_org, name=name, tax_id=tax_id, currency=currency)
-                if vendor_id is not None:
-                    cur.execute("update public.ledger_records set vendor_id = %s where id = %s", (vendor_id, record_id))
-                    linked += 1
-    return linked
+            return sum(_link_record(cur, *row) for row in rows)
+
+
+def _link_record(cur: psycopg.Cursor, record_id: int, org_id: str, name: str | None, tax_id: str | None,
+                 currency: str | None) -> int:
+    """1 when the record was linked to a vendor, 0 when it names none."""
+    vendor_id = link_vendor(cur, org_id=org_id, name=name, tax_id=tax_id, currency=currency)
+    if vendor_id is None:
+        return 0
+    cur.execute("update public.ledger_records set vendor_id = %s where id = %s", (vendor_id, record_id))
+    return 1
 
 
 def refresh_alias_forms(dsn: str) -> dict[str, int]:
