@@ -72,6 +72,7 @@ function RecordFacts({ detail }: { detail: RecordDetail }) {
     <div className="record-facts">
       <div className="row">
         {detail.reviewed && <Badge tone="success">Approved by a reviewer</Badge>}
+        {detail.vouched && <Badge tone="info">Stored on the vendor's track record</Badge>}
         {detail.flagged && <Badge tone="warning">Flagged by checks</Badge>}
         <span className="muted">Added {formatDate(detail.added_at)}</span>
       </div>

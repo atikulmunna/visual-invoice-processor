@@ -32,6 +32,8 @@ export interface RecordDetail {
   vendor: { id: number; name: string } | null;
   flagged: boolean;
   reviewed: boolean;
+  /** Stored without review on the strength of its vendor's track record. */
+  vouched?: boolean;
   document: ReviewDocument;
 }
 

@@ -31,6 +31,7 @@ from app.review_queue import (
 from app.replay import replay_failures
 from app.storage_service import append_record
 from app.validation import review_reason_codes, validate_and_score
+from app.vendor_memory import hints_for_worker, trusted_for_worker
 from pydantic import ValidationError
 
 _TMP_DIR = (
@@ -171,6 +172,7 @@ def _process_candidate(
             file_path=local_path,
             provider=extraction_provider,
             model_name=extraction_model,
+            hints=hints_for_worker(settings, local_path, org_id),
         )
         used_provider = str(extracted.get("_provider", "unknown"))
         logger.info("Extraction provider=%s source_id=%s", used_provider, file_id)
@@ -231,8 +233,10 @@ def _process_candidate(
             checked_against_text=evidence["text_available"],
         )
 
-        if decision.status == "REVIEW_REQUIRED" or extra_reasons:
-            reason_codes = list(decision.reason_codes) + extra_reasons
+        reason_codes = list(decision.reason_codes) + extra_reasons
+        # A vendor whose recent reviews all needed no changes outweighs the model doubting itself, and nothing else.
+        vouched = reason_codes == ["low_confidence"] and trusted_for_worker(settings, normalized_payload, org_id)
+        if reason_codes and not vouched:
             route_to_review_queue(
                 document_id=document_id,
                 reason_codes=reason_codes,
@@ -285,6 +289,8 @@ def _process_candidate(
             "used_provider": used_provider,
             "org_id": org_id,
         }
+        if vouched:
+            metadata["resolution_source"] = "vendor_track_record"
         append_result = append_record(record=record, metadata=metadata)
         claim_store.mark_status(file_id, file_hash, "STORED")
         if archive_on_success:

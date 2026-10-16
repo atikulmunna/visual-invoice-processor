@@ -6,11 +6,49 @@ import { Icon } from "../components/Icon";
 import { PageHeader } from "../components/PageHeader";
 import { SpendChart } from "../components/SpendChart";
 import { useToast } from "../components/Toast";
-import { Button, buttonClass, Card, EmptyState, SelectField, Skeleton, Stat, TextField } from "../components/ui";
+import { Badge, Button, buttonClass, Card, EmptyState, SelectField, Skeleton, Stat, TextField } from "../components/ui";
 import { api } from "../lib/api";
 import { COMMON_CURRENCIES, formatDate } from "../lib/format";
 import { monthLabel, plural } from "../lib/overview";
-import { totalsLabel, type Vendor, type VendorDetail } from "../lib/vendors";
+import {
+  correctionValue,
+  fieldLabel,
+  totalsLabel,
+  trackRecordText,
+  type Vendor,
+  type VendorDetail,
+  type VendorMemory,
+} from "../lib/vendors";
+
+function TrackRecord({ memory }: { memory: VendorMemory }) {
+  return (
+    <Card>
+      <div className="row" style={{ justifyContent: "space-between" }}>
+        <h2 className="card-title">Track record</h2>
+        {memory.trusted && <Badge tone="success">Trusted</Badge>}
+      </div>
+      <p className="muted track-record-text">{trackRecordText(memory)}</p>
+      {memory.corrections.length > 0 && (
+        <>
+          <h3 className="facts-title">Recent corrections</h3>
+          <p className="muted">The model is shown these when it reads this vendor's PDFs, so it can avoid the same mistakes.</p>
+          <ul className="correction-list">
+            {memory.corrections.map((correction, index) => (
+              <li key={index} className="correction-row">
+                <span className="correction-field">{fieldLabel(correction.field)}</span>
+                <span>
+                  read as <span className="correction-before">{correctionValue(correction.before)}</span>, corrected to{" "}
+                  <strong>{correctionValue(correction.after)}</strong>
+                </span>
+                <span className="muted">{formatDate(correction.reviewed_at)}</span>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+    </Card>
+  );
+}
 
 function EditVendor({ vendor, onSaved, onClose }: { vendor: VendorDetail; onSaved: (next: VendorDetail) => void; onClose: () => void }) {
   const [name, setName] = useState(vendor.name);
@@ -219,6 +257,7 @@ export function VendorPage() {
           <SpendChart months={vendor.months} currency={vendor.currency} />
         </Card>
       ) : null}
+      <TrackRecord memory={vendor.memory} />
       <MergeInto vendor={vendor} onMerged={setVendor} />
       <Dialog open={editing} onClose={() => setEditing(false)} title={`Edit ${vendor.name}`}>
         {editing && (

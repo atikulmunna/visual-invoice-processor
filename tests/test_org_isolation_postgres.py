@@ -404,6 +404,65 @@ def test_worker_checks_values_against_the_pdf_text(pg_env: str, monkeypatch: pyt
     assert misread_result["reason_codes"] == ["value_not_on_document"]
 
 
+def test_worker_learns_from_a_vendor_reviews(pg_env: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.config import Settings
+    from app.review_queue import resolve_review_item, route_to_review_queue
+    from app.serverless_worker import process_s3_object
+
+    base: dict[str, Any] = {
+        "document_type": "invoice", "vendor_name": "Shwapno", "invoice_date": "2026-09-15", "currency": "BDT",
+        "tax_amount": 0, "model_confidence": 0.3, "line_items": [], "_provider": "fake",
+    }
+    store = AlphaStore(pg_env)
+    user = _user(store, "memory")
+    # One early review fixed the invoice number; the five since needed no changes.
+    for index in range(6):
+        record = {**base, "invoice_number": f"SHW-{index}", "subtotal": 100 + index, "total_amount": 100 + index,
+                  "payment_method": "unknown", "validation_score": 1.0}
+        document_id = f"seed-{user.id}-{index}"
+        route_to_review_queue(
+            document_id=document_id, reason_codes=["low_confidence"], org_id=user.org_id,
+            metadata={"source_file_id": f"inbox/{user.id}/seed-{index}.png", "file_hash": document_id,
+                      "normalized_record": {**record, "invoice_number": "ORDER-9"} if index == 0 else record},
+        )
+        resolve_review_item(document_id, record_override=record, org_id=user.org_id)
+
+    reads = iter([
+        {**base, "invoice_number": "SHW-50", "subtotal": 950, "total_amount": 950},
+        {**base, "invoice_number": "SHW-51", "subtotal": 960, "total_amount": 960,
+         "_ocr_text": "SHWAPNO Invoice SHW-51 15/09/2026 Total 690.00"},
+        {**base, "vendor_name": "Agora", "invoice_number": "AG-1", "subtotal": 970, "total_amount": 970},
+    ])
+    hints: list[str | None] = []
+
+    def extract(**kwargs: Any) -> dict[str, Any]:
+        hints.append(kwargs.get("hints"))
+        return next(reads)
+
+    monkeypatch.setattr("app.main.extract_document", extract)
+    monkeypatch.setattr("app.vendor_memory.native_pdf_text", lambda path: "SHWAPNO Invoice" if path.suffix == ".pdf" else None)
+    settings = Settings.from_env()
+    keys = [_upload(store, user, name)[1] for name in ("photo.png", "invoice.pdf", "agora.png")]
+
+    photo, misread, stranger = [
+        process_s3_object(key, store=store, storage=_DistinctFiles(), settings=settings) for key in keys
+    ]
+
+    # The model doubted itself, but this vendor's last five reviews needed no changes.
+    assert photo["status"] == "STORED"
+    with psycopg.connect(pg_env) as conn:
+        source = conn.execute(
+            "SELECT metadata_json ->> 'resolution_source' FROM ledger_records WHERE drive_file_id = %s", (keys[0],)
+        ).fetchone()[0]
+    assert source == "vendor_track_record"
+    # A track record never outweighs a value the document does not show, or a vendor without one.
+    assert (misread["status"], misread["reason_codes"]) == ("REVIEW_REQUIRED", ["value_not_on_document"])
+    assert (stranger["status"], stranger["reason_codes"]) == ("REVIEW_REQUIRED", ["low_confidence"])
+    # Only the PDF, whose text names the vendor, was read with the earlier correction as a hint.
+    assert hints[0] is None and hints[2] is None
+    assert hints[1] is not None and '"ORDER-9" but the reviewer corrected it to "SHW-0"' in hints[1]
+
+
 def test_base_currency_is_validated_and_listed(dsn: str) -> None:
     store = AlphaStore(dsn)
     owner = _user(store, "currency")

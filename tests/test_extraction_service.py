@@ -72,6 +72,16 @@ def test_unrepairable_output_retries_once_with_full_instructions(tmp_path: Path)
     assert client.calls[1][1] == f"{USER_EXTRACTION_PROMPT} {CORRECTIVE_PROMPT}"
 
 
+def test_vendor_hints_join_the_prompt_and_its_retry(tmp_path: Path) -> None:
+    client = _FakeVisionClient(outputs=["not json at all", '{"vendor_name":"Retry"}'])
+    hints = "A reviewer corrected earlier documents from this vendor: currency was read as \"BDT\"."
+
+    extract_document(_image(tmp_path), client=client, hints=hints)
+
+    assert client.calls[0][1] == f"{USER_EXTRACTION_PROMPT} {hints}"
+    assert client.calls[1][1] == f"{USER_EXTRACTION_PROMPT} {hints} {CORRECTIVE_PROMPT}"
+
+
 def test_extract_document_fails_after_corrective_retry(tmp_path: Path) -> None:
     client = _FakeVisionClient(outputs=["nope", "still nope"])
 

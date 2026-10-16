@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { axisTicks, compactAmount, monthLabel, plural, spendSummary, spotlightCopy } from "./overview";
+import { axisTicks, compactAmount, monthLabel, plural, reviewFreeShare, spendSummary, spotlightCopy } from "./overview";
 
 describe("monthLabel", () => {
   it("names the month briefly or in full", () => {
@@ -85,5 +85,14 @@ describe("spotlightCopy", () => {
 
   it("is calm when nothing needs attention", () => {
     expect(spotlightCopy(null)).toMatchObject({ urgent: false, eyebrow: "All clear" });
+  });
+});
+
+describe("reviewFreeShare", () => {
+  it("is a whole percentage, or null for a month with nothing added", () => {
+    expect(reviewFreeShare({ month: "2026-10", stored: 50, without_review: 41 })).toBe(82);
+    expect(reviewFreeShare({ month: "2026-10", stored: 3, without_review: 2 })).toBe(67);
+    expect(reviewFreeShare({ month: "2026-10", stored: 4, without_review: 0 })).toBe(0);
+    expect(reviewFreeShare({ month: "2026-09", stored: 0, without_review: 0 })).toBeNull();
   });
 });

@@ -241,6 +241,20 @@
   font-size: 12.5px;
 }
 
+/* Stored without review: the same thin bars as top vendors, as a share of each month. */
+.share-bars {
+  display: grid;
+  gap: 14px;
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.share-bar {
+  display: grid;
+  gap: 6px;
+}
+
 @media (max-width: 1000px) {
   .overview-grid {
     grid-template-columns: 1fr;

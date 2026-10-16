@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi import Path as PathParam
 from pydantic import BaseModel, Field
 
-from app import vendor_store
+from app import vendor_memory, vendor_store
 from app.alpha_store import AlphaUser
 from app.workspace_api import organization_member
 
@@ -36,9 +36,11 @@ def build_vendor_router(require_auth: Callable[..., Any], postgres_dsn: str | No
 
     def detail(org_id: str, vendor_id: int) -> dict[str, Any]:
         try:
-            return vendor_store.vendor_detail(dsn, org_id=org_id, vendor_id=vendor_id, today=_today())
+            vendor = vendor_store.vendor_detail(dsn, org_id=org_id, vendor_id=vendor_id, today=_today())
         except vendor_store.VendorNotFound as exc:
             raise HTTPException(status_code=404, detail="Vendor not found") from exc
+        vendor["memory"] = vendor_memory.vendor_memory(dsn, org_id=org_id, vendor_id=vendor_id)
+        return vendor
 
     @router.get("")
     def vendors(principal: str | AlphaUser = Depends(require_auth)) -> dict[str, Any]:

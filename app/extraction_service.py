@@ -80,7 +80,8 @@ def _parse_json_payload(raw_text: str) -> dict[str, Any]:
     return payload
 
 
-def _native_pdf_text(file_path: Path) -> str | None:
+def native_pdf_text(file_path: Path) -> str | None:
+    """The PDF's own text layer, read locally for free; None for images and scans without one."""
     if file_path.suffix.lower() != ".pdf":
         return None
     try:
@@ -96,7 +97,7 @@ def _native_pdf_text(file_path: Path) -> str | None:
 def _enrich_extraction_payload(payload: dict[str, Any], *, file_path: Path, provider_name: str) -> dict[str, Any]:
     # The PDF text layer is free to read locally and lets normalization recover values
     # the model left out.
-    native_text = _native_pdf_text(file_path)
+    native_text = native_pdf_text(file_path)
     if native_text:
         payload["_ocr_text"] = native_text
     payload["_provider"] = provider_name
@@ -187,7 +188,9 @@ def extract_document(
     model_name: str = "auto",
     provider: str = "openrouter",
     client: VisionClient | None = None,
+    hints: str | None = None,
 ) -> dict[str, Any]:
+    """hints: what reviewers corrected on this vendor's earlier documents, added to the prompt."""
     path = Path(file_path)
     if not path.exists():
         raise ExtractionError(f"File not found: {path}", code="file_not_found")
@@ -201,11 +204,12 @@ def extract_document(
     active_model = _resolve_model(model_name)
     provider_name = str(getattr(active_client, "provider_name", "openrouter"))
 
-    text = active_client.extract_json(path, active_model, USER_EXTRACTION_PROMPT)
+    prompt = f"{USER_EXTRACTION_PROMPT} {hints}" if hints else USER_EXTRACTION_PROMPT
+    text = active_client.extract_json(path, active_model, prompt)
     try:
         payload = _parse_json_payload(text)
     except ExtractionError:
         # One retry, with the full instructions, only when local repair failed.
-        text = active_client.extract_json(path, active_model, f"{USER_EXTRACTION_PROMPT} {CORRECTIVE_PROMPT}")
+        text = active_client.extract_json(path, active_model, f"{prompt} {CORRECTIVE_PROMPT}")
         payload = _parse_json_payload(text)
     return _enrich_extraction_payload(payload, file_path=path, provider_name=provider_name)

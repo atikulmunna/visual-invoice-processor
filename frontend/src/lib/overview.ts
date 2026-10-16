@@ -18,6 +18,13 @@ export type Spotlight =
   | { kind: "review_waiting"; count: number; oldest_days: number }
   | { kind: "records_flagged"; count: number };
 
+/** Documents stored in a month, and how many of them no person reviewed. */
+export interface AddedMonth {
+  month: string;
+  stored: number;
+  without_review: number;
+}
+
 export interface Overview {
   /** Every total below is in this currency; null when nothing is stored yet. */
   currency: string | null;
@@ -26,7 +33,14 @@ export interface Overview {
   flagged_total: number;
   months: MonthTotal[];
   top_vendors: VendorTotal[];
+  /** By the month documents were added, oldest first. */
+  stored_without_review: AddedMonth[];
   spotlight: Spotlight | null;
+}
+
+/** The percentage stored without review, or null when nothing was stored that month. */
+export function reviewFreeShare(month: AddedMonth): number | null {
+  return month.stored ? Math.round((month.without_review / month.stored) * 100) : null;
 }
 
 export function plural(count: number, noun: string): string {
