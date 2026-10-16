@@ -136,3 +136,21 @@ def test_a_failed_cleanup_still_records_the_outcome() -> None:
     _finish_job({"status": "REJECTED"}, "job-1", "inbox/u/j/a.png", _Storage(broken=True), store)
 
     assert store.completed[0]["status"] == "REJECTED"
+
+
+def test_the_worker_leaves_log_formatting_to_the_lambda_runtime() -> None:
+    # Lambda drops log lines its own formatter did not write, so the worker must never replace it.
+    import logging
+
+    from app.serverless_worker import handle_s3_event
+
+    runtime_formatter = logging.Formatter("%(message)s\n")
+    handler = logging.StreamHandler()
+    handler.setFormatter(runtime_formatter)
+    root = logging.getLogger()
+    root.addHandler(handler)
+    try:
+        assert handle_s3_event({"Records": [{"eventSource": "aws:sqs"}]}) == []
+        assert handler.formatter is runtime_formatter
+    finally:
+        root.removeHandler(handler)

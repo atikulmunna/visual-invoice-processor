@@ -9,7 +9,6 @@ from urllib.parse import unquote_plus
 
 from app.alpha_store import AlphaQuotaError, AlphaStore
 from app.config import Settings, load_dotenv
-from app.logger import configure_logging
 from app.normalization_engine import NormalizationRuleEngine
 from app.object_storage_service import ObjectStorageService
 from app.pipeline import DocumentRejectedError, Thresholds, process_document
@@ -138,7 +137,6 @@ def process_s3_object(
 
 def handle_s3_event(event: dict[str, Any]) -> list[dict[str, Any]]:
     load_dotenv()
-    configure_logging(os.getenv("LOG_LEVEL", "INFO"))
     results: list[dict[str, Any]] = []
     for record in event.get("Records", []):
         if record.get("eventSource") != "aws:s3":
