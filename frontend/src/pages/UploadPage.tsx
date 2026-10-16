@@ -5,12 +5,20 @@ import { DataTable, type Column } from "../components/DataTable";
 import { Icon } from "../components/Icon";
 import { PageHeader } from "../components/PageHeader";
 import { Button, buttonClass, EmptyState, StatusBadge, Stepper } from "../components/ui";
-import { api } from "../lib/api";
+import { api, type Me } from "../lib/api";
 import { formatMoney, formatRelativeTime } from "../lib/format";
 import { processingErrorLabel, reasonLabel } from "../lib/labels";
-import { formatBytes, stepStates, type JobView, type UploadLimits } from "../lib/uploads";
+import {
+  batchCounts,
+  formatBytes,
+  stepStates,
+  type BatchCounts,
+  type JobView,
+  type UploadItem,
+  type UploadLimits,
+} from "../lib/uploads";
 import { useSession } from "../shell/session";
-import { useUploadQueue, type UploadItem } from "../shell/uploadQueue";
+import { useUploadQueue } from "../shell/uploadQueue";
 
 const STEP_LABELS = ["Authorize", "Upload", "Extract", "Validate"];
 
@@ -105,24 +113,16 @@ function limitsText(limits: UploadLimits | null): string {
   return `PDF, PNG, or JPEG, up to ${formatBytes(limits.max_upload_bytes)} and ${limits.max_pdf_pages} pages each. Files go straight to private storage.`;
 }
 
-export function UploadPage() {
-  const { me } = useSession();
-  const queue = useUploadQueue();
-  const [limits, setLimits] = useState<UploadLimits | null>(null);
-  const [recent, setRecent] = useState<JobView[] | null>(null);
+interface DropZoneProps {
+  ready: boolean;
+  outOfUploads: boolean;
+  allowedTypes: string[] | undefined;
+  onFiles: (files: FileList | null) => void;
+}
+
+function DropZone({ ready, outOfUploads, allowedTypes, onFiles }: DropZoneProps) {
   const [dragging, setDragging] = useState(false);
   const input = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    api.uploadLimits().then(setLimits, () => setLimits(null));
-  }, []);
-
-  useEffect(() => {
-    api.recentJobs(15).then(
-      (response) => setRecent(response.jobs),
-      () => setRecent([]),
-    );
-  }, [queue.finishedCount]);
 
   // A file dropped outside the drop zone must not make the browser open it.
   useEffect(() => {
@@ -135,33 +135,121 @@ export function UploadPage() {
     };
   }, []);
 
-  const remaining = me.documents_remaining;
-  const outOfUploads = remaining !== null && remaining <= 0;
-  const ready = limits !== null && !outOfUploads;
-
-  function accept(list: FileList | null) {
-    if (list && list.length > 0 && limits && !outOfUploads) {
-      queue.addFiles(Array.from(list), limits);
-    }
-  }
-
   function onDrop(event: DragEvent<HTMLElement>) {
     event.preventDefault();
     setDragging(false);
-    accept(event.dataTransfer.files);
+    onFiles(event.dataTransfer.files);
   }
 
-  const counts = {
-    active: queue.items.filter((item) => !["finished", "failed"].includes(item.phase)).length,
-    stored: queue.items.filter((item) => item.job?.status === "STORED" && item.phase === "finished").length,
-    review: queue.items.filter((item) => item.job?.status === "REVIEW_REQUIRED" && item.phase === "finished").length,
-    failed: queue.items.filter(
-      (item) => item.phase === "failed" || (item.phase === "finished" && ["FAILED", "REJECTED"].includes(item.job?.status ?? "")),
-    ).length,
-  };
-  const used = me.document_limit !== null && remaining !== null ? me.document_limit - remaining : null;
+  return (
+    <section
+      className="dropzone"
+      data-dragging={dragging || undefined}
+      data-disabled={!ready || undefined}
+      aria-labelledby="dropzone-title"
+      onDragEnter={(event) => {
+        event.preventDefault();
+        setDragging(true);
+      }}
+      onDragOver={(event) => event.preventDefault()}
+      onDragLeave={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+          setDragging(false);
+        }
+      }}
+      onDrop={onDrop}
+    >
+      <span className="dropzone-icon">
+        <Icon name="upload" size={26} />
+      </span>
+      <h2 id="dropzone-title" className="dropzone-title">
+        {outOfUploads ? "Your upload allowance is used up" : "Drop invoices and receipts here"}
+      </h2>
+      <p className="muted">
+        {outOfUploads
+          ? "Ask the alpha administrator for more uploads."
+          : "Or choose files from your computer. You can add several at once."}
+      </p>
+      <Button icon="file" onClick={() => input.current?.click()} disabled={!ready}>
+        Choose files
+      </Button>
+      <input
+        ref={input}
+        type="file"
+        multiple
+        className="visually-hidden"
+        tabIndex={-1}
+        aria-hidden="true"
+        accept={allowedTypes?.join(",")}
+        onChange={(event) => {
+          onFiles(event.target.files);
+          event.target.value = "";
+        }}
+      />
+    </section>
+  );
+}
 
-  const recentColumns: Column<JobView>[] = [
+function UploadSummary({ me, counts, hasItems }: { me: Me; counts: BatchCounts; hasItems: boolean }) {
+  const remaining = me.documents_remaining;
+  const used = me.document_limit !== null && remaining !== null ? me.document_limit - remaining : null;
+  return (
+    <aside className="card-dark upload-summary" aria-label="Upload summary">
+      {remaining !== null && me.document_limit !== null && used !== null && (
+        <>
+          <div className="eyebrow" style={{ color: "#9db0ff" }}>
+            Uploads left
+          </div>
+          <div className="meter-value">
+            {remaining} <span>of {me.document_limit}</span>
+          </div>
+          <div
+            className="meter"
+            role="progressbar"
+            aria-label="Uploads used"
+            aria-valuemin={0}
+            aria-valuemax={me.document_limit}
+            aria-valuenow={used}
+          >
+            <span style={{ width: `${Math.min((used / Math.max(me.document_limit, 1)) * 100, 100)}%` }} />
+          </div>
+        </>
+      )}
+      {hasItems && (
+        <dl className="summary-counts" aria-label="This batch">
+          <div>
+            <dt>In progress</dt>
+            <dd>{counts.active}</dd>
+          </div>
+          <div>
+            <dt>Stored</dt>
+            <dd>{counts.stored}</dd>
+          </div>
+          <div>
+            <dt>Needs review</dt>
+            <dd>{counts.review}</dd>
+          </div>
+          <div>
+            <dt>Could not process</dt>
+            <dd>{counts.failed}</dd>
+          </div>
+        </dl>
+      )}
+      {counts.review > 0 && (
+        <Link to="/review" className={buttonClass("light")}>
+          Review documents <Icon name="arrowRight" size={16} />
+        </Link>
+      )}
+      <p className="muted summary-note">
+        Files upload two at a time. You can open other pages while they process; keep this tab open until uploads
+        finish.
+      </p>
+    </aside>
+  );
+}
+
+function RecentUploads({ recent, retryJob }: { recent: JobView[] | null; retryJob: (job: JobView) => void }) {
+  const columns: Column<JobView>[] = [
     {
       key: "document",
       header: "Document",
@@ -185,7 +273,7 @@ export function UploadPage() {
       header: "Actions",
       render: (job) =>
         job.retryable ? (
-          <Button size="sm" variant="tinted" onClick={() => queue.retryJob(job)}>
+          <Button size="sm" variant="tinted" onClick={() => retryJob(job)}>
             Try again
           </Button>
         ) : null,
@@ -193,56 +281,54 @@ export function UploadPage() {
   ];
 
   return (
+    <section className="stack" style={{ gap: 14 }} aria-labelledby="recent-title">
+      <h2 id="recent-title" className="section-title">
+        Recent uploads
+      </h2>
+      <DataTable
+        caption="Recent uploads in your organization"
+        columns={columns}
+        rows={recent ?? []}
+        rowKey={(job) => job.id}
+        loading={recent === null}
+        empty={<EmptyState title="No uploads yet">Documents you upload will appear here with their results.</EmptyState>}
+      />
+    </section>
+  );
+}
+
+export function UploadPage() {
+  const { me } = useSession();
+  const queue = useUploadQueue();
+  const [limits, setLimits] = useState<UploadLimits | null>(null);
+  const [recent, setRecent] = useState<JobView[] | null>(null);
+
+  useEffect(() => {
+    api.uploadLimits().then(setLimits, () => setLimits(null));
+  }, []);
+
+  useEffect(() => {
+    api.recentJobs(15).then(
+      (response) => setRecent(response.jobs),
+      () => setRecent([]),
+    );
+  }, [queue.finishedCount]);
+
+  const outOfUploads = me.documents_remaining !== null && me.documents_remaining <= 0;
+
+  function accept(list: FileList | null) {
+    if (list && list.length > 0 && limits && !outOfUploads) {
+      queue.addFiles(Array.from(list), limits);
+    }
+  }
+
+  return (
     <div className="page stack">
       <PageHeader eyebrow="Upload" title="Process documents" subtitle={limitsText(limits)} />
       <div className="upload-layout">
         <div className="stack">
-          <section
-            className="dropzone"
-            data-dragging={dragging || undefined}
-            data-disabled={!ready || undefined}
-            aria-labelledby="dropzone-title"
-            onDragEnter={(event) => {
-              event.preventDefault();
-              setDragging(true);
-            }}
-            onDragOver={(event) => event.preventDefault()}
-            onDragLeave={(event) => {
-              if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
-                setDragging(false);
-              }
-            }}
-            onDrop={onDrop}
-          >
-            <span className="dropzone-icon">
-              <Icon name="upload" size={26} />
-            </span>
-            <h2 id="dropzone-title" className="dropzone-title">
-              {outOfUploads ? "Your upload allowance is used up" : "Drop invoices and receipts here"}
-            </h2>
-            <p className="muted">
-              {outOfUploads
-                ? "Ask the alpha administrator for more uploads."
-                : "Or choose files from your computer. You can add several at once."}
-            </p>
-            <Button icon="file" onClick={() => input.current?.click()} disabled={!ready}>
-              Choose files
-            </Button>
-            <input
-              ref={input}
-              type="file"
-              multiple
-              className="visually-hidden"
-              tabIndex={-1}
-              aria-hidden="true"
-              accept={limits?.allowed_types.join(",")}
-              onChange={(event) => {
-                accept(event.target.files);
-                event.target.value = "";
-              }}
-            />
-          </section>
-
+          <DropZone ready={limits !== null && !outOfUploads} outOfUploads={outOfUploads}
+            allowedTypes={limits?.allowed_types} onFiles={accept} />
           {queue.items.length > 0 && (
             <section className="stack" style={{ gap: 14 }} aria-labelledby="batch-title">
               <h2 id="batch-title" className="section-title">
@@ -256,73 +342,9 @@ export function UploadPage() {
             </section>
           )}
         </div>
-
-        <aside className="card-dark upload-summary" aria-label="Upload summary">
-          {remaining !== null && me.document_limit !== null && used !== null && (
-            <>
-              <div className="eyebrow" style={{ color: "#9db0ff" }}>
-                Uploads left
-              </div>
-              <div className="meter-value">
-                {remaining} <span>of {me.document_limit}</span>
-              </div>
-              <div
-                className="meter"
-                role="progressbar"
-                aria-label="Uploads used"
-                aria-valuemin={0}
-                aria-valuemax={me.document_limit}
-                aria-valuenow={used}
-              >
-                <span style={{ width: `${Math.min((used / Math.max(me.document_limit, 1)) * 100, 100)}%` }} />
-              </div>
-            </>
-          )}
-          {queue.items.length > 0 && (
-            <dl className="summary-counts" aria-label="This batch">
-              <div>
-                <dt>In progress</dt>
-                <dd>{counts.active}</dd>
-              </div>
-              <div>
-                <dt>Stored</dt>
-                <dd>{counts.stored}</dd>
-              </div>
-              <div>
-                <dt>Needs review</dt>
-                <dd>{counts.review}</dd>
-              </div>
-              <div>
-                <dt>Could not process</dt>
-                <dd>{counts.failed}</dd>
-              </div>
-            </dl>
-          )}
-          {counts.review > 0 && (
-            <Link to="/review" className={buttonClass("light")}>
-              Review documents <Icon name="arrowRight" size={16} />
-            </Link>
-          )}
-          <p className="muted summary-note">
-            Files upload two at a time. You can open other pages while they process; keep this tab open until uploads
-            finish.
-          </p>
-        </aside>
+        <UploadSummary me={me} counts={batchCounts(queue.items)} hasItems={queue.items.length > 0} />
       </div>
-
-      <section className="stack" style={{ gap: 14 }} aria-labelledby="recent-title">
-        <h2 id="recent-title" className="section-title">
-          Recent uploads
-        </h2>
-        <DataTable
-          caption="Recent uploads in your organization"
-          columns={recentColumns}
-          rows={recent ?? []}
-          rowKey={(job) => job.id}
-          loading={recent === null}
-          empty={<EmptyState title="No uploads yet">Documents you upload will appear here with their results.</EmptyState>}
-        />
-      </section>
+      <RecentUploads recent={recent} retryJob={queue.retryJob} />
     </div>
   );
 }

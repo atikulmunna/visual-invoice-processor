@@ -112,3 +112,63 @@ export function stepStates(phase: UploadPhase, status: string | null, failedStep
       return status === "REJECTED" || status === "FAILED" ? steps(2, "error") : steps(STEP_COUNT, null);
   }
 }
+
+/** One file in the upload batch, from queued to finished or failed. */
+export interface UploadItem {
+  id: string;
+  name: string;
+  size: number;
+  phase: UploadPhase;
+  /** Which step failed when phase is "failed": 0 authorize, 1 upload, 2 processing. */
+  failedStep: number;
+  job: JobView | null;
+  error: string | null;
+  canRetry: boolean;
+}
+
+const TRANSFERRING: UploadPhase[] = ["authorizing", "uploading"];
+
+/** A new batch item: queued, or failed at once when the file breaks the limits. */
+export function queuedItem(id: string, file: { name: string; type: string; size: number }, limits: UploadLimits): UploadItem {
+  const problem = fileProblem(file, limits);
+  return {
+    id,
+    name: file.name,
+    size: file.size,
+    phase: problem ? "failed" : "queued",
+    failedStep: 0,
+    job: null,
+    error: problem,
+    canRetry: false,
+  };
+}
+
+/** Queued items to start now, so that at most maxParallel transfers run at once. */
+export function nextToStart(items: UploadItem[], started: Set<string>, maxParallel: number): UploadItem[] {
+  const transferring = items.filter((item) => TRANSFERRING.includes(item.phase)).length;
+  const waiting = items.filter((item) => item.phase === "queued" && !started.has(item.id));
+  return waiting.slice(0, Math.max(maxParallel - transferring, 0));
+}
+
+/** True while leaving the page would abandon an upload that has not reached storage. */
+export function hasUnsentUploads(items: UploadItem[]): boolean {
+  return items.some((item) => item.phase === "queued" || TRANSFERRING.includes(item.phase));
+}
+
+export interface BatchCounts {
+  active: number;
+  stored: number;
+  review: number;
+  failed: number;
+}
+
+/** How this batch stands: still moving, stored, waiting for review, or not processed. */
+export function batchCounts(items: UploadItem[]): BatchCounts {
+  const finished = (item: UploadItem, statuses: string[]) => item.phase === "finished" && statuses.includes(item.job?.status ?? "");
+  return {
+    active: items.filter((item) => !["finished", "failed"].includes(item.phase)).length,
+    stored: items.filter((item) => finished(item, ["STORED"])).length,
+    review: items.filter((item) => finished(item, ["REVIEW_REQUIRED"])).length,
+    failed: items.filter((item) => item.phase === "failed" || finished(item, ["FAILED", "REJECTED"])).length,
+  };
+}

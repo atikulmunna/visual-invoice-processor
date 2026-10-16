@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from "react";
+import { useEffect, useRef, useState, type ChangeEvent, type FormEvent, type RefObject } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 
 import { Dialog } from "../components/Dialog";
@@ -217,26 +217,10 @@ function LineItemsEditor({ lines, issues, onChange }: LineItemsProps) {
   );
 }
 
-export function ReviewWorkspacePage() {
-  const { documentId = "" } = useParams();
-  const navigate = useNavigate();
-  const toast = useToast();
-  const { refresh } = useSession();
-  const [queue, setQueue] = useState<string[] | null>(null);
+function useReviewItem(documentId: string, heading: RefObject<HTMLHeadingElement | null>) {
   const [detail, setDetail] = useState<ReviewDetail | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
   const [form, setForm] = useState<ReviewForm | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [dismissal, setDismissal] = useState<Dismissal | null>(null);
-  const [note, setNote] = useState("");
-  const heading = useRef<HTMLHeadingElement>(null);
-
-  useEffect(() => {
-    api.reviewQueue().then(
-      (response) => setQueue(response.items.map((item) => item.document_id)),
-      () => setQueue([]),
-    );
-  }, []);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
     setDetail(null);
@@ -251,7 +235,114 @@ export function ReviewWorkspacePage() {
       (error) =>
         setLoadError(error instanceof ApiError && error.status === 404 ? "This document is not in your review queue." : "The document could not be loaded."),
     );
-  }, [documentId]);
+  }, [documentId, heading]);
+
+  return { detail, form, setForm, loadError };
+}
+
+function QueuePosition({ queue, position, open }: { queue: string[]; position: number; open: (id: string) => void }) {
+  return (
+    <div className="row review-position">
+      <span className="muted">
+        {position + 1} of {queue.length}
+      </span>
+      <Button size="sm" variant="ghost" icon="arrowLeft" disabled={position === 0}
+        onClick={() => open(queue[position - 1])} aria-label="Previous document (K)">
+        Previous
+      </Button>
+      <Button size="sm" variant="ghost" disabled={position === queue.length - 1}
+        onClick={() => open(queue[position + 1])} aria-label="Next document (J)">
+        Next <Icon name="arrowRight" size={15} />
+      </Button>
+    </div>
+  );
+}
+
+interface ActionsProps {
+  warnings: Issue[];
+  enabled: boolean;
+  dismiss: (dismissal: Dismissal) => void;
+  total: string | null;
+}
+
+function ReviewActions({ warnings, enabled, dismiss, total }: ActionsProps) {
+  return (
+    <div className="review-actions">
+      {warnings.length > 0 && (
+        <ul className="review-warnings" aria-live="polite">
+          {warnings.map((warning) => (
+            <li key={warning.field}>{warning.message}</li>
+          ))}
+        </ul>
+      )}
+      <div className="row">
+        <Button type="submit" disabled={!enabled} icon="check">
+          Approve <kbd>A</kbd>
+        </Button>
+        <Button variant="danger" disabled={!enabled} onClick={() => dismiss("reject")}>
+          Reject <kbd>R</kbd>
+        </Button>
+        <Button variant="ghost" disabled={!enabled} onClick={() => dismiss("duplicate")}>
+          Duplicate <kbd>D</kbd>
+        </Button>
+        {total && <span className="muted review-total">Total {total}</span>}
+      </div>
+    </div>
+  );
+}
+
+interface DismissDialogProps {
+  dismissal: Dismissal | null;
+  close: () => void;
+  confirm: (note: string) => void;
+}
+
+function DismissDialog({ dismissal, close, confirm }: DismissDialogProps) {
+  const [note, setNote] = useState("");
+
+  function submit() {
+    confirm(note.trim());
+    setNote("");
+  }
+
+  return (
+    <Dialog open={dismissal !== null} onClose={close} title={dismissal ? DISMISSALS[dismissal].title : ""}>
+      {dismissal && (
+        <div className="stack" style={{ gap: 16 }}>
+          <p className="muted">{DISMISSALS[dismissal].text}</p>
+          <div className="field">
+            <label className="field-label" htmlFor="dismiss-note">Note (optional)</label>
+            <textarea id="dismiss-note" className="input" rows={3} value={note} onChange={(event) => setNote(event.target.value)} />
+          </div>
+          <div className="row" style={{ justifyContent: "flex-end" }}>
+            <Button variant="ghost" onClick={close}>Cancel</Button>
+            <Button variant={dismissal === "reject" ? "danger" : "primary"} onClick={submit}>
+              {DISMISSALS[dismissal].action}
+            </Button>
+          </div>
+        </div>
+      )}
+    </Dialog>
+  );
+}
+
+export function ReviewWorkspacePage() {
+  const { documentId = "" } = useParams();
+  const navigate = useNavigate();
+  const toast = useToast();
+  const { refresh } = useSession();
+  const [queue, setQueue] = useState<string[] | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [dismissal, setDismissal] = useState<Dismissal | null>(null);
+  const heading = useRef<HTMLHeadingElement>(null);
+  const { detail, form, setForm, loadError } = useReviewItem(documentId, heading);
+
+  useEffect(() => {
+    api.reviewQueue().then(
+      (response) => setQueue(response.items.map((item) => item.document_id)),
+      () => setQueue([]),
+    );
+  }, []);
 
   const issues = form ? checkForm(form) : [];
   const warnings = issues.filter((issue) => !issue.blocking);
@@ -296,12 +387,11 @@ export function ReviewWorkspacePage() {
     void decide("approve", { corrected_record: recordFromForm(form, detail.record) });
   }
 
-  function confirmDismissal() {
+  function confirmDismissal(note: string) {
     if (!dismissal) return;
     const action = dismissal;
     setDismissal(null);
-    void decide(action, { note: note.trim() || undefined });
-    setNote("");
+    void decide(action, { note: note || undefined });
   }
 
   useShortcuts(
@@ -335,21 +425,7 @@ export function ReviewWorkspacePage() {
             {detail ? form?.vendor_name.trim() || "Vendor not found" : <Skeleton width={260} height={34} />}
           </h1>
         </div>
-        {queue && position >= 0 && (
-          <div className="row review-position">
-            <span className="muted">
-              {position + 1} of {queue.length}
-            </span>
-            <Button size="sm" variant="ghost" icon="arrowLeft" disabled={position === 0}
-              onClick={() => open(queue[position - 1])} aria-label="Previous document (K)">
-              Previous
-            </Button>
-            <Button size="sm" variant="ghost" disabled={position === queue.length - 1}
-              onClick={() => open(queue[position + 1])} aria-label="Next document (J)">
-              Next <Icon name="arrowRight" size={15} />
-            </Button>
-          </div>
-        )}
+        {queue && position >= 0 && <QueuePosition queue={queue} position={position} open={open} />}
       </div>
 
       {!detail || !form ? (
@@ -373,52 +449,15 @@ export function ReviewWorkspacePage() {
             <AmountFields form={form} issues={issues} set={set} warn={warn} />
             <LineItemsEditor lines={form.line_items} issues={issues}
               onChange={(lines) => setForm((current) => (current ? { ...current, line_items: lines } : current))} />
-            <div className="review-actions">
-              {warnings.length > 0 && (
-                <ul className="review-warnings" aria-live="polite">
-                  {warnings.map((warning) => (
-                    <li key={warning.field}>{warning.message}</li>
-                  ))}
-                </ul>
-              )}
-              <div className="row">
-                <Button type="submit" disabled={!active || busy} icon="check">
-                  Approve <kbd>A</kbd>
-                </Button>
-                <Button variant="danger" disabled={!active || busy} onClick={() => setDismissal("reject")}>
-                  Reject <kbd>R</kbd>
-                </Button>
-                <Button variant="ghost" disabled={!active || busy} onClick={() => setDismissal("duplicate")}>
-                  Duplicate <kbd>D</kbd>
-                </Button>
-                {detail.record.total_amount != null && (
-                  <span className="muted review-total">
-                    Total {formatMoney(Number(form.total_amount.replace(/,/g, "")) || 0, form.currency || null)}
-                  </span>
-                )}
-              </div>
-            </div>
+            <ReviewActions warnings={warnings} enabled={active && !busy} dismiss={setDismissal}
+              total={detail.record.total_amount != null
+                ? formatMoney(Number(form.total_amount.replace(/,/g, "")) || 0, form.currency || null)
+                : null} />
           </form>
         </div>
       )}
 
-      <Dialog open={dismissal !== null} onClose={() => setDismissal(null)} title={dismissal ? DISMISSALS[dismissal].title : ""}>
-        {dismissal && (
-          <div className="stack" style={{ gap: 16 }}>
-            <p className="muted">{DISMISSALS[dismissal].text}</p>
-            <div className="field">
-              <label className="field-label" htmlFor="dismiss-note">Note (optional)</label>
-              <textarea id="dismiss-note" className="input" rows={3} value={note} onChange={(event) => setNote(event.target.value)} />
-            </div>
-            <div className="row" style={{ justifyContent: "flex-end" }}>
-              <Button variant="ghost" onClick={() => setDismissal(null)}>Cancel</Button>
-              <Button variant={dismissal === "reject" ? "danger" : "primary"} onClick={confirmDismissal}>
-                {DISMISSALS[dismissal].action}
-              </Button>
-            </div>
-          </div>
-        )}
-      </Dialog>
+      <DismissDialog dismissal={dismissal} close={() => setDismissal(null)} confirm={confirmDismissal} />
     </div>
   );
 }
