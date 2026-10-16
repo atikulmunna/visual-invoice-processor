@@ -123,6 +123,8 @@ def test_the_worker_lookups_only_run_on_postgres_and_never_block(
 
 @pytest.fixture
 def reviews_env(dsn: str, monkeypatch: pytest.MonkeyPatch) -> str:
+    monkeypatch.setenv("INGESTION_BACKEND", "s3")
+    monkeypatch.setenv("S3_BUCKET_NAME", "alpha-invoices")
     monkeypatch.setenv("LEDGER_BACKEND", "postgres")
     monkeypatch.setenv("POSTGRES_DSN", dsn)
     monkeypatch.setenv("POSTGRES_TABLE", "ledger_records")
