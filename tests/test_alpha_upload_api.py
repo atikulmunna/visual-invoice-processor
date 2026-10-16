@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import json
-from pathlib import Path
 from typing import Any
 
 from fastapi.testclient import TestClient
@@ -82,10 +80,8 @@ class _FakeStorage:
 
 def _configure(monkeypatch: Any) -> None:
     monkeypatch.setenv("ALPHA_AUTH_ENABLED", "true")
-    monkeypatch.setenv("INGESTION_BACKEND", "s3")
     monkeypatch.setenv("S3_BUCKET_NAME", "alpha-invoices")
     monkeypatch.setenv("S3_REGION", "ap-southeast-1")
-    monkeypatch.setenv("LEDGER_BACKEND", "postgres")
     monkeypatch.setenv("POSTGRES_DSN", "postgresql://example")
     monkeypatch.setenv("MAX_UPLOAD_BYTES", "5242880")
     monkeypatch.setattr("app.monitoring_api.AlphaStore", _FakeAlphaStore)
@@ -228,24 +224,6 @@ def test_presign_rejects_unsupported_and_oversized_files(monkeypatch: Any) -> No
     assert oversized.status_code == 400
 
 
-def _write_review_item(queue: Path, document_id: str, org_id: str, vendor: str) -> None:
-    (queue / f"{document_id}.json").write_text(
-        json.dumps(
-            {
-                "document_id": document_id,
-                "status": "REVIEW_REQUIRED",
-                "org_id": org_id,
-                "metadata": {
-                    "file_hash": f"hash-{document_id}",
-                    "source_file_id": f"inbox/{document_id}.pdf",
-                    "normalized_record": {"vendor_name": vendor, "total_amount": 10.0},
-                },
-            }
-        ),
-        encoding="utf-8",
-    )
-
-
 def test_jobs_are_isolated_between_organizations(monkeypatch: Any) -> None:
     _configure(monkeypatch)
     _FakeAlphaStore.jobs.clear()
@@ -266,70 +244,42 @@ def test_jobs_are_isolated_between_organizations(monkeypatch: Any) -> None:
     assert client.get(f"/uploads/{job_id}", auth=one).status_code == 200
 
 
-def test_review_queue_is_isolated_between_organizations(tmp_path: Path, monkeypatch: Any) -> None:
+def test_review_actions_are_scoped_to_the_signed_in_organization(monkeypatch: Any) -> None:
     _configure(monkeypatch)
-    monkeypatch.setattr("app.monitoring_api._resolved_file_hashes", lambda dsn, org_id=None: set())
-    queue = tmp_path / "review_queue"
-    queue.mkdir()
-    _write_review_item(queue, "doc-one", ORG_ONE, "Acme")
-    _write_review_item(queue, "doc-two", ORG_TWO, "Globex")
-    client = TestClient(create_monitoring_app(postgres_dsn="postgresql://example", review_queue_dir=queue))
+    owners = {"doc-one": ORG_ONE, "doc-two": ORG_TWO}
+    asked: list[str | None] = []
+
+    def act(dsn: str, document_id: str, *, org_id: str | None, **kwargs: Any) -> dict[str, Any]:
+        asked.append(org_id)
+        if owners.get(document_id) != org_id:
+            raise FileNotFoundError(f"Review item not found: {document_id}")
+        return {"storage_result": {"status": "dismissed"}, "review_item": {"status": "REJECTED"}}
+
+    monkeypatch.setattr("app.monitoring_api.pending_review_items",
+                        lambda dsn, *, org_id: [doc for doc, owner in owners.items() if owner == org_id])
+    monkeypatch.setattr("app.monitoring_api.resolve_review_item", act)
+    monkeypatch.setattr("app.monitoring_api.dismiss_review_item", act)
+    client = TestClient(create_monitoring_app(postgres_dsn="postgresql://example"))
     one = ("tester.one", PASSWORD)
-    two = ("tester.two", PASSWORD)
 
-    items = client.get("/review-items", auth=one).json()
-    assert [item["document_id"] for item in items["items"]] == ["doc-one"]
-    assert client.get("/stats", auth=one).json()["review_queue_total"] == 1
-    assert client.get("/backlog", auth=two).json()["review_queue_total"] == 1
-
+    assert client.get("/backlog", auth=one).json() == {"review_queue_total": 1}
     for action in ("approve", "reject", "duplicate"):
-        response = client.post("/review-items/doc-two/resolve", auth=one, json={"action": action})
-        assert response.status_code == 404
-    assert json.loads((queue / "doc-two.json").read_text(encoding="utf-8"))["status"] == "REVIEW_REQUIRED"
-
-    rejected = client.post("/review-items/doc-one/resolve", auth=one, json={"action": "reject"})
-    assert rejected.status_code == 200
-    assert client.get("/review-history", auth=one).json()["count"] == 1
-    assert client.get("/review-history", auth=two).json()["count"] == 0
+        assert client.post("/review-items/doc-two/resolve", auth=one, json={"action": action}).status_code == 404
+    assert client.post("/review-items/doc-one/resolve", auth=one, json={"action": "reject"}).status_code == 200
+    assert asked == [ORG_ONE] * 4
 
 
-def test_operator_logs_are_hidden_from_organizations(tmp_path: Path, monkeypatch: Any) -> None:
-    _configure(monkeypatch)
-    monkeypatch.setattr("app.monitoring_api._resolved_file_hashes", lambda dsn, org_id=None: set())
-    dead = tmp_path / "dead_letter.jsonl"
-    dead.write_text(json.dumps({"document_id": "x", "status": "FAILED", "error_message": "other tenant"}) + "\n")
-    metrics = tmp_path / "metrics.jsonl"
-    metrics.write_text(json.dumps({"metric": "documents_processed_total", "value": 9}) + "\n")
-    client = TestClient(
-        create_monitoring_app(
-            postgres_dsn="postgresql://example",
-            metrics_path=metrics,
-            dead_letter_path=dead,
-            review_queue_dir=tmp_path / "review_queue",
-        )
-    )
-    one = ("tester.one", PASSWORD)
-
-    stats = client.get("/stats", auth=one).json()
-    assert "documents_processed_total" not in stats
-    assert stats["dead_letter_total"] == 0
-    assert client.get("/failures", auth=one).json()["count"] == 0
-    assert client.get("/backlog", auth=one).json()["attention_total"] == 0
-
-
-def test_account_without_organization_is_refused(tmp_path: Path, monkeypatch: Any) -> None:
+def test_account_without_organization_is_refused(monkeypatch: Any) -> None:
     _configure(monkeypatch)
     monkeypatch.setitem(
         USERS,
         "tester.orphan",
         AlphaUser("33333333-3333-3333-3333-333333333333", "tester.orphan", 20, 0, True),
     )
-    client = TestClient(
-        create_monitoring_app(postgres_dsn="postgresql://example", review_queue_dir=tmp_path / "review_queue")
-    )
+    client = TestClient(create_monitoring_app(postgres_dsn="postgresql://example"))
     auth = ("tester.orphan", PASSWORD)
 
-    assert client.get("/review-items", auth=auth).status_code == 403
+    assert client.get("/backlog", auth=auth).status_code == 403
     assert client.get("/api/records", auth=auth).status_code == 403
     assert client.post(
         "/uploads/presign",

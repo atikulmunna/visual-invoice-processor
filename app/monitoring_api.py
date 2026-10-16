@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import os
 import secrets
 from pathlib import Path
@@ -20,9 +19,8 @@ from app.alpha_store import (
     AlphaUser,
 )
 from app.config import Settings, load_dotenv
-from app.drive_service import is_supported_mime_type
 from app.object_storage_service import ObjectStorageService
-from app.review_queue import dismiss_review_item, list_review_items, org_clause, resolve_review_item
+from app.review_queue import dismiss_review_item, pending_review_items, resolve_review_item
 from app.web_session import SESSION_COOKIE_NAME, clear_session_cookie
 from app.vendor_api import build_vendor_router
 from app.workspace_api import build_workspace_router, mount_frontend
@@ -40,6 +38,8 @@ class PresignUploadRequest(BaseModel):
     size: int
 
 
+# Review actions that close an item without storing a record, and the status each one leaves.
+DISMISSALS = {"reject": "REJECTED", "duplicate": "RESOLVED_DUPLICATE_MANUAL"}
 SITE_ICON_PATH = Path(__file__).resolve().parents[1] / "assets" / "icon.png"
 FRONTEND_DIST = Path(__file__).resolve().parents[1] / "frontend" / "dist"
 
@@ -124,15 +124,12 @@ def _build_auth_dependency(postgres_dsn: str | None = None):
 
 def create_monitoring_app(
     *,
-    metrics_path: str | Path = "logs/metrics.jsonl",
-    dead_letter_path: str | Path = "logs/dead_letter.jsonl",
-    review_queue_dir: str | Path = "review_queue",
     postgres_dsn: str | None = None,
     frontend_dist: str | Path = FRONTEND_DIST,
 ) -> FastAPI:
     app = FastAPI(title="Invoice Processor Monitoring API", version="0.1.0")
-    active_postgres_dsn = postgres_dsn or os.getenv("POSTGRES_DSN")
-    require_dashboard_auth = _build_auth_dependency(active_postgres_dsn)
+    dsn = postgres_dsn or os.getenv("POSTGRES_DSN") or ""
+    require_dashboard_auth = _build_auth_dependency(dsn)
 
     @app.get("/assets/icon.png", include_in_schema=False)
     def site_icon() -> FileResponse:
@@ -161,62 +158,15 @@ def create_monitoring_app(
     def logout(
         session_token: str | None = Cookie(default=None, alias=SESSION_COOKIE_NAME),
     ) -> RedirectResponse:
-        if session_token and active_postgres_dsn:
-            AlphaStore(active_postgres_dsn).delete_session(session_token)
+        if session_token and dsn:
+            AlphaStore(dsn).delete_session(session_token)
         response = RedirectResponse(url="/login", status_code=303)
         clear_session_cookie(response)
         return response
 
-    # The local JSONL metrics and dead-letter logs are not tenant-aware, so only an
-    # unscoped operator reads them.
-    def _metric_events(org_id: str | None) -> list[dict[str, Any]]:
-        return _read_jsonl(metrics_path) if org_id is None else []
-
-    def _dead_letters(org_id: str | None, resolved_hashes: set[str]) -> list[dict[str, Any]]:
-        return _active_dead_letters(dead_letter_path, resolved_hashes) if org_id is None else []
-
-    @app.get("/stats")
-    def stats(principal: str | AlphaUser = Depends(require_dashboard_auth)) -> dict[str, Any]:
-        org_id = _org_scope(principal)
-        resolved_hashes = _resolved_file_hashes(active_postgres_dsn, org_id=org_id)
-        dead_letters = _dead_letters(org_id, resolved_hashes)
-        review_items = _active_review_items(review_queue_dir, resolved_hashes, org_id=org_id)
-        counters = _aggregate_metrics(_metric_events(org_id))
-        counters["dead_letter_total"] = len(dead_letters)
-        counters["review_queue_total"] = len(review_items)
-        return counters
-
-    @app.get("/failures")
-    def failures(limit: int = 50, principal: str | AlphaUser = Depends(require_dashboard_auth)) -> dict[str, Any]:
-        items = _read_jsonl(dead_letter_path) if _org_scope(principal) is None else []
-        return {"count": len(items), "items": items[-limit:]}
-
     @app.get("/backlog")
     def backlog(principal: str | AlphaUser = Depends(require_dashboard_auth)) -> dict[str, Any]:
-        org_id = _org_scope(principal)
-        resolved_hashes = _resolved_file_hashes(active_postgres_dsn, org_id=org_id)
-        queue_size = len(_active_review_items(review_queue_dir, resolved_hashes, org_id=org_id))
-        dead_letters = len(_dead_letters(org_id, resolved_hashes))
-        return {
-            "review_queue_total": queue_size,
-            "dead_letter_total": dead_letters,
-            "attention_total": queue_size + dead_letters,
-        }
-
-    @app.get("/review-items")
-    def review_items(principal: str | AlphaUser = Depends(require_dashboard_auth)) -> dict[str, Any]:
-        org_id = _org_scope(principal)
-        resolved_hashes = _resolved_file_hashes(active_postgres_dsn, org_id=org_id)
-        items = _active_review_items(review_queue_dir, resolved_hashes, org_id=org_id)
-        return {"count": len(items), "items": items}
-
-    @app.get("/review-history")
-    def review_history(
-        limit: int = 20,
-        principal: str | AlphaUser = Depends(require_dashboard_auth),
-    ) -> dict[str, Any]:
-        items = _review_history_items(review_queue_dir, limit=limit, org_id=_org_scope(principal))
-        return {"count": len(items), "items": items}
+        return {"review_queue_total": len(pending_review_items(dsn, org_id=_org_scope(principal)))}
 
     @app.post("/review-items/{document_id}/resolve")
     def review_resolve(
@@ -225,41 +175,19 @@ def create_monitoring_app(
         principal: str | AlphaUser = Depends(require_dashboard_auth),
     ) -> dict[str, Any]:
         org_id = _org_scope(principal)
+        request = payload or ReviewResolveRequest()
+        action = request.action.strip().lower()
         try:
-            action = (payload.action if payload else "approve").strip().lower()
-            if action == "approve":
+            if action in DISMISSALS:
+                result = dismiss_review_item(
+                    dsn, document_id, resolution_status=DISMISSALS[action], note=request.note, org_id=org_id
+                )
+            elif action == "approve":
                 result = resolve_review_item(
-                    document_id=document_id,
-                    queue_dir=review_queue_dir,
-                    record_override=payload.corrected_record if payload else None,
-                    note=payload.note if payload else None,
-                    org_id=org_id,
-                )
-            elif action == "reject":
-                result = dismiss_review_item(
-                    document_id=document_id,
-                    queue_dir=review_queue_dir,
-                    resolution_status="REJECTED",
-                    note=payload.note if payload else None,
-                    org_id=org_id,
-                )
-            elif action == "duplicate":
-                result = dismiss_review_item(
-                    document_id=document_id,
-                    queue_dir=review_queue_dir,
-                    resolution_status="RESOLVED_DUPLICATE_MANUAL",
-                    note=payload.note if payload else None,
-                    org_id=org_id,
+                    dsn, document_id, record_override=request.corrected_record, note=request.note, org_id=org_id
                 )
             else:
                 raise ValueError(f"Unsupported review action: {action}")
-            return {
-                "status": "ok",
-                "document_id": document_id,
-                "action": action,
-                "storage_result": result["storage_result"],
-                "review_status": result["review_item"].get("status"),
-            }
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except ValidationError as exc:
@@ -267,6 +195,13 @@ def create_monitoring_app(
         except ValueError as exc:
             # Fields left empty, an item already handled, or an unknown action: the reviewer can act on these.
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {
+            "status": "ok",
+            "document_id": document_id,
+            "action": action,
+            "storage_result": result["storage_result"],
+            "review_status": result["review_item"].get("status"),
+        }
 
     @app.post("/uploads/presign")
     def presign_upload(
@@ -275,14 +210,12 @@ def create_monitoring_app(
     ) -> dict[str, Any]:
         load_dotenv()
         settings = Settings.from_env()
-        if settings.ingestion_backend != "s3":
-            raise HTTPException(status_code=400, detail="Presigned uploads require INGESTION_BACKEND=s3")
         if not isinstance(principal, AlphaUser):
             raise HTTPException(status_code=403, detail="Private-alpha authentication is required")
         _org_scope(principal)
         if payload.size < 1 or payload.size > settings.max_upload_bytes:
             raise HTTPException(status_code=400, detail=f"File must be between 1 and {settings.max_upload_bytes} bytes")
-        if not is_supported_mime_type(payload.content_type, settings.allowed_mime_types):
+        if payload.content_type not in settings.allowed_mime_types:
             raise HTTPException(status_code=400, detail=f"Unsupported file type: {payload.content_type}")
 
         original_name = Path(payload.filename).name
@@ -293,7 +226,7 @@ def create_monitoring_app(
             f"{settings.s3_inbox_prefix.rstrip('/')}/{principal.id}/{job_id}/{original_name}"
         )
         try:
-            store = AlphaStore(active_postgres_dsn or "")
+            store = AlphaStore(dsn)
             store.authorize_upload(
                 principal,
                 object_key=object_key,
@@ -329,7 +262,7 @@ def create_monitoring_app(
             raise HTTPException(status_code=403, detail="Private-alpha authentication is required")
         org_id = _org_scope(principal)
         try:
-            return AlphaStore(active_postgres_dsn or "").get_job(job_id, org_id=org_id)
+            return AlphaStore(dsn).get_job(job_id, org_id=org_id)
         except AlphaNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
@@ -343,7 +276,7 @@ def create_monitoring_app(
         org_id = _org_scope(principal)
         load_dotenv()
         settings = Settings.from_env()
-        store = AlphaStore(active_postgres_dsn or "")
+        store = AlphaStore(dsn)
         try:
             object_key = store.retry_job(job_id, org_id=org_id)
         except AlphaQuotaError as exc:
@@ -366,147 +299,7 @@ def create_monitoring_app(
         # The classic page was replaced by the workspace; old bookmarks land on its overview.
         return RedirectResponse(url="/app/overview", status_code=308)
 
-    def pending_reviews(org_id: str) -> list[dict[str, Any]]:
-        resolved_hashes = _resolved_file_hashes(active_postgres_dsn, org_id=org_id)
-        return _active_review_items(review_queue_dir, resolved_hashes, org_id=org_id)
-
-    app.include_router(
-        build_workspace_router(
-            require_dashboard_auth,
-            active_postgres_dsn,
-            review_queue_dir=review_queue_dir,
-            pending_reviews=pending_reviews,
-        )
-    )
-    app.include_router(build_vendor_router(require_dashboard_auth, active_postgres_dsn))
+    app.include_router(build_workspace_router(require_dashboard_auth, dsn))
+    app.include_router(build_vendor_router(require_dashboard_auth, dsn))
     mount_frontend(app, Path(frontend_dist))
     return app
-
-
-def _read_jsonl(path: str | Path) -> list[dict[str, Any]]:
-    p = Path(path)
-    if not p.exists():
-        return []
-    rows: list[dict[str, Any]] = []
-    for line in p.read_text(encoding="utf-8").splitlines():
-        if not line.strip():
-            continue
-        rows.append(json.loads(line))
-    return rows
-
-
-def _review_queue_size(path: str | Path) -> int:
-    p = Path(path)
-    if not p.exists():
-        return 0
-    return len([x for x in p.glob("*.json") if x.is_file()])
-
-
-def _active_review_items(
-    path: str | Path,
-    resolved_hashes: set[str],
-    *,
-    org_id: str | None = None,
-) -> list[dict[str, Any]]:
-    items: list[dict[str, Any]] = []
-    for payload in list_review_items(queue_dir=path, org_id=org_id):
-        if payload.get("status") != "REVIEW_REQUIRED":
-            continue
-        metadata = payload.get("metadata", {}) if isinstance(payload.get("metadata"), dict) else {}
-        file_hash = str(metadata.get("file_hash", "") or "")
-        if file_hash and file_hash in resolved_hashes:
-            continue
-        normalized = metadata.get("normalized_record") if isinstance(metadata.get("normalized_record"), dict) else {}
-        items.append(
-            {
-                "document_id": payload.get("document_id"),
-                "status": payload.get("status"),
-                "reason_codes": payload.get("reason_codes", []),
-                "created_at_utc": payload.get("created_at_utc"),
-                "source_file_id": metadata.get("source_file_id") or metadata.get("drive_file_id"),
-                "file_hash": file_hash,
-                "used_provider": metadata.get("used_provider", "unknown"),
-                "vendor_name": normalized.get("vendor_name"),
-                "invoice_number": normalized.get("invoice_number"),
-                "invoice_date": normalized.get("invoice_date"),
-                "currency": normalized.get("currency"),
-                "total_amount": normalized.get("total_amount"),
-                "normalized_record": normalized,
-            }
-        )
-    return items
-
-
-def _review_history_items(
-    path: str | Path,
-    *,
-    limit: int = 20,
-    org_id: str | None = None,
-) -> list[dict[str, Any]]:
-    history: list[dict[str, Any]] = []
-    for payload in list_review_items(queue_dir=path, org_id=org_id):
-        status = str(payload.get("status", "") or "")
-        if status == "REVIEW_REQUIRED":
-            continue
-        metadata = payload.get("metadata", {}) if isinstance(payload.get("metadata"), dict) else {}
-        resolved_record = payload.get("resolved_record") if isinstance(payload.get("resolved_record"), dict) else {}
-        history.append(
-            {
-                "document_id": payload.get("document_id"),
-                "status": status,
-                "created_at_utc": payload.get("created_at_utc"),
-                "resolved_at_utc": payload.get("resolved_at_utc"),
-                "source_file_id": metadata.get("source_file_id") or metadata.get("drive_file_id"),
-                "used_provider": metadata.get("used_provider", "unknown"),
-                "vendor_name": resolved_record.get("vendor_name") or metadata.get("vendor_name") or "Unknown",
-                "invoice_number": resolved_record.get("invoice_number") or "-",
-                "total_amount": resolved_record.get("total_amount"),
-                "currency": resolved_record.get("currency") or "NA",
-                "resolution_note": payload.get("resolution_note"),
-            }
-        )
-    history.sort(key=lambda item: str(item.get("resolved_at_utc") or item.get("created_at_utc") or ""), reverse=True)
-    return history[:limit]
-
-
-def _aggregate_metrics(events: list[dict[str, Any]]) -> dict[str, Any]:
-    counters: dict[str, int] = {}
-    for event in events:
-        name = event.get("metric")
-        value = event.get("value")
-        if isinstance(name, str) and isinstance(value, int):
-            counters[name] = counters.get(name, 0) + value
-    return counters
-
-
-def _active_dead_letters(path: str | Path, resolved_hashes: set[str]) -> list[dict[str, Any]]:
-    events = _read_jsonl(path)
-    latest_by_key: dict[str, dict[str, Any]] = {}
-    for event in events:
-        status = str(event.get("status", "") or "")
-        if status not in {"FAILED", "REVIEW_REQUIRED"}:
-            continue
-        file_hash = str(event.get("file_hash", "") or "")
-        if file_hash and file_hash in resolved_hashes:
-            continue
-        key = (
-            str(event.get("document_id", "") or "")
-            or (str(event.get("drive_file_id", "") or "") + "|" + file_hash)
-            or str(hash(json.dumps(event, sort_keys=True)))
-        )
-        latest_by_key[key] = event
-    return list(latest_by_key.values())
-
-
-def _resolved_file_hashes(postgres_dsn: str | None, *, org_id: str | None = None) -> set[str]:
-    if not postgres_dsn:
-        return set()
-    import psycopg
-
-    org_sql, org_params = org_clause(org_id, prefix="and")
-    with psycopg.connect(postgres_dsn, prepare_threshold=None) as conn:
-        rows = conn.execute(
-            f"select distinct file_hash from public.ledger_records where status in ('STORED', 'ARCHIVED'){org_sql}",
-            org_params,
-        ).fetchall()
-    return {str(row[0]) for row in rows if row[0]}

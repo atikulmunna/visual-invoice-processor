@@ -10,10 +10,9 @@ from urllib.parse import unquote_plus
 from app.alpha_store import AlphaQuotaError, AlphaStore
 from app.config import Settings, load_dotenv
 from app.logger import configure_logging
-from app.main import DocumentRejectedError, _process_candidate
-from app.metrics import MetricsCollector
 from app.normalization_engine import NormalizationRuleEngine
 from app.object_storage_service import ObjectStorageService
+from app.pipeline import DocumentRejectedError, Thresholds, process_document
 
 PDF_LEADING_WHITESPACE_LIMIT = 16
 PDF_LEADING_WHITESPACE = b" \t\n\f\r"
@@ -65,8 +64,6 @@ def process_s3_object(
 ) -> dict[str, Any]:
     load_dotenv()
     active_settings = settings or Settings.from_env()
-    if active_settings.ingestion_backend != "s3":
-        raise ValueError("The serverless worker requires INGESTION_BACKEND=s3")
     inbox_prefix = active_settings.s3_inbox_prefix.rstrip("/") + "/"
     if not object_key.startswith(inbox_prefix):
         return {"status": "IGNORED", "object_key": object_key}
@@ -99,31 +96,26 @@ def process_s3_object(
             raise DocumentRejectedError(str(exc), code="global_page_limit_exceeded") from exc
         return {"page_count": page_count}
 
-    metrics = MetricsCollector()
     normalization_engine = NormalizationRuleEngine.from_path(active_settings.normalization_rules_path)
     candidate = {
         "id": object_key,
         "name": job["original_name"],
-        "mimeType": job["content_type"],
-        "size": str(job["declared_size"]),
         "job_id": job_id,
         "org_id": job["org_id"],
         "base_currency": job["base_currency"],
     }
-    result = _process_candidate(
-        candidate=candidate,
+    result = process_document(
+        candidate,
         settings=active_settings,
-        backend=active_storage,
-        claim_store=active_store,
-        dead_letter=active_store,
-        metrics=metrics,
+        storage=active_storage,
+        store=active_store,
         normalization_engine=normalization_engine,
-        extraction_provider="openrouter",
         extraction_model=os.getenv("EXTRACTION_MODEL", "auto"),
+        thresholds=Thresholds(
+            review_confidence=float(os.getenv("REVIEW_CONFIDENCE_THRESHOLD", "0.5")),
+            store_review_score=float(os.getenv("STORE_REVIEW_SCORE_THRESHOLD", "0.6")),
+        ),
         worker_id=f"lambda:{job_id}",
-        review_threshold=float(os.getenv("REVIEW_CONFIDENCE_THRESHOLD", "0.5")),
-        store_review_score_threshold=float(os.getenv("STORE_REVIEW_SCORE_THRESHOLD", "0.6")),
-        archive_on_success=True,
         before_extract=before_extract,
     )
     status_map = {

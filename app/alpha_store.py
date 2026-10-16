@@ -11,11 +11,20 @@ from datetime import timedelta
 from typing import Any
 from uuid import UUID, uuid4
 
-from app.idempotency_store import ClaimResult
 
 
 class AlphaStoreError(RuntimeError):
     pass
+
+
+@dataclass(frozen=True)
+class ClaimResult:
+    """Whether this worker may process a file, or another copy of it is done or underway."""
+
+    status: str
+    drive_file_id: str
+    file_hash: str
+    owner_id: str | None = None
 
 
 class AlphaAuthenticationError(AlphaStoreError):

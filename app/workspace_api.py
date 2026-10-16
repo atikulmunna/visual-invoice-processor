@@ -26,7 +26,7 @@ from app.config import Settings, load_dotenv
 from app.object_storage_service import ObjectStorageService
 from app.records_export import ExportKind, build_export
 from app.records_store import RecordFilters, SortKey
-from app.review_queue import load_review_item
+from app.review_queue import load_review_item, pending_review_items
 from app.web_session import set_session_cookie
 
 logger = logging.getLogger(__name__)
@@ -100,15 +100,13 @@ def job_view(job: dict[str, Any]) -> dict[str, Any]:
 
 def review_summary(item: dict[str, Any]) -> dict[str, Any]:
     """One row of the review queue."""
+    record = item["metadata"].get("normalized_record") or {}
     return {
-        "document_id": item.get("document_id"),
-        "created_at": item.get("created_at_utc"),
-        "reason_codes": list(item.get("reason_codes") or []),
-        "vendor_name": item.get("vendor_name"),
-        "invoice_number": item.get("invoice_number"),
-        "invoice_date": item.get("invoice_date"),
-        "currency": item.get("currency"),
-        "total_amount": item.get("total_amount"),
+        "document_id": item["document_id"],
+        "created_at": item["created_at_utc"],
+        "reason_codes": list(item["reason_codes"]),
+        **{field: record.get(field) for field in ("vendor_name", "invoice_number", "invoice_date", "currency",
+                                                  "total_amount")},
     }
 
 
@@ -196,11 +194,7 @@ def organization_member(principal: str | AlphaUser) -> AlphaUser:
 def build_workspace_router(
     require_auth: Callable[..., Any],
     postgres_dsn: str | None,
-    *,
-    review_queue_dir: str | Path,
-    pending_reviews: Callable[[str], list[dict[str, Any]]],
 ) -> APIRouter:
-    """pending_reviews(org_id) lists the review items still waiting, as the top bar counts them."""
     router = APIRouter(prefix="/api")
 
     def source_document(source_key: str | None, org_id: str) -> dict[str, Any]:
@@ -275,13 +269,14 @@ def build_workspace_router(
     @router.get("/review")
     def review_queue(principal: str | AlphaUser = Depends(require_auth)) -> dict[str, Any]:
         member = organization_member(principal)
-        return {"items": [review_summary(item) for item in pending_reviews(member.org_id or "")]}
+        items = pending_review_items(postgres_dsn or "", org_id=member.org_id or "")
+        return {"items": [review_summary(item) for item in items]}
 
     @router.get("/review/{document_id}")
     def review_detail(document_id: str, principal: str | AlphaUser = Depends(require_auth)) -> dict[str, Any]:
         member = organization_member(principal)
         try:
-            item = load_review_item(document_id, queue_dir=review_queue_dir, org_id=member.org_id)
+            item = load_review_item(postgres_dsn or "", document_id, org_id=member.org_id or "")
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail="Review item not found") from exc
         metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
@@ -385,7 +380,7 @@ def build_workspace_router(
             today=now.date(),
         )
         data["spotlight"] = choose_spotlight(
-            reviews=pending_reviews(org_id),
+            reviews=pending_review_items(postgres_dsn or "", org_id=org_id),
             jobs=store.list_jobs(org_id=org_id, limit=20),
             flagged_total=data["flagged_total"],
             now=now,

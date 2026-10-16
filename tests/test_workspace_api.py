@@ -157,8 +157,8 @@ def test_existing_api_routes_are_not_shadowed(tmp_path: Path, monkeypatch: pytes
     monkeypatch.delenv("ALPHA_AUTH_ENABLED", raising=False)
     monkeypatch.delenv("DASHBOARD_BASIC_AUTH_USERNAME", raising=False)
     monkeypatch.delenv("DASHBOARD_BASIC_AUTH_PASSWORD", raising=False)
-    monkeypatch.setenv("POSTGRES_DSN", "")  # never the developer's database
-    client = TestClient(create_monitoring_app(frontend_dist=_built_frontend(tmp_path), review_queue_dir=tmp_path / "q"))
+    monkeypatch.setattr("app.monitoring_api.pending_review_items", lambda dsn, *, org_id: [])
+    client = TestClient(create_monitoring_app(frontend_dist=_built_frontend(tmp_path)))
 
     response: Any = client.get("/backlog")
 
@@ -277,9 +277,7 @@ def test_jobs_require_an_organization(monkeypatch: pytest.MonkeyPatch, tmp_path:
 
 
 def test_upload_limits_come_from_configuration(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("INGESTION_BACKEND", "s3")
     monkeypatch.setenv("S3_BUCKET_NAME", "alpha-invoices")
-    monkeypatch.setenv("LEDGER_BACKEND", "postgres")
     monkeypatch.setenv("POSTGRES_DSN", "postgresql://example")
     monkeypatch.setenv("MAX_UPLOAD_BYTES", "1048576")
     monkeypatch.setenv("MAX_PDF_PAGES", "3")
@@ -319,11 +317,8 @@ class _ReviewStore(_FakeAlphaStore):
         return None
 
 
-def _write_review(queue: Path, document_id: str, org_id: str, source: str) -> None:
-    import json
-
-    queue.mkdir(exist_ok=True)
-    (queue / f"{document_id}.json").write_text(json.dumps({
+def _review_item(document_id: str, org_id: str, source: str) -> dict[str, Any]:
+    return {
         "document_id": document_id,
         "status": "REVIEW_REQUIRED",
         "org_id": org_id,
@@ -336,25 +331,45 @@ def _write_review(queue: Path, document_id: str, org_id: str, source: str) -> No
             "normalized_record": {"vendor_name": None, "invoice_date": "2026-03-02", "currency": "BDT",
                                   "total_amount": 1954.0, "line_items": []},
         },
-    }), encoding="utf-8")
+    }
 
 
 @pytest.fixture
-def review_client(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> TestClient:
-    for key, value in {"ALPHA_AUTH_ENABLED": "true", "INGESTION_BACKEND": "s3", "S3_BUCKET_NAME": "alpha",
-                       "LEDGER_BACKEND": "postgres", "POSTGRES_DSN": "postgresql://example"}.items():
+def reviews() -> dict[str, dict[str, Any]]:
+    """The review items the fake queue holds; a test may change them before asking."""
+    items = [
+        _review_item("doc-mine", ORG_ID, "inbox/u/j/receipt.pdf"),
+        _review_item("doc-gone", ORG_ID, "inbox/u/old/expired.png"),
+        _review_item("doc-other", "cccccccc-cccc-cccc-cccc-cccccccccccc", "inbox/x/y/other.pdf"),
+    ]
+    return {item["document_id"]: item for item in items}
+
+
+@pytest.fixture
+def review_client(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, reviews: dict[str, dict[str, Any]]) -> TestClient:
+    from app.validation import validate_and_score
+
+    def load(dsn: str, document_id: str, *, org_id: str | None) -> dict[str, Any]:
+        item = reviews.get(document_id)
+        if item is None or item["org_id"] != org_id:
+            raise FileNotFoundError(f"Review item not found: {document_id}")
+        return item
+
+    def resolve(dsn: str, document_id: str, *, record_override: dict[str, Any], note: str | None, org_id: str) -> None:
+        load(dsn, document_id, org_id=org_id)
+        validate_and_score(record_override)
+
+    for key, value in {"ALPHA_AUTH_ENABLED": "true", "S3_BUCKET_NAME": "alpha", "POSTGRES_DSN": "postgresql://example"}.items():
         monkeypatch.setenv(key, value)
     monkeypatch.setattr("app.monitoring_api.AlphaStore", _ReviewStore)
     monkeypatch.setattr("app.workspace_api.AlphaStore", _ReviewStore)
-    monkeypatch.setattr("app.monitoring_api._resolved_file_hashes", lambda dsn, org_id=None: set())
+    monkeypatch.setattr("app.workspace_api.pending_review_items",
+                        lambda dsn, *, org_id: [item for item in reviews.values() if item["org_id"] == org_id])
+    monkeypatch.setattr("app.workspace_api.load_review_item", load)
+    monkeypatch.setattr("app.monitoring_api.resolve_review_item", resolve)
     monkeypatch.setattr("app.workspace_api.ObjectStorageService.from_settings", lambda settings: _ReviewStorage())
     _ReviewStorage.broken = False
-    queue = tmp_path / "queue"
-    _write_review(queue, "doc-mine", ORG_ID, "inbox/u/j/receipt.pdf")
-    _write_review(queue, "doc-gone", ORG_ID, "inbox/u/old/expired.png")
-    _write_review(queue, "doc-other", "cccccccc-cccc-cccc-cccc-cccccccccccc", "inbox/x/y/other.pdf")
-    return TestClient(create_monitoring_app(
-        postgres_dsn="postgresql://example", review_queue_dir=queue, frontend_dist=tmp_path / "none"))
+    return TestClient(create_monitoring_app(postgres_dsn="postgresql://example", frontend_dist=tmp_path / "none"))
 
 
 def test_review_queue_lists_only_the_organization_items(review_client: TestClient) -> None:
@@ -365,6 +380,7 @@ def test_review_queue_lists_only_the_organization_items(review_client: TestClien
     assert {item["document_id"] for item in items} == {"doc-mine", "doc-gone"}
     assert items[0]["reason_codes"] == ["missing_vendor", "validation_failed"]
     assert items[0]["total_amount"] == 1954.0
+    assert items[0]["created_at"] == "2026-10-04T08:00:00+00:00"
 
 
 def test_review_detail_includes_the_record_reasons_and_a_document_link(review_client: TestClient) -> None:
@@ -379,28 +395,20 @@ def test_review_detail_includes_the_record_reasons_and_a_document_link(review_cl
     }
 
 
-def test_review_detail_carries_the_record_it_may_duplicate(review_client: TestClient, tmp_path: Path) -> None:
-    import json
-
-    queue = tmp_path / "queue"
-    item = json.loads((queue / "doc-mine.json").read_text(encoding="utf-8"))
+def test_review_detail_carries_the_record_it_may_duplicate(
+    review_client: TestClient, reviews: dict[str, dict[str, Any]]
+) -> None:
     match = {"record_id": 12, "match": "invoice_number", "vendor_name": "Acme", "invoice_number": "INV-9",
              "invoice_date": "2026-03-02", "currency": "BDT", "total_amount": 1954.0, "added_at": "2026-03-03T00:00:00"}
-    item["metadata"]["duplicate_of"] = match
-    (queue / "doc-mine.json").write_text(json.dumps(item), encoding="utf-8")
+    reviews["doc-mine"]["metadata"]["duplicate_of"] = match
 
     assert review_client.get("/api/review/doc-mine", auth=("owner.one", PASSWORD)).json()["duplicate_of"] == match
     assert review_client.get("/api/review/doc-gone", auth=("owner.one", PASSWORD)).json()["duplicate_of"] is None
 
 
-def test_review_detail_carries_the_field_evidence(review_client: TestClient, tmp_path: Path) -> None:
-    import json
-
-    queue = tmp_path / "queue"
-    item = json.loads((queue / "doc-mine.json").read_text(encoding="utf-8"))
+def test_review_detail_carries_the_field_evidence(review_client: TestClient, reviews: dict[str, dict[str, Any]]) -> None:
     evidence = {"text_available": True, "fields": {"total_amount": {"status": "not_found", "confidence": 0.3}}}
-    item["metadata"]["field_evidence"] = evidence
-    (queue / "doc-mine.json").write_text(json.dumps(item), encoding="utf-8")
+    reviews["doc-mine"]["metadata"]["field_evidence"] = evidence
 
     assert review_client.get("/api/review/doc-mine", auth=("owner.one", PASSWORD)).json()["field_evidence"] == evidence
     assert review_client.get("/api/review/doc-gone", auth=("owner.one", PASSWORD)).json()["field_evidence"] is None

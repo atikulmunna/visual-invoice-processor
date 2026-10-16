@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-import mimetypes
 from pathlib import Path
 from typing import Any
 
 from app.config import Settings
-from app.drive_service import is_supported_mime_type
 
 
 class ObjectStorageService:
@@ -18,7 +16,6 @@ class ObjectStorageService:
         bucket: str,
         inbox_prefix: str,
         archive_prefix: str,
-        allowed_mime_types: tuple[str, ...],
     ) -> None:
         if not bucket:
             raise ValueError("An object-storage bucket must be configured")
@@ -26,7 +23,6 @@ class ObjectStorageService:
         self._bucket = bucket
         self._inbox_prefix = inbox_prefix
         self._archive_prefix = archive_prefix
-        self._allowed_mime_types = allowed_mime_types
 
     @property
     def bucket_name(self) -> str:
@@ -44,8 +40,6 @@ class ObjectStorageService:
         except ImportError as exc:
             raise RuntimeError("boto3 is required for object storage") from exc
 
-        if settings.ingestion_backend != "s3":
-            raise ValueError("Object storage requires INGESTION_BACKEND=s3")
         if not settings.s3_bucket_name:
             raise ValueError("S3_BUCKET_NAME must be configured")
         client = boto3.client(
@@ -59,38 +53,7 @@ class ObjectStorageService:
             bucket=settings.s3_bucket_name,
             inbox_prefix=settings.s3_inbox_prefix,
             archive_prefix=settings.s3_archive_prefix,
-            allowed_mime_types=settings.allowed_mime_types,
         )
-
-    def list_inbox_files(self, prefix: str | None = None) -> list[dict[str, Any]]:
-        active_prefix = prefix if prefix is not None else self._inbox_prefix
-        continuation: str | None = None
-        files: list[dict[str, Any]] = []
-        while True:
-            kwargs: dict[str, Any] = {"Bucket": self._bucket, "Prefix": active_prefix}
-            if continuation:
-                kwargs["ContinuationToken"] = continuation
-            response = self._s3.list_objects_v2(**kwargs)
-            for item in response.get("Contents", []):
-                key = item.get("Key", "")
-                if not key or key.endswith("/"):
-                    continue
-                mime_type = mimetypes.guess_type(key)[0] or "application/octet-stream"
-                if not is_supported_mime_type(mime_type, self._allowed_mime_types):
-                    continue
-                files.append(
-                    {
-                        "id": key,
-                        "name": Path(key).name,
-                        "mimeType": mime_type,
-                        "size": str(item.get("Size", "")),
-                        "lastModified": str(item.get("LastModified", "")),
-                    }
-                )
-            if not response.get("IsTruncated"):
-                break
-            continuation = response.get("NextContinuationToken")
-        return files
 
     def download_file(self, object_key: str, out_path: str | Path) -> Path:
         output_path = Path(out_path)

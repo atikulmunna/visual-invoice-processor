@@ -1,135 +1,22 @@
+"""Stored records in Postgres. The table comes from the migrations."""
+
 from __future__ import annotations
 
 import json
-import re
-from datetime import datetime, timezone
 from typing import Any
 
 import psycopg
 
-from app.auth import get_google_credentials
-from app.config import Settings, load_dotenv
+from app.vendor_store import link_vendor
 
 
 class StorageError(RuntimeError):
     pass
 
 
-_ROW_RANGE_RE = re.compile(r".*![A-Z]+(?P<row>\d+):[A-Z]+(?P=row)$")
-
-
-def _extract_row_index(updated_range: str) -> int | None:
-    match = _ROW_RANGE_RE.match(updated_range)
-    if not match:
-        return None
-    return int(match.group("row"))
-
-
-def _to_row(record: dict[str, Any], metadata: dict[str, Any]) -> list[Any]:
-    now = datetime.now(timezone.utc).isoformat()
-    return [
-        metadata.get("document_id"),
-        metadata.get("drive_file_id"),
-        metadata.get("file_hash"),
-        record.get("document_type"),
-        record.get("vendor_name"),
-        record.get("invoice_number"),
-        record.get("invoice_date"),
-        record.get("currency"),
-        record.get("subtotal"),
-        record.get("tax_amount"),
-        record.get("total_amount"),
-        record.get("model_confidence"),
-        record.get("validation_score"),
-        metadata.get("status", "STORED"),
-        metadata.get("processed_at_utc", now),
-    ]
-
-
-class SheetsStorageService:
-    """Google Sheets writer with in-process dedupe for MVP safety.
-
-    Note: duplicate safety is process-local and not durable. P2-02 introduces
-    durable idempotency via metadata storage and unique constraints.
-    """
-
-    def __init__(
-        self,
-        sheets_client: Any,
-        spreadsheet_id: str,
-        value_range: str = "Ledger!A:Z",
-    ) -> None:
-        self._sheets = sheets_client
-        self._spreadsheet_id = spreadsheet_id
-        self._range = value_range
-        self._seen_dedupe_keys: set[str] = set()
-
-    @classmethod
-    def from_credentials(
-        cls,
-        credentials: Any,
-        spreadsheet_id: str,
-        value_range: str = "Ledger!A:Z",
-    ) -> "SheetsStorageService":
-        try:
-            from googleapiclient.discovery import build
-        except ImportError as exc:
-            raise RuntimeError(
-                "google-api-python-client is required for Sheets API access"
-            ) from exc
-        sheets = build("sheets", "v4", credentials=credentials, cache_discovery=False)
-        return cls(sheets_client=sheets, spreadsheet_id=spreadsheet_id, value_range=value_range)
-
-    def append_record(self, record: dict[str, Any], metadata: dict[str, Any]) -> dict[str, Any]:
-        dedupe_key = metadata.get("file_hash") or metadata.get("idempotency_key")
-        if isinstance(dedupe_key, str) and dedupe_key in self._seen_dedupe_keys:
-            return {
-                "status": "skipped_duplicate",
-                "dedupe_key": dedupe_key,
-                "spreadsheet_id": self._spreadsheet_id,
-            }
-
-        response = (
-            self._sheets.spreadsheets()
-            .values()
-            .append(
-                spreadsheetId=self._spreadsheet_id,
-                range=self._range,
-                valueInputOption="USER_ENTERED",
-                insertDataOption="INSERT_ROWS",
-                body={"values": [_to_row(record, metadata)]},
-            )
-            .execute()
-        )
-
-        updates = response.get("updates", {})
-        updated_range = updates.get("updatedRange", "")
-        result = {
-            "status": "appended",
-            "spreadsheet_id": self._spreadsheet_id,
-            "updated_range": updated_range,
-            "updated_rows": updates.get("updatedRows", 0),
-            "row_index": _extract_row_index(updated_range),
-        }
-        if isinstance(dedupe_key, str):
-            self._seen_dedupe_keys.add(dedupe_key)
-            result["dedupe_key"] = dedupe_key
-        return result
-
-
-class PostgresStorageService:
-    """Stored records in Postgres. The table comes from the migrations."""
-
-    def __init__(self, dsn: str) -> None:
-        self._dsn = dsn
-
-    def _connect(self) -> psycopg.Connection:
-        return psycopg.connect(self._dsn, prepare_threshold=None)
-
-    def _link_vendor(self, cur: Any, record_id: int, org_id: str, record: dict[str, Any]) -> None:
-        """Ties a new record to its vendor in the same transaction, so a stored record is never left unlinked."""
-        from app.vendor_store import link_vendor
-
+def _link_vendor(conn: psycopg.Connection, record_id: int, org_id: str, record: dict[str, Any]) -> None:
+    """Ties a new record to its vendor in the same transaction, so a stored record is never left unlinked."""
+    with conn.cursor() as cur:
         vendor_id = link_vendor(
             cur,
             org_id=org_id,
@@ -138,70 +25,39 @@ class PostgresStorageService:
             currency=record.get("currency"),
         )
         if vendor_id is not None:
-            cur.execute("UPDATE public.ledger_records SET vendor_id = %s WHERE id = %s", (vendor_id, record_id))
-
-    def append_record(self, record: dict[str, Any], metadata: dict[str, Any]) -> dict[str, Any]:
-        drive_file_id = metadata.get("drive_file_id")
-        file_hash = metadata.get("file_hash")
-        if not drive_file_id or not file_hash:
-            raise StorageError("Postgres storage requires metadata.drive_file_id and metadata.file_hash")
-
-        with self._connect() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    INSERT INTO public.ledger_records
-                        (drive_file_id, file_hash, status, record_json, metadata_json, processed_at_utc, org_id)
-                    VALUES
-                        (%s, %s, %s, %s::jsonb, %s::jsonb, NOW(), %s)
-                    ON CONFLICT (drive_file_id, file_hash) DO NOTHING
-                    RETURNING id
-                    """,
-                    (
-                        drive_file_id,
-                        file_hash,
-                        metadata.get("status", "STORED"),
-                        json.dumps(record, ensure_ascii=True),
-                        json.dumps(metadata, ensure_ascii=True),
-                        metadata.get("org_id"),
-                    ),
-                )
-                row = cur.fetchone()
-                if row is not None and metadata.get("org_id"):
-                    self._link_vendor(cur, int(row[0]), str(metadata["org_id"]), record)
-            conn.commit()
-
-        if row is None:
-            return {
-                "status": "skipped_duplicate",
-                "backend": "postgres",
-                "drive_file_id": drive_file_id,
-                "file_hash": file_hash,
-            }
-        return {
-            "status": "appended",
-            "backend": "postgres",
-            "row_id": int(row[0]),
-            "drive_file_id": drive_file_id,
-            "file_hash": file_hash,
-        }
+            cur.execute("update public.ledger_records set vendor_id = %s where id = %s", (vendor_id, record_id))
 
 
-def append_record(record: dict[str, Any], metadata: dict[str, Any]) -> dict[str, Any]:
-    load_dotenv()
-    settings = Settings.from_env()
+def append_record(dsn: str, *, record: dict[str, Any], metadata: dict[str, Any]) -> dict[str, Any]:
+    """Stores a record once per source file and hash, linked to its vendor in the same transaction."""
+    source_id = metadata.get("drive_file_id")
+    file_hash = metadata.get("file_hash")
+    if not source_id or not file_hash:
+        raise StorageError("Storing a record requires metadata.drive_file_id and metadata.file_hash")
 
-    if settings.ledger_backend == "postgres":
-        if not settings.postgres_dsn:
-            raise StorageError("POSTGRES_DSN is required when LEDGER_BACKEND=postgres.")
-        return PostgresStorageService(dsn=settings.postgres_dsn).append_record(record=record, metadata=metadata)
+    org_id = metadata.get("org_id")
+    with psycopg.connect(dsn, prepare_threshold=None) as conn:
+        row = conn.execute(
+            """
+            insert into public.ledger_records
+                (drive_file_id, file_hash, status, record_json, metadata_json, processed_at_utc, org_id)
+            values (%s, %s, %s, %s::jsonb, %s::jsonb, now(), %s)
+            on conflict (drive_file_id, file_hash) do nothing
+            returning id
+            """,
+            (
+                source_id,
+                file_hash,
+                metadata.get("status", "STORED"),
+                json.dumps(record, ensure_ascii=True),
+                json.dumps(metadata, ensure_ascii=True),
+                org_id,
+            ),
+        ).fetchone()
+        if row is not None and org_id:
+            _link_vendor(conn, int(row[0]), str(org_id), record)
 
-    if not settings.ledger_spreadsheet_id:
-        raise StorageError("LEDGER_SPREADSHEET_ID is required for Sheets storage.")
-    credentials = get_google_credentials(settings)
-    service = SheetsStorageService.from_credentials(
-        credentials=credentials,
-        spreadsheet_id=settings.ledger_spreadsheet_id,
-        value_range=settings.ledger_range,
-    )
-    return service.append_record(record=record, metadata=metadata)
+    result = {"drive_file_id": source_id, "file_hash": file_hash}
+    if row is None:
+        return {"status": "skipped_duplicate", **result}
+    return {"status": "appended", "row_id": int(row[0]), **result}
