@@ -1,6 +1,15 @@
 import { describe, expect, it } from "vitest";
 
-import { filterVendors, suggestionKey, totalsLabel, type Vendor } from "./vendors";
+import {
+  correctionValue,
+  fieldLabel,
+  filterVendors,
+  suggestionKey,
+  totalsLabel,
+  trackRecordText,
+  type Vendor,
+  type VendorMemory,
+} from "./vendors";
 
 function vendor(overrides: Partial<Vendor>): Vendor {
   return {
@@ -49,5 +58,30 @@ describe("suggestionKey", () => {
     expect(suggestionKey({ keep: 7, merge: 3, keep_name: "A", merge_name: "B" })).toBe(
       suggestionKey({ keep: 3, merge: 7, keep_name: "B", merge_name: "A" }),
     );
+  });
+});
+
+describe("trackRecordText", () => {
+  const memory = (overrides: Partial<VendorMemory>): VendorMemory => ({
+    reviews: 0, unchanged: 0, trusted: false, trusted_after: 5, corrections: [], ...overrides,
+  });
+
+  it("explains where the vendor stands", () => {
+    expect(trackRecordText(memory({}))).toBe("No documents from this vendor have been reviewed yet.");
+    expect(trackRecordText(memory({ reviews: 1, unchanged: 0 }))).toMatch(/^0 of 1 recent review needed no changes\. Once 5 in a row/);
+    expect(trackRecordText(memory({ reviews: 7, unchanged: 6 }))).toMatch(/^6 of 7 recent reviews/);
+    expect(trackRecordText(memory({ reviews: 5, unchanged: 5, trusted: true }))).toMatch(/^The last 5 reviews needed no changes, so/);
+  });
+});
+
+describe("corrections", () => {
+  it("names fields and shows empty values plainly", () => {
+    expect(fieldLabel("invoice_number")).toBe("Invoice number");
+    expect(fieldLabel("tax_amount")).toBe("Tax or VAT");
+    expect(fieldLabel("something_new")).toBe("something_new");
+    expect(correctionValue(null)).toBe("empty");
+    expect(correctionValue("")).toBe("empty");
+    expect(correctionValue(0)).toBe("0");
+    expect(correctionValue(4208.46)).toBe("4208.46");
   });
 });

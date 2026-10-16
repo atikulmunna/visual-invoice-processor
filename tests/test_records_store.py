@@ -168,7 +168,7 @@ def test_a_record_is_found_only_within_its_organization(dsn: str, orgs: tuple[st
     assert found is not None
     assert found["source_key"] == f"inbox/{mine}/2/D_1.pdf"
     assert found["record"]["vendor_name"] == "Daraz"
-    assert (found["flagged"], found["reviewed"]) == (False, True)
+    assert (found["flagged"], found["reviewed"], found["vouched"]) == (False, True, False)
     assert get_record(dsn, org_id=other, record_id=record_id) is None
     assert get_record(dsn, org_id=mine, record_id=10**12) is None
 
@@ -190,6 +190,11 @@ def test_overview_totals_one_currency_by_invoice_month(dsn: str, orgs: tuple[str
         {"vendor_id": None, "vendor_name": "Acme Supplies", "total": 3500.0, "count": 2},
         {"vendor_id": None, "vendor_name": "Daraz", "total": 500.0, "count": 1},
     ]
+    # All five were added in October 2026 and one of them went through review.
+    added = summary["stored_without_review"]
+    assert [row["month"] for row in added] == ["2026-05", "2026-06", "2026-07", "2026-08", "2026-09", "2026-10"]
+    assert added[-1] == {"month": "2026-10", "stored": 5, "without_review": 4}
+    assert sum(row["stored"] for row in added) == 5
 
 
 def test_overview_switches_currency_and_falls_back_when_asked_for_one_it_lacks(dsn: str, orgs: tuple[str, str]) -> None:
@@ -210,6 +215,7 @@ def test_overview_of_an_empty_organization(dsn: str) -> None:
     assert summary["records_total"] == 0
     assert all(row["total"] == 0 for row in summary["months"])
     assert summary["top_vendors"] == []
+    assert all(row["stored"] == 0 for row in summary["stored_without_review"])
 
 
 def test_trend_months_end_with_the_current_month_and_cross_years() -> None:

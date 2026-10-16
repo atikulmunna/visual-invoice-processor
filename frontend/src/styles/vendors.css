@@ -38,3 +38,34 @@
 .fact-note-muted {
   color: var(--ink-muted);
 }
+
+.track-record-text {
+  margin: 8px 0 0;
+  max-width: 72ch;
+}
+
+.correction-list {
+  display: grid;
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.correction-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
+  padding: 10px 0;
+  border-top: 1px solid var(--line);
+}
+
+.correction-field {
+  min-width: 150px;
+  font-weight: 700;
+}
+
+.correction-before {
+  text-decoration: line-through;
+  color: var(--ink-muted);
+}

@@ -22,6 +22,7 @@ MAX_VENDOR_OPTIONS = 200
 # Keeps an export well inside the 6 MB Lambda response limit.
 MAX_EXPORT_RECORDS = 5000
 TREND_MONTHS = 12
+REVIEW_FREE_MONTHS = 6
 TOP_VENDORS = 5
 
 # One row per stored record of an organization, with the fields the workspace filters on.
@@ -237,6 +238,8 @@ def get_record(dsn: str, *, org_id: str, record_id: int) -> dict[str, Any] | Non
         "vendor": {"id": row[5], "name": row[6]} if row[5] is not None else None,
         "flagged": bool(record.get("needs_review")),
         "reviewed": metadata.get("resolution_source") == "manual_review",
+        # Stored without review because its vendor's recent reviews all needed no changes.
+        "vouched": metadata.get("resolution_source") == "vendor_track_record",
     }
 
 
@@ -259,11 +262,13 @@ def pick_currency(available: list[str], requested: str | None, base: str | None)
 
 
 def overview(dsn: str, *, org_id: str, currency: str | None, base_currency: str | None, today: date) -> dict[str, Any]:
-    """Spending in one currency by invoice month, top vendors, and record counts.
+    """Spending in one currency by invoice month, top vendors, record counts, and how many records
+    were stored without a person reviewing them, by the month they were added.
 
     Totals never mix currencies; `currencies` lists the others the organization can switch to.
     """
     months = trend_months(today)
+    added_months = trend_months(today, REVIEW_FREE_MONTHS)
     with psycopg.connect(dsn, prepare_threshold=None) as conn:
         counts = conn.execute(
             f"""
@@ -305,6 +310,18 @@ def overview(dsn: str, *, org_id: str, currency: str | None, base_currency: str 
             """,
             {**params, "limit": TOP_VENDORS},
         ).fetchall()
+        added = {
+            month: {"stored": stored, "without_review": unreviewed}
+            for month, stored, unreviewed in conn.execute(
+                f"""
+                with records as ({_RECORDS})
+                select to_char(processed_at_utc at time zone 'UTC', 'YYYY-MM'), count(*), count(*) filter (where not reviewed)
+                from records where processed_at_utc >= %(since)s::date
+                group by 1
+                """,
+                {"org_id": org_id, "since": f"{added_months[0]}-01"},
+            ).fetchall()
+        }
     return {
         "currency": chosen,
         "currencies": currencies,
@@ -314,5 +331,8 @@ def overview(dsn: str, *, org_id: str, currency: str | None, base_currency: str 
         "top_vendors": [
             {"vendor_id": vendor_id, "vendor_name": name, "total": float(total), "count": count}
             for vendor_id, name, total, count in vendors
+        ],
+        "stored_without_review": [
+            {"month": month, **added.get(month, {"stored": 0, "without_review": 0})} for month in added_months
         ],
     }

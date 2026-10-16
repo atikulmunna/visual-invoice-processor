@@ -1,5 +1,6 @@
 import { formatMoney } from "./format";
-import type { MonthTotal } from "./overview";
+import { plural, type MonthTotal } from "./overview";
+import { AMOUNT_LABELS } from "./review";
 
 export interface CurrencyTotal {
   currency: string;
@@ -23,6 +24,55 @@ export interface VendorDetail extends Vendor {
   /** The currency the monthly chart is in; null when the vendor has no records. */
   currency: string | null;
   months: MonthTotal[];
+  memory: VendorMemory;
+}
+
+export interface Correction {
+  field: string;
+  before: unknown;
+  after: unknown;
+  reviewed_at: string;
+}
+
+/** What reviewers have taught us about a vendor: its recent reviews and the values they corrected. */
+export interface VendorMemory {
+  reviews: number;
+  unchanged: number;
+  /** Its documents may skip review when only the model doubts them. */
+  trusted: boolean;
+  trusted_after: number;
+  corrections: Correction[];
+}
+
+const FIELD_LABELS: Record<string, string> = {
+  document_type: "Document type",
+  vendor_name: "Vendor name",
+  vendor_tax_id: "Vendor tax ID or BIN",
+  invoice_number: "Invoice number",
+  invoice_date: "Invoice date",
+  due_date: "Due date",
+  currency: "Currency",
+  payment_method: "Payment method",
+  ...AMOUNT_LABELS,
+};
+
+export function fieldLabel(field: string): string {
+  return FIELD_LABELS[field] ?? field;
+}
+
+export function correctionValue(value: unknown): string {
+  return value === null || value === undefined || value === "" ? "empty" : String(value);
+}
+
+/** One sentence on where the vendor stands and what it means for its documents. */
+export function trackRecordText(memory: VendorMemory): string {
+  if (memory.reviews === 0) {
+    return "No documents from this vendor have been reviewed yet.";
+  }
+  if (memory.trusted) {
+    return `The last ${memory.trusted_after} reviews needed no changes, so documents only the model is unsure about are stored without review. Values missing from the document, odd dates, and possible duplicates still go to review.`;
+  }
+  return `${memory.unchanged} of ${plural(memory.reviews, "recent review")} needed no changes. Once ${memory.trusted_after} in a row need none, documents only the model is unsure about are stored without review.`;
 }
 
 export interface MergeSuggestion {

@@ -69,6 +69,7 @@ def client(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> tuple[TestClient,
     monkeypatch.setattr("app.vendor_api.vendor_store.vendor_detail", vendor_detail)
     monkeypatch.setattr("app.vendor_api.vendor_store.update_vendor", update_vendor)
     monkeypatch.setattr("app.vendor_api.vendor_store.merge_vendors", merge_vendors)
+    monkeypatch.setattr("app.vendor_api.vendor_memory.vendor_memory", lambda dsn, **kwargs: {"reviews": 0, **kwargs})
     monkeypatch.setattr("app.vendor_api._today", lambda: date(2026, 10, 5))
     app = create_monitoring_app(postgres_dsn="postgresql://example", frontend_dist=tmp_path / "none")
     return TestClient(app), calls
@@ -89,7 +90,7 @@ def test_vendor_detail_is_scoped_to_the_organization(client: tuple[TestClient, l
     found = http.get("/api/vendors/2", auth=AUTH)
     missing = http.get("/api/vendors/404", auth=AUTH)
 
-    assert found.json() == {"id": 2, "name": "RYANS Computers"}
+    assert found.json() == {"id": 2, "name": "RYANS Computers", "memory": {"reviews": 0, "org_id": ORG_ID, "vendor_id": 2}}
     assert calls[0] == ("detail", {"org_id": ORG_ID, "vendor_id": 2, "today": date(2026, 10, 5)})
     assert missing.status_code == 404
     assert http.get("/api/vendors/0", auth=AUTH).status_code == 422

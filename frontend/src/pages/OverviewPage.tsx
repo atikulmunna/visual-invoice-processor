@@ -10,8 +10,10 @@ import { formatAmount, formatMoney } from "../lib/format";
 import {
   monthLabel,
   plural,
+  reviewFreeShare,
   spendSummary,
   spotlightCopy,
+  type AddedMonth,
   type Overview,
   type Spotlight,
   type VendorTotal,
@@ -78,6 +80,32 @@ function VendorBars({ vendors, currency }: { vendors: VendorTotal[]; currency: s
           </Link>
         </li>
       ))}
+    </ol>
+  );
+}
+
+function ReviewFreeBars({ months }: { months: AddedMonth[] }) {
+  return (
+    <ol className="share-bars">
+      {months.map((month) => {
+        const share = reviewFreeShare(month);
+        return (
+          <li key={month.month} className="share-bar">
+            <span className="vendor-bar-head">
+              <span>{monthLabel(month.month, true)}</span>
+              <span className="vendor-total">{share === null ? "Nothing added" : `${share}%`}</span>
+            </span>
+            {share !== null && (
+              <>
+                <span className="vendor-fill" style={{ width: `${share}%` }} aria-hidden="true" />
+                <span className="muted vendor-count">
+                  {month.without_review.toLocaleString("en-US")} of {plural(month.stored, "document")}
+                </span>
+              </>
+            )}
+          </li>
+        );
+      })}
     </ol>
   );
 }
@@ -228,13 +256,18 @@ export function OverviewPage() {
               >
                 <SpendChart months={overview.months} currency={currency} />
               </ChartCard>
-              <ChartCard title="Top vendors" subtitle={`${currency}, last 12 months`}>
-                {overview.top_vendors.length ? (
-                  <VendorBars vendors={overview.top_vendors} currency={currency} />
-                ) : (
-                  <p className="muted">No {currency} invoices in the last 12 months.</p>
-                )}
-              </ChartCard>
+              <div className="stack">
+                <ChartCard title="Top vendors" subtitle={`${currency}, last 12 months`}>
+                  {overview.top_vendors.length ? (
+                    <VendorBars vendors={overview.top_vendors} currency={currency} />
+                  ) : (
+                    <p className="muted">No {currency} invoices in the last 12 months.</p>
+                  )}
+                </ChartCard>
+                <ChartCard title="Stored without review" subtitle="Share of documents no one had to check, by month added">
+                  <ReviewFreeBars months={overview.stored_without_review} />
+                </ChartCard>
+              </div>
             </div>
           )}
         </div>

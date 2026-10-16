@@ -27,6 +27,7 @@ Ledgerly is a private-alpha invoice processing application for a small, controll
 - **Validation and review:** schema checks, arithmetic checks on totals and line items, and confidence scoring. Doubtful documents open in a review workspace with the original file beside an editable form, live checks, and keyboard shortcuts for approve, reject, and duplicate.
 - **Records and overview:** search, filter, and sort every stored record, open any one beside its original file, and export the filtered list as an Excel workbook (records and line items) or CSV. The overview shows monthly spending and top vendors per currency, never mixing currencies, and leads with the single most pressing item, such as review documents about to lose their source file.
 - **Vendor master:** every spelling of a supplier adds up to one vendor. Records link as they are stored, by the same tax ID or BIN or the same name once case, punctuation, and suffixes like Ltd are ignored; look-alike names are suggested for a one-click merge rather than merged silently. Each vendor has a page with its spend by month and the names its documents used.
+- **Vendor memory:** every approved review teaches the vendor's record. The values a reviewer corrected are passed to the model as hints when it next reads a PDF that names that vendor, and once a vendor's last five reviews needed no changes, its documents skip review when the only doubt is the model's own low score. Each vendor page shows its track record and recent corrections, and the overview shows the share of documents stored without review each month.
 - **Safe reprocessing:** idempotent jobs and duplicate-safe writes; the same file uploaded twice in one organization is caught, while two organizations can process identical files independently.
 - **Duplicate bills:** a different file of a bill already stored (a scan and a PDF, or a copy someone forwarded) is held for review instead of being stored twice. It matches on the same vendor plus the same invoice number, or the same amount within a week, and review shows it side by side with the stored record.
 - **Field evidence:** for PDFs with a text layer, the vendor, invoice number, date, and total are looked up in the document's own text in whatever format it prints them, so a misread value goes to review even when the model is sure of it. Dates are checked for sense (not in the future, a due date not before the invoice date), and review marks the fields that need a second look.
@@ -125,6 +126,7 @@ app/
   records_export.py        Records and line items as CSV and Excel files
   vendor_store.py          Vendor matching, merging, and history
   vendor_api.py            Vendor endpoints
+  vendor_memory.py         Corrections per vendor, track records, and extraction hints
   web_session.py           Session cookie settings
   serverless_worker.py     S3-event processing worker
   extraction_service.py    OpenRouter extraction and PDF text enrichment
