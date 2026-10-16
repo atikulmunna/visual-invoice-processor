@@ -1,6 +1,16 @@
 import { describe, expect, it } from "vitest";
 
-import { checkForm, comparisonRows, formFromRecord, nextAfter, recordFromForm, vendorKey, type ReviewForm } from "./review";
+import {
+  checkForm,
+  comparisonRows,
+  evidenceWarning,
+  formFromRecord,
+  nextAfter,
+  recordFromForm,
+  vendorKey,
+  type FieldEvidence,
+  type ReviewForm,
+} from "./review";
 
 const RECORD = {
   document_type: "receipt",
@@ -176,3 +186,35 @@ describe("vendorKey", () => {
   });
 });
 
+
+describe("evidenceWarning", () => {
+  const evidence: FieldEvidence = {
+    text_available: true,
+    fields: {
+      invoice_number: { status: "not_found", confidence: 0.3 },
+      total_amount: { status: "found", confidence: 0.95 },
+      invoice_date: { status: "implausible", confidence: 0.1 },
+      due_date: { status: "implausible", confidence: 0.1 },
+      vendor_name: { status: "unverified", confidence: null },
+    },
+  };
+  const extracted = form();
+
+  it("warns about values the document does not show or that make no sense", () => {
+    expect(evidenceWarning(evidence, "invoice_number", extracted, extracted)).toMatch(/Not found on the document/);
+    expect(evidenceWarning(evidence, "invoice_date", extracted, extracted)).toMatch(/future or before 2000/);
+    expect(evidenceWarning(evidence, "due_date", extracted, extracted)).toMatch(/before the invoice date/);
+  });
+
+  it("stays quiet for confirmed, unverified, and unchecked values", () => {
+    expect(evidenceWarning(evidence, "total_amount", extracted, extracted)).toBeNull();
+    expect(evidenceWarning(evidence, "vendor_name", extracted, extracted)).toBeNull();
+    expect(evidenceWarning(evidence, "currency", extracted, extracted)).toBeNull();
+    expect(evidenceWarning(null, "invoice_number", extracted, extracted)).toBeNull();
+    expect(evidenceWarning(undefined, "invoice_number", extracted, extracted)).toBeNull();
+  });
+
+  it("clears once the reviewer changes the value", () => {
+    expect(evidenceWarning(evidence, "invoice_number", form({ invoice_number: "INV-8" }), extracted)).toBeNull();
+  });
+});

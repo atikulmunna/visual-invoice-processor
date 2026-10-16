@@ -253,11 +253,14 @@ def decide_review_status(
     model_confidence: float,
     *,
     confidence_threshold: float = 0.85,
+    checked_against_text: bool = False,
 ) -> ReviewDecision:
+    """checked_against_text means each value was verified against the document's own text, which
+    replaces the model's opinion of itself; only documents without text fall back to it."""
     reasons: list[str] = []
     if not is_valid:
         reasons.append("validation_failed")
-    if model_confidence < confidence_threshold:
+    if model_confidence < confidence_threshold and not checked_against_text:
         reasons.append("low_confidence")
     if reasons:
         return ReviewDecision(status="REVIEW_REQUIRED", reason_codes=tuple(reasons))

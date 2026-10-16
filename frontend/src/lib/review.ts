@@ -28,6 +28,39 @@ export interface ReviewDetail {
   record: StoredRecord;
   document: ReviewDocument;
   duplicate_of?: DuplicateMatch | null;
+  field_evidence?: FieldEvidence | null;
+}
+
+export type EvidenceStatus = "found" | "not_found" | "unverified" | "implausible";
+
+/** How each extracted value compared with the document's own text. */
+export interface FieldEvidence {
+  text_available: boolean;
+  fields: Record<string, { status: EvidenceStatus; confidence: number | null }>;
+}
+
+export type TextFormField = Exclude<keyof ReviewForm, "line_items">;
+
+/** A note for a field the document does not support, shown only while it still holds the extracted value. */
+export function evidenceWarning(
+  evidence: FieldEvidence | null | undefined,
+  field: TextFormField,
+  form: ReviewForm,
+  original: ReviewForm,
+): string | null {
+  const status = evidence?.fields[field]?.status;
+  if (!status || form[field] !== original[field]) {
+    return null;
+  }
+  if (status === "not_found") {
+    return "Not found on the document. Check it against the original.";
+  }
+  if (status === "implausible") {
+    return field === "due_date"
+      ? "Due before the invoice date. Check both dates."
+      : "This date looks wrong: it is in the future or before 2000.";
+  }
+  return null;
 }
 
 /** A stored record the worker thinks this document repeats. */

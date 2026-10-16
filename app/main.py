@@ -14,6 +14,7 @@ from app.auth import get_google_credentials
 from app.config import Settings, load_dotenv
 from app.dead_letter import DeadLetterStore
 from app.duplicates import check_for_duplicate
+from app.evidence import assess_fields, evidence_reasons
 from app.drive_service import DriveService
 from app.extraction_service import ExtractionError, extract_document
 from app.idempotency_store import DocumentClaimStore
@@ -179,11 +180,13 @@ def _process_candidate(
         )
         # A different file of an invoice already stored: never stored twice without a person deciding.
         duplicate = check_for_duplicate(settings, normalized_payload, org_id)
-        duplicate_reasons = ["possible_duplicate"] if duplicate else []
+        # Each value checked against the document's own text, where it has one.
+        evidence = assess_fields(normalized_payload, extracted.get("_ocr_text"), datetime.now(timezone.utc).date())
+        extra_reasons = evidence_reasons(evidence) + (["possible_duplicate"] if duplicate else [])
         try:
             validation = validate_and_score(normalized_payload)
         except ValidationError as exc:
-            reason_codes = review_reason_codes(normalized_payload, exc) + duplicate_reasons
+            reason_codes = review_reason_codes(normalized_payload, exc) + extra_reasons
             route_to_review_queue(
                 document_id=document_id,
                 reason_codes=reason_codes,
@@ -195,6 +198,7 @@ def _process_candidate(
                     "normalized_record": normalized_payload,
                     "used_provider": used_provider,
                     "duplicate_of": duplicate,
+                    "field_evidence": evidence,
                 },
                 org_id=org_id,
             )
@@ -224,10 +228,11 @@ def _process_candidate(
             is_valid=validation["is_valid"],
             model_confidence=float(validation["record"].model_confidence),
             confidence_threshold=review_threshold,
+            checked_against_text=evidence["text_available"],
         )
 
-        if decision.status == "REVIEW_REQUIRED" or duplicate:
-            reason_codes = list(decision.reason_codes) + duplicate_reasons
+        if decision.status == "REVIEW_REQUIRED" or extra_reasons:
+            reason_codes = list(decision.reason_codes) + extra_reasons
             route_to_review_queue(
                 document_id=document_id,
                 reason_codes=reason_codes,
@@ -238,6 +243,7 @@ def _process_candidate(
                     "violations": validation["violations"],
                     "used_provider": used_provider,
                     "duplicate_of": duplicate,
+                    "field_evidence": evidence,
                 },
                 org_id=org_id,
             )
@@ -268,6 +274,7 @@ def _process_candidate(
         record["validation_score"] = validation["validation_score"]
         needs_review = validation["validation_score"] < store_review_score_threshold
         record["needs_review"] = needs_review
+        record["field_evidence"] = evidence
         metadata = {
             "document_id": document_id,
             "drive_file_id": file_id,

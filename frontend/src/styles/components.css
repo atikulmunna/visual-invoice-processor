@@ -264,6 +264,16 @@
   color: var(--ink-muted);
 }
 
+.field-warning {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--warning);
+}
+
+.input.input-warning {
+  border-color: var(--warning);
+}
+
 .field-error {
   font-size: 13px;
   font-weight: 600;

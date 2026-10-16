@@ -118,11 +118,16 @@ interface TextFieldProps extends InputHTMLAttributes<HTMLInputElement> {
   label: string;
   hint?: ReactNode;
   error?: string | null;
+  /** Worth a second look but not blocking; an error takes its place. */
+  warning?: string | null;
 }
 
-export function TextField({ label, hint, error, className = "", ...rest }: TextFieldProps) {
+export function TextField({ label, hint, error, warning, className = "", ...rest }: TextFieldProps) {
   const id = useId();
-  const describedBy = [hint ? `${id}-hint` : "", error ? `${id}-error` : ""].filter(Boolean).join(" ") || undefined;
+  const caution = error ? null : warning;
+  const describedBy =
+    [hint ? `${id}-hint` : "", error ? `${id}-error` : "", caution ? `${id}-warning` : ""].filter(Boolean).join(" ") ||
+    undefined;
   return (
     <div className="field">
       <label className="field-label" htmlFor={id}>
@@ -130,7 +135,7 @@ export function TextField({ label, hint, error, className = "", ...rest }: TextF
       </label>
       <input
         id={id}
-        className={`input ${className}`.trim()}
+        className={["input", caution ? "input-warning" : "", className].filter(Boolean).join(" ")}
         aria-invalid={error ? true : undefined}
         aria-describedby={describedBy}
         {...rest}
@@ -143,6 +148,11 @@ export function TextField({ label, hint, error, className = "", ...rest }: TextF
       {error && (
         <span id={`${id}-error`} className="field-error" role="alert">
           {error}
+        </span>
+      )}
+      {caution && (
+        <span id={`${id}-warning`} className="field-warning">
+          {caution}
         </span>
       )}
     </div>
