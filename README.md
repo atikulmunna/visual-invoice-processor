@@ -296,7 +296,7 @@ Follow [AWS_DEPLOYMENT.md](AWS_DEPLOYMENT.md) for the one-time AWS, SSM, Neon, I
 
 | Workflow | Purpose |
 | --- | --- |
-| `deploy-aws.yml` | Runs Python tests with a Postgres service, frontend tests and type check, validates SAM, builds the Lambda images, deploys, and checks `/health` |
+| `deploy-aws.yml` | Lints, audits Python and shipped frontend dependencies for known vulnerabilities, runs Python tests with a Postgres service, frontend tests and type check, validates SAM, builds the Lambda images, deploys, and checks `/health` |
 | `golden-eval.yml` | Runs the standard extraction-quality gate when application, config, or eval files change |
 | `golden-eval-strict-nightly.yml` | Runs the strict benchmark weekly |
 

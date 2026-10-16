@@ -49,6 +49,14 @@ jobs:
       - name: Install test dependencies
         run: pip install -r requirements.txt
 
+      - name: Lint
+        run: ruff check app tests
+
+      - name: Audit Python dependencies
+        run: |
+          pip install "pip-audit>=2.10,<3"
+          pip-audit --requirement requirements.txt --progress-spinner off
+
       - name: Run tests
         env:
           TEST_POSTGRES_DSN: postgresql://postgres:postgres@localhost:5432/postgres
@@ -64,6 +72,7 @@ jobs:
         working-directory: frontend
         run: |
           npm ci --no-audit --no-fund
+          npm audit --omit=dev
           npm test
           npm run typecheck
 
