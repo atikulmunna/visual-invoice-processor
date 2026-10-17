@@ -33,6 +33,8 @@ const SPOTLIGHT_ICONS: Record<Spotlight["kind"], IconName> = {
   files_expiring: "clock",
   uploads_failed: "alert",
   review_waiting: "review",
+  bills_overdue: "calendar",
+  bills_due_soon: "calendar",
   records_flagged: "records",
 };
 

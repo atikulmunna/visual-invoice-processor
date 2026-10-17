@@ -4,6 +4,7 @@ import { Link } from "react-router";
 import { api } from "../lib/api";
 import { formatDate, formatMoney } from "../lib/format";
 import { currencyNote } from "../lib/labels";
+import type { Payment } from "../lib/payables";
 import type { RecordDetail } from "../lib/records";
 import {
   AMOUNT_FIELDS,
@@ -16,6 +17,7 @@ import {
 } from "../lib/review";
 import { Dialog } from "./Dialog";
 import { DocumentViewer } from "./DocumentViewer";
+import { PaymentControls } from "./PaymentControls";
 import { Badge, EmptyState, Skeleton } from "./ui";
 
 function text(value: unknown): string | null {
@@ -62,7 +64,7 @@ function LineItems({ lines, currency }: { lines: StoredRecord[]; currency: strin
   );
 }
 
-function RecordFacts({ detail }: { detail: RecordDetail }) {
+function RecordFacts({ detail, onPayment }: { detail: RecordDetail; onPayment: (payment: Payment) => void }) {
   const record = detail.record;
   const currency = text(record.currency);
   const lines = Array.isArray(record.line_items) ? (record.line_items as StoredRecord[]) : [];
@@ -77,6 +79,16 @@ function RecordFacts({ detail }: { detail: RecordDetail }) {
         {detail.flagged && <Badge tone="warning">Flagged by checks</Badge>}
         <span className="muted">Added {formatDate(detail.added_at)}</span>
       </div>
+      <section>
+        <h3 className="facts-title">Payment</h3>
+        <PaymentControls recordId={detail.id} payment={detail.payment} onChange={onPayment} />
+        {detail.payment.due_date && (
+          <p className="muted payment-due">
+            Due {formatDate(detail.payment.due_date)}
+            {detail.payment.due_printed ? "" : ", the invoice date, since no due date is printed"}
+          </p>
+        )}
+      </section>
       <section>
         <h3 className="facts-title">Details</h3>
         <dl className="facts">
@@ -168,7 +180,10 @@ export function RecordDrawer({ recordId, onClose }: { recordId: number | null; o
       {detail && (
         <div className="record-detail">
           <DocumentViewer document={detail.document} />
-          <RecordFacts detail={detail} />
+          <RecordFacts
+            detail={detail}
+            onPayment={(payment) => setLoaded({ id: detail.id, detail: { ...detail, payment } })}
+          />
         </div>
       )}
     </Dialog>

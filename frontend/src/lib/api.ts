@@ -1,5 +1,6 @@
 import { signInUrl } from "./navigation";
 import type { Overview } from "./overview";
+import type { Payable, Payment, PaymentStatus } from "./payables";
 import { recordsApiPath, type RecordDetail, type RecordFacets, type RecordPage, type RecordQuery } from "./records";
 import type { ReviewDetail, ReviewSummary, StoredRecord } from "./review";
 import type { MergeSuggestion, Vendor, VendorDetail } from "./vendors";
@@ -93,6 +94,7 @@ export interface PresignedUpload {
 
 export interface Backlog {
   review_queue_total: number;
+  overdue_bills_total: number;
 }
 
 const request = createApiClient();
@@ -133,6 +135,9 @@ export const api = {
   records: (query: RecordQuery) => request<RecordPage>(recordsApiPath(query)),
   recordFacets: () => request<RecordFacets>("/api/records/facets"),
   record: (id: number) => request<RecordDetail>(`/api/records/${id}`),
+  payables: () => request<{ items: Payable[] }>("/api/payables"),
+  setPayment: (id: number, change: { status: PaymentStatus; payment_date?: string }) =>
+    request<Payment>(`/api/records/${id}/payment`, { method: "PUT", body: JSON.stringify(change) }),
   overview: (currency: string | null) =>
     request<Overview>(currency ? `/api/overview?currency=${encodeURIComponent(currency)}` : "/api/overview"),
   vendors: () => request<{ vendors: Vendor[]; suggestions: MergeSuggestion[] }>("/api/vendors"),

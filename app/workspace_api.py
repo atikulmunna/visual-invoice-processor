@@ -6,7 +6,7 @@ import logging
 import mimetypes
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Literal
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Response
 from fastapi import Path as PathParam
@@ -21,7 +21,7 @@ from app.alpha_store import (
     AlphaStore,
     AlphaUser,
 )
-from app import records_store
+from app import payables, records_store
 from app.config import Settings, load_dotenv
 from app.object_storage_service import ObjectStorageService
 from app.records_export import ExportKind, build_export
@@ -41,6 +41,12 @@ INBOX_RETENTION = timedelta(days=1)
 
 class OrganizationUpdate(BaseModel):
     base_currency: str
+
+
+class PaymentUpdate(BaseModel):
+    status: Literal["unpaid", "scheduled", "paid"]
+    # The planned date when scheduled; the day it was paid when paid (today if left out).
+    payment_date: date | None = None
 
 
 class SignInRequest(BaseModel):
@@ -133,24 +139,29 @@ def choose_spotlight(
     reviews: list[dict[str, Any]],
     jobs: list[dict[str, Any]],
     flagged_total: int,
+    bills: dict[str, int],
     now: datetime,
 ) -> dict[str, Any] | None:
     """The single most pressing thing for the overview, or None when all is clear.
 
-    Most urgent first: documents in review about to lose their source file, failed
-    uploads that can still be retried, the review backlog, then records stored with
-    a warning.
+    Most urgent first: documents in review about to lose their source file, overdue
+    bills, failed uploads that can still be retried, the review backlog, bills due
+    within a week, then records stored with a warning.
     """
     ages = [now - created for created in (_parse_time(item.get("created_at_utc")) for item in reviews) if created]
     expiring = [age for age in ages if age.days >= ARCHIVE_RETENTION_DAYS - EXPIRY_WARNING_DAYS]
     if expiring:
         days_left = max(ARCHIVE_RETENTION_DAYS - max(expiring).days, 0)
         return {"kind": "files_expiring", "count": len(expiring), "days_left": days_left}
+    if bills["overdue"]:
+        return {"kind": "bills_overdue", "count": bills["overdue"]}
     failed = [job for job in jobs if _retryable_now(job, now)]
     if failed:
         return {"kind": "uploads_failed", "count": len(failed)}
     if reviews:
         return {"kind": "review_waiting", "count": len(reviews), "oldest_days": max((age.days for age in ages), default=0)}
+    if bills["due_soon"]:
+        return {"kind": "bills_due_soon", "count": bills["due_soon"]}
     if flagged_total:
         return {"kind": "records_flagged", "count": flagged_total}
     return None
@@ -406,6 +417,7 @@ def _records_routes(require_auth: Callable[..., Any], dsn: str) -> APIRouter:
             reviews=pending_review_items(dsn, org_id=org_id),
             jobs=store.list_jobs(org_id=org_id, limit=20),
             flagged_total=data["flagged_total"],
+            bills=payables.attention(dsn, org_id=org_id, today=now.date()),
             now=now,
         )
         return data
@@ -413,9 +425,43 @@ def _records_routes(require_auth: Callable[..., Any], dsn: str) -> APIRouter:
     return router
 
 
+def _payables_routes(require_auth: Callable[..., Any], dsn: str) -> APIRouter:
+    """Bills still to pay, and marking a bill unpaid, scheduled, or paid."""
+    router = APIRouter()
+
+    @router.get("/payables")
+    def outstanding(principal: str | AlphaUser = Depends(require_auth)) -> dict[str, Any]:
+        return {"items": payables.outstanding(dsn, org_id=organization_member(principal).org_id or "")}
+
+    @router.put("/records/{record_id}/payment")
+    def set_payment(
+        changes: PaymentUpdate,
+        record_id: int = PathParam(ge=1, le=2**63 - 1),
+        principal: str | AlphaUser = Depends(require_auth),
+    ) -> dict[str, Any]:
+        member = organization_member(principal)
+        try:
+            payment = payables.set_payment(
+                dsn, org_id=member.org_id or "", record_id=record_id, status=changes.status,
+                payment_date=changes.payment_date, today=_utc_now().date(),
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if payment is None:
+            raise HTTPException(status_code=404, detail="Record not found")
+        return payment
+
+    return router
+
+
 def build_workspace_router(require_auth: Callable[..., Any], dsn: str) -> APIRouter:
     router = APIRouter(prefix="/api")
-    for area in (_account_routes(require_auth, dsn), _review_routes(require_auth, dsn), _records_routes(require_auth, dsn)):
+    for area in (
+        _account_routes(require_auth, dsn),
+        _review_routes(require_auth, dsn),
+        _records_routes(require_auth, dsn),
+        _payables_routes(require_auth, dsn),
+    ):
         router.include_router(area)
     return router
 

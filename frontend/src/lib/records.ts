@@ -1,3 +1,4 @@
+import type { Payment } from "./payables";
 import type { ReviewDocument, StoredRecord } from "./review";
 
 export interface RecordRow {
@@ -34,6 +35,7 @@ export interface RecordDetail {
   reviewed: boolean;
   /** Stored without review on the strength of its vendor's track record. */
   vouched?: boolean;
+  payment: Payment;
   document: ReviewDocument;
 }
 

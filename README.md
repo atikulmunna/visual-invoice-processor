@@ -27,6 +27,7 @@ Ledgerly is a private-alpha invoice processing application for a small, controll
 - **Validation and review:** schema checks, arithmetic checks on totals and line items, and confidence scoring. Doubtful documents open in a review workspace with the original file beside an editable form, live checks, and keyboard shortcuts for approve, reject, and duplicate.
 - **Records and overview:** search, filter, and sort every stored record, open any one beside its original file, and export the filtered list as an Excel workbook (records and line items) or CSV. The overview shows monthly spending and top vendors per currency, never mixing currencies, and leads with the single most pressing item, such as review documents about to lose their source file.
 - **Vendor master:** every spelling of a supplier adds up to one vendor. Records link as they are stored, by the same tax ID or BIN or the same name once case, punctuation, and suffixes like Ltd are ignored; look-alike names are suggested for a one-click merge rather than merged silently. Each vendor has a page with its spend by month and the names its documents used.
+- **Payables:** every stored bill is unpaid, scheduled, or paid. Receipts start as paid; invoices wait until someone marks them, and a bill with no printed due date is due on its invoice date. The Payables page lists what is overdue, due in the next 7 days, due in 8 to 14 days, and later, with totals per currency; the overview and a sidebar count call out overdue bills.
 - **Vendor memory:** every approved review teaches the vendor's record. The values a reviewer corrected are passed to the model as hints when it next reads a PDF that names that vendor, and once a vendor's last five reviews needed no changes, its documents skip review when the only doubt is the model's own low score. Each vendor page shows its track record and recent corrections, and the overview shows the share of documents stored without review each month.
 - **Safe reprocessing:** idempotent jobs and duplicate-safe writes; the same file uploaded twice in one organization is caught, while two organizations can process identical files independently.
 - **Duplicate bills:** a different file of a bill already stored (a scan and a PDF, or a copy someone forwarded) is held for review instead of being stored twice. It matches on the same vendor plus the same invoice number, or the same amount within a week, and review shows it side by side with the stored record.
@@ -127,6 +128,7 @@ app/
   vendor_store.py          Vendor matching, merging, and history
   vendor_api.py            Vendor endpoints
   vendor_memory.py         Corrections per vendor, track records, and extraction hints
+  payables.py              Payment status, due dates, and the bills still to pay
   web_session.py           Session cookie settings
   serverless_worker.py     S3-event handler: file checks, job claims, and status
   pipeline.py              One document from download to a stored record or a review item

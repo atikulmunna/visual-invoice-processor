@@ -4,6 +4,7 @@ import { createBrowserRouter, Navigate, RouterProvider } from "react-router";
 
 import { LoginPage } from "./pages/LoginPage";
 import { OverviewPage } from "./pages/OverviewPage";
+import { PayablesPage } from "./pages/PayablesPage";
 import { NotFoundPage } from "./pages/NotFoundPage";
 import { RecordsPage } from "./pages/RecordsPage";
 import { ReviewQueuePage } from "./pages/ReviewQueuePage";
@@ -23,6 +24,7 @@ import "./styles/review.css";
 import "./styles/records.css";
 import "./styles/overview.css";
 import "./styles/vendors.css";
+import "./styles/payables.css";
 
 const router = createBrowserRouter(
   [
@@ -34,6 +36,7 @@ const router = createBrowserRouter(
         { index: true, element: <Navigate to="/overview" replace /> },
         { path: "overview", element: <OverviewPage /> },
         { path: "records", element: <RecordsPage /> },
+        { path: "payables", element: <PayablesPage /> },
         { path: "vendors", element: <VendorsPage /> },
         { path: "vendors/:vendorId", element: <VendorPage /> },
         { path: "review", element: <ReviewQueuePage /> },

@@ -258,11 +258,13 @@ def test_review_actions_are_scoped_to_the_signed_in_organization(monkeypatch: An
     monkeypatch.setattr("app.monitoring_api.pending_review_items",
                         lambda dsn, *, org_id: [doc for doc, owner in owners.items() if owner == org_id])
     monkeypatch.setattr("app.monitoring_api.resolve_review_item", act)
+    monkeypatch.setattr("app.payables.attention",
+                        lambda dsn, *, org_id, today: {"overdue": 2 if org_id == ORG_ONE else 0, "due_soon": 0})
     monkeypatch.setattr("app.monitoring_api.dismiss_review_item", act)
     client = TestClient(create_monitoring_app(postgres_dsn="postgresql://example"))
     one = ("tester.one", PASSWORD)
 
-    assert client.get("/backlog", auth=one).json() == {"review_queue_total": 1}
+    assert client.get("/backlog", auth=one).json() == {"review_queue_total": 1, "overdue_bills_total": 2}
     for action in ("approve", "reject", "duplicate"):
         assert client.post("/review-items/doc-two/resolve", auth=one, json={"action": action}).status_code == 404
     assert client.post("/review-items/doc-one/resolve", auth=one, json={"action": "reject"}).status_code == 200

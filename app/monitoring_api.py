@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import secrets
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 from uuid import uuid4
@@ -20,6 +21,7 @@ from app.alpha_store import (
     AlphaStore,
     AlphaUser,
 )
+from app import payables
 from app.config import Settings, load_dotenv
 from app.object_storage_service import ObjectStorageService
 from app.review_queue import dismiss_review_item, pending_review_items, resolve_review_item
@@ -177,7 +179,12 @@ def _review_action_routes(require_auth: Callable[..., Principal], dsn: str) -> A
 
     @router.get("/backlog")
     def backlog(principal: Principal = Depends(require_auth)) -> dict[str, Any]:
-        return {"review_queue_total": len(pending_review_items(dsn, org_id=_org_scope(principal)))}
+        """What the sidebar counts: documents waiting for review and bills past their date."""
+        org_id = _org_scope(principal)
+        return {
+            "review_queue_total": len(pending_review_items(dsn, org_id=org_id)),
+            "overdue_bills_total": payables.attention(dsn, org_id=org_id, today=datetime.now(timezone.utc).date())["overdue"],
+        }
 
     @router.post("/review-items/{document_id}/resolve")
     def review_resolve(

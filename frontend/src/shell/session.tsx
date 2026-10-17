@@ -6,6 +6,7 @@ import { api, ApiError, type Me } from "../lib/api";
 interface Session {
   me: Me;
   reviewCount: number | null;
+  overdueCount: number | null;
   refresh: () => Promise<void>;
 }
 
@@ -19,7 +20,8 @@ export function useSession(): Session {
   return session;
 }
 
-type LoadState = { status: "loading" } | { status: "ready"; me: Me; reviewCount: number | null } | { status: "error"; message: string };
+type Counts = { reviewCount: number | null; overdueCount: number | null };
+type LoadState = { status: "loading" } | ({ status: "ready"; me: Me } & Counts) | { status: "error"; message: string };
 
 export function SessionProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<LoadState>({ status: "loading" });
@@ -27,12 +29,12 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const refresh = useCallback(async () => {
     try {
       const me = await api.me();
-      // The review count is a nicety; the workspace still loads without it.
-      const reviewCount = await api.backlog().then(
-        (backlog) => backlog.review_queue_total,
-        () => null,
+      // The sidebar counts are a nicety; the workspace still loads without them.
+      const counts: Counts = await api.backlog().then(
+        (backlog) => ({ reviewCount: backlog.review_queue_total, overdueCount: backlog.overdue_bills_total }),
+        () => ({ reviewCount: null, overdueCount: null }),
       );
-      setState({ status: "ready", me, reviewCount });
+      setState({ status: "ready", me, ...counts });
     } catch (error) {
       if (error instanceof ApiError && error.status === 401) {
         return; // The API client is already redirecting to sign-in.
@@ -72,7 +74,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     );
   }
   return (
-    <SessionContext.Provider value={{ me: state.me, reviewCount: state.reviewCount, refresh }}>
+    <SessionContext.Provider
+      value={{ me: state.me, reviewCount: state.reviewCount, overdueCount: state.overdueCount, refresh }}
+    >
       {children}
     </SessionContext.Provider>
   );

@@ -42,7 +42,8 @@ def _row(**record: object) -> dict:
         ],
     }
     base.update(record)
-    return {"id": 7, "added_at": ADDED, "record": base, "flagged": False, "reviewed": True}
+    return {"id": 7, "added_at": ADDED, "record": base, "flagged": False, "reviewed": True,
+            "payment_status": "paid", "payment_date": date(2026, 3, 10)}
 
 
 def _csv_rows(content: bytes) -> list[list[str]]:
@@ -78,6 +79,8 @@ def test_records_csv_spells_out_each_value() -> None:
         "Discount": "0.00",
         "Total": "216500.00",
         "Payment method": "Bank transfer",
+        "Payment status": "Paid",
+        "Paid or scheduled on": "2026-03-10",
         "Checks": "Passed",
         "Approved by reviewer": "Yes",
         "Added (UTC)": "2026-10-04 12:30",
@@ -128,12 +131,14 @@ def test_workbook_has_typed_cells_frozen_headers_and_filters() -> None:
     assert [cell.value for cell in records[1]][:3] == ["Record ID", "Vendor", "Vendor as printed"]
     assert records["A1"].font.bold
     assert records.freeze_panes == "A2"
-    assert records.auto_filter.ref == "A1:S3"
+    assert records.auto_filter.ref == "A1:U3"
     assert records["F2"].value == datetime(2026, 3, 2)
     assert records["F2"].number_format == "d mmm yyyy"
     assert records["O2"].value == 216500
     assert records["O2"].number_format == "#,##0.00"
-    assert records["S2"].value == datetime(2026, 10, 4, 12, 30)
+    assert records["Q2"].value == "Paid"
+    assert records["R2"].value == datetime(2026, 3, 10)
+    assert records["U2"].value == datetime(2026, 10, 4, 12, 30)
     assert lines.max_row == 3  # header plus the two line items of the first record
 
 

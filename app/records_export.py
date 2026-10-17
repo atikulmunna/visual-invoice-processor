@@ -27,6 +27,7 @@ FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
 
 DOCUMENT_TYPES = {"invoice": "Invoice", "receipt": "Receipt"}
 PAYMENT_METHODS = {"card": "Card", "cash": "Cash", "bank": "Bank transfer"}
+PAYMENT_STATUSES = {"unpaid": "Unpaid", "scheduled": "Scheduled", "paid": "Paid"}
 EXCEL_FORMATS = {"money": "#,##0.00", "date": "d mmm yyyy", "datetime": "yyyy-mm-dd hh:mm"}
 
 
@@ -53,6 +54,8 @@ RECORD_COLUMNS = (
     Column("Discount", "money", 12),
     Column("Total", "money", 15),
     Column("Payment method", "text", 15),
+    Column("Payment status", "text", 12),
+    Column("Paid or scheduled on", "date", 13),
     Column("Checks", "text", 10),
     Column("Approved by reviewer", "text", 11),
     Column("Added (UTC)", "datetime", 17),
@@ -132,6 +135,8 @@ def record_rows(rows: list[dict[str, Any]]) -> list[list[Any]]:
             _money(record.get("discount_amount")),
             _money(record.get("total_amount")),
             PAYMENT_METHODS.get(record.get("payment_method")),
+            PAYMENT_STATUSES.get(row.get("payment_status")),
+            row.get("payment_date"),
             "Flagged" if row["flagged"] else "Passed",
             _yes_no(row["reviewed"]),
             row["added_at"],

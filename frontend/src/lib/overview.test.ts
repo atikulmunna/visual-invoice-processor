@@ -83,6 +83,20 @@ describe("spotlightCopy", () => {
     expect(spotlightCopy({ kind: "review_waiting", count: 3, oldest_days: 2 }).body).toContain("waited 2 days");
   });
 
+  it("sends overdue and upcoming bills to payables", () => {
+    expect(spotlightCopy({ kind: "bills_overdue", count: 1 })).toMatchObject({
+      urgent: true,
+      title: "1 bill is past its due date",
+      action: { to: "/payables" },
+    });
+    expect(spotlightCopy({ kind: "bills_overdue", count: 3 }).title).toBe("3 bills are past their due date");
+    expect(spotlightCopy({ kind: "bills_due_soon", count: 2 })).toMatchObject({
+      urgent: false,
+      title: "2 bills are due in the next 7 days",
+      action: { to: "/payables" },
+    });
+  });
+
   it("is calm when nothing needs attention", () => {
     expect(spotlightCopy(null)).toMatchObject({ urgent: false, eyebrow: "All clear" });
   });

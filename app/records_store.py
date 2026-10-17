@@ -8,6 +8,8 @@ from typing import Any, Literal
 
 import psycopg
 
+from app.payables import payment_view
+
 SortKey = Literal["added", "invoice_date", "vendor", "total"]
 
 # Sortable columns by the name the API accepts. Only these SQL fragments ever reach the query text.
@@ -42,7 +44,9 @@ _RECORDS = """
       upper(lr.record_json ->> 'currency') as currency,
       (lr.record_json ->> 'total_amount')::numeric as total_amount,
       coalesce((lr.record_json ->> 'needs_review')::boolean, false) as flagged,
-      coalesce(lr.metadata_json ->> 'resolution_source', '') = 'manual_review' as reviewed
+      coalesce(lr.metadata_json ->> 'resolution_source', '') = 'manual_review' as reviewed,
+      lr.payment_status,
+      lr.payment_date
     from public.ledger_records lr
     left join public.vendors v on v.id = lr.vendor_id
     where lr.org_id = %(org_id)s
@@ -176,7 +180,7 @@ def export_records(
         rows = conn.execute(
             f"""
             with records as ({_RECORDS})
-            select id, processed_at_utc, record_json, flagged, reviewed, vendor_name
+            select id, processed_at_utc, record_json, flagged, reviewed, vendor_name, payment_status, payment_date
             from records{where}
             {_order_clause(sort, descending)}
             """,
@@ -184,7 +188,7 @@ def export_records(
         ).fetchall()
     return [
         {"id": row[0], "added_at": row[1], "record": row[2] or {}, "flagged": row[3], "reviewed": row[4],
-         "vendor_name": row[5]}
+         "vendor_name": row[5], "payment_status": row[6], "payment_date": row[7]}
         for row in rows
     ]
 
@@ -220,7 +224,8 @@ def get_record(dsn: str, *, org_id: str, record_id: int) -> dict[str, Any] | Non
     with psycopg.connect(dsn, prepare_threshold=None) as conn:
         row = conn.execute(
             """
-            select lr.id, lr.processed_at_utc, lr.drive_file_id, lr.record_json, lr.metadata_json, v.id, v.name
+            select lr.id, lr.processed_at_utc, lr.drive_file_id, lr.record_json, lr.metadata_json, v.id, v.name,
+                   lr.payment_status, lr.payment_date
             from public.ledger_records lr
             left join public.vendors v on v.id = lr.vendor_id
             where lr.org_id = %s and lr.id = %s
@@ -240,6 +245,7 @@ def get_record(dsn: str, *, org_id: str, record_id: int) -> dict[str, Any] | Non
         "reviewed": metadata.get("resolution_source") == "manual_review",
         # Stored without review because its vendor's recent reviews all needed no changes.
         "vouched": metadata.get("resolution_source") == "vendor_track_record",
+        "payment": payment_view(record, row[7], row[8]),
     }
 
 
