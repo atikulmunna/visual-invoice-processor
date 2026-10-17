@@ -158,6 +158,7 @@ def test_existing_api_routes_are_not_shadowed(tmp_path: Path, monkeypatch: pytes
     monkeypatch.delenv("DASHBOARD_BASIC_AUTH_USERNAME", raising=False)
     monkeypatch.delenv("DASHBOARD_BASIC_AUTH_PASSWORD", raising=False)
     monkeypatch.setattr("app.monitoring_api.pending_review_items", lambda dsn, *, org_id: [])
+    monkeypatch.setattr("app.payables.attention", lambda dsn, **kwargs: {"overdue": 0, "due_soon": 0})
     client = TestClient(create_monitoring_app(frontend_dist=_built_frontend(tmp_path)))
 
     response: Any = client.get("/backlog")
@@ -451,6 +452,9 @@ class _RecordsStore(_ReviewStore):
         return _RecordsStore.jobs
 
 
+_BILLS = {"overdue": 0, "due_soon": 0}
+
+
 @pytest.fixture
 def records_client(review_client: TestClient, monkeypatch: pytest.MonkeyPatch) -> tuple[TestClient, list]:
     """The review client plus stand-ins for the records queries, which note each call."""
@@ -486,6 +490,20 @@ def records_client(review_client: TestClient, monkeypatch: pytest.MonkeyPatch) -
              "overview": overview, "export_records": export_records}
     for name, fake in fakes.items():
         monkeypatch.setattr(f"app.workspace_api.records_store.{name}", fake)
+
+    def set_payment(dsn: str, **kwargs: Any) -> dict[str, Any] | None:
+        calls.append(("payment", kwargs))
+        if kwargs["record_id"] != 7:
+            return None
+        if kwargs["status"] == "scheduled" and kwargs["payment_date"] is None:
+            raise ValueError("Choose the date the payment is planned for")
+        return {"status": kwargs["status"], "date": "2026-10-05", "due_date": "2026-10-01", "due_printed": False}
+
+    monkeypatch.setattr("app.payables.attention", lambda dsn, **kwargs: dict(_BILLS))
+    monkeypatch.setattr("app.payables.outstanding",
+                        lambda dsn, *, org_id: calls.append(("payables", {"org_id": org_id})) or [{"id": 7}])
+    monkeypatch.setattr("app.payables.set_payment", set_payment)
+    _BILLS.update(overdue=0, due_soon=0)
     monkeypatch.setattr("app.monitoring_api.AlphaStore", _RecordsStore)
     monkeypatch.setattr("app.workspace_api.AlphaStore", _RecordsStore)
     monkeypatch.setattr("app.workspace_api._utc_now", lambda: datetime(2026, 10, 5, tzinfo=timezone.utc))
@@ -597,6 +615,45 @@ def test_overview_uses_the_base_currency_and_adds_the_spotlight(records_client: 
     assert client.get("/api/overview?currency=dollars", auth=("owner.one", PASSWORD)).status_code == 422
 
 
+def test_overdue_bills_outrank_the_review_backlog_in_the_spotlight(records_client: tuple[TestClient, list]) -> None:
+    client, _ = records_client
+    _BILLS.update(overdue=3)
+
+    assert client.get("/api/overview", auth=("owner.one", PASSWORD)).json()["spotlight"] == {
+        "kind": "bills_overdue", "count": 3}
+
+
+def test_payables_lists_the_organization_bills_still_to_pay(records_client: tuple[TestClient, list]) -> None:
+    client, calls = records_client
+
+    response = client.get("/api/payables", auth=("owner.one", PASSWORD))
+
+    assert response.json() == {"items": [{"id": 7}]}
+    assert calls[-1] == ("payables", {"org_id": ORG_ID})
+    assert client.get("/api/payables").status_code == 401
+
+
+def test_marking_a_bill_paid_or_scheduled(records_client: tuple[TestClient, list]) -> None:
+    client, calls = records_client
+    auth = ("owner.one", PASSWORD)
+
+    paid = client.put("/api/records/7/payment", auth=auth, json={"status": "paid"})
+    planned = client.put("/api/records/7/payment", auth=auth, json={"status": "scheduled", "payment_date": "2026-10-20"})
+    undated = client.put("/api/records/7/payment", auth=auth, json={"status": "scheduled"})
+    unknown_status = client.put("/api/records/7/payment", auth=auth, json={"status": "written off"})
+    missing = client.put("/api/records/8/payment", auth=auth, json={"status": "paid"})
+
+    assert (paid.status_code, paid.json()["status"]) == (200, "paid")
+    payment_calls = [kwargs for name, kwargs in calls if name == "payment"]
+    assert payment_calls[0] == {"org_id": ORG_ID, "record_id": 7, "status": "paid", "payment_date": None,
+                                "today": date(2026, 10, 5)}
+    assert payment_calls[1]["payment_date"] == date(2026, 10, 20)
+    assert planned.status_code == 200
+    assert (undated.status_code, undated.json()["detail"]) == (400, "Choose the date the payment is planned for")
+    assert unknown_status.status_code == 422
+    assert missing.status_code == 404
+
+
 NOW = datetime(2026, 10, 5, 12, tzinfo=timezone.utc)
 
 
@@ -608,25 +665,33 @@ def _failed(hours_ago: float, attempts: int = 1) -> dict[str, Any]:
     return _job(status="FAILED", attempts=attempts, authorized_at_utc=NOW - timedelta(hours=hours_ago), result={})
 
 
+NO_BILLS = {"overdue": 0, "due_soon": 0}
+
+
 @pytest.mark.parametrize(
-    ("reviews", "jobs", "flagged", "expected"),
+    ("reviews", "jobs", "flagged", "bills", "expected"),
     [
-        ([_review(1), _review(25)], [_failed(1)], 4, {"kind": "files_expiring", "count": 1, "days_left": 5}),
-        ([_review(40)], [], 0, {"kind": "files_expiring", "count": 1, "days_left": 0}),
-        ([_review(3)], [_failed(1), _failed(2)], 4, {"kind": "uploads_failed", "count": 2}),
-        ([_review(3), _review(1)], [_failed(30)], 4, {"kind": "review_waiting", "count": 2, "oldest_days": 3}),
-        ([], [_failed(1, attempts=3)], 4, {"kind": "records_flagged", "count": 4}),
-        ([], [_job()], 0, None),
+        ([_review(1), _review(25)], [_failed(1)], 4, {"overdue": 2, "due_soon": 1},
+         {"kind": "files_expiring", "count": 1, "days_left": 5}),
+        ([_review(40)], [], 0, NO_BILLS, {"kind": "files_expiring", "count": 1, "days_left": 0}),
+        ([_review(3)], [_failed(1)], 4, {"overdue": 2, "due_soon": 1}, {"kind": "bills_overdue", "count": 2}),
+        ([_review(3)], [_failed(1), _failed(2)], 4, NO_BILLS, {"kind": "uploads_failed", "count": 2}),
+        ([_review(3), _review(1)], [_failed(30)], 4, {"overdue": 0, "due_soon": 5},
+         {"kind": "review_waiting", "count": 2, "oldest_days": 3}),
+        ([], [], 4, {"overdue": 0, "due_soon": 5}, {"kind": "bills_due_soon", "count": 5}),
+        ([], [_failed(1, attempts=3)], 4, NO_BILLS, {"kind": "records_flagged", "count": 4}),
+        ([], [_job()], 0, NO_BILLS, None),
     ],
-    ids=["expiring-first", "already-expired", "failed-uploads", "stale-failures-ignored",
-         "exhausted-retries-ignored", "all-clear"],
+    ids=["expiring-first", "already-expired", "overdue-bills", "failed-uploads", "stale-failures-ignored",
+         "bills-due-soon", "exhausted-retries-ignored", "all-clear"],
 )
 def test_spotlight_picks_the_most_pressing_item(
-    reviews: list[dict[str, Any]], jobs: list[dict[str, Any]], flagged: int, expected: dict[str, Any] | None
+    reviews: list[dict[str, Any]], jobs: list[dict[str, Any]], flagged: int, bills: dict[str, int],
+    expected: dict[str, Any] | None,
 ) -> None:
     from app.workspace_api import choose_spotlight
 
-    assert choose_spotlight(reviews=reviews, jobs=jobs, flagged_total=flagged, now=NOW) == expected
+    assert choose_spotlight(reviews=reviews, jobs=jobs, flagged_total=flagged, bills=bills, now=NOW) == expected
 
 
 def test_export_downloads_every_record_in_the_filtered_view(records_client: tuple[TestClient, list]) -> None:

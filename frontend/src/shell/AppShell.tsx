@@ -12,24 +12,34 @@ import { UploadQueueProvider, useUploadQueue } from "./uploadQueue";
 const NAV: { to: string; label: string; icon: IconName }[] = [
   { to: "/overview", label: "Overview", icon: "overview" },
   { to: "/records", label: "Records", icon: "records" },
+  { to: "/payables", label: "Payables", icon: "calendar" },
   { to: "/vendors", label: "Vendors", icon: "vendors" },
   { to: "/review", label: "Review", icon: "review" },
 ];
 
-function NavLinks({ reviewCount }: { reviewCount: number | null }) {
+function NavLinks() {
+  const { reviewCount, overdueCount } = useSession();
+  // What each badge counts, and how a screen reader says it.
+  const badges: Record<string, [number | null, string]> = {
+    "/review": [reviewCount, "waiting"],
+    "/payables": [overdueCount, "overdue"],
+  };
   return (
     <>
-      {NAV.map((item) => (
-        <NavLink key={item.to} to={item.to} className="nav-link">
-          <Icon name={item.icon} size={16} />
-          {item.label}
-          {item.to === "/review" && reviewCount ? (
-            <span className="count-badge" aria-label={`${reviewCount} waiting`}>
-              {reviewCount}
-            </span>
-          ) : null}
-        </NavLink>
-      ))}
+      {NAV.map((item) => {
+        const [count, meaning] = badges[item.to] ?? [null, ""];
+        return (
+          <NavLink key={item.to} to={item.to} className="nav-link">
+            <Icon name={item.icon} size={16} />
+            {item.label}
+            {count ? (
+              <span className="count-badge" aria-label={`${count} ${meaning}`}>
+                {count}
+              </span>
+            ) : null}
+          </NavLink>
+        );
+      })}
     </>
   );
 }
@@ -91,7 +101,6 @@ function AccountMenu() {
 }
 
 function TopBar() {
-  const { reviewCount } = useSession();
   const { items } = useUploadQueue();
   const uploading = items.filter((item) => !["finished", "failed", "stalled"].includes(item.phase)).length;
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -108,7 +117,7 @@ function TopBar() {
             Ledgerly
           </Link>
           <nav className="nav" aria-label="Main">
-            <NavLinks reviewCount={reviewCount} />
+            <NavLinks />
           </nav>
           <div className="topbar-actions">
             <SearchForm id="search-desktop" />
@@ -138,7 +147,7 @@ function TopBar() {
       <div className="mobile-sheet" id="mobile-nav" hidden={!mobileOpen}>
         <SearchForm id="search-mobile" />
         <nav aria-label="Main mobile">
-          <NavLinks reviewCount={reviewCount} />
+          <NavLinks />
         </nav>
       </div>
     </>

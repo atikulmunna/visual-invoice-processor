@@ -16,6 +16,8 @@ export type Spotlight =
   | { kind: "files_expiring"; count: number; days_left: number }
   | { kind: "uploads_failed"; count: number }
   | { kind: "review_waiting"; count: number; oldest_days: number }
+  | { kind: "bills_overdue"; count: number }
+  | { kind: "bills_due_soon"; count: number }
   | { kind: "records_flagged"; count: number };
 
 /** Documents stored in a month, and how many of them no person reviewed. */
@@ -138,6 +140,22 @@ export function spotlightCopy(spotlight: Spotlight | null): SpotlightCopy {
             ? `The oldest has waited ${plural(spotlight.oldest_days, "day")}. Nothing is stored until a person confirms it.`
             : "They arrived today. Nothing is stored until a person confirms it.",
         action: { label: "Start reviewing", to: "/review" },
+      };
+    case "bills_overdue":
+      return {
+        urgent: true,
+        eyebrow: "Payments late",
+        title: `${plural(spotlight.count, "bill")} ${spotlight.count === 1 ? "is" : "are"} past ${spotlight.count === 1 ? "its" : "their"} due date`,
+        body: "Pay them or schedule a date, so nothing slips further. A bill with no printed due date is due on its invoice date.",
+        action: { label: "Open payables", to: "/payables" },
+      };
+    case "bills_due_soon":
+      return {
+        urgent: false,
+        eyebrow: "Coming up",
+        title: `${plural(spotlight.count, "bill")} ${spotlight.count === 1 ? "is" : "are"} due in the next 7 days`,
+        body: "Schedule them now and the payables calendar shows what goes out when.",
+        action: { label: "Open payables", to: "/payables" },
       };
     case "records_flagged":
       return {

@@ -22,11 +22,13 @@ def test_operator_routes_require_basic_auth_when_configured(monkeypatch: pytest.
     monkeypatch.setenv("DASHBOARD_BASIC_AUTH_USERNAME", "admin")
     monkeypatch.setenv("DASHBOARD_BASIC_AUTH_PASSWORD", "secret-pass")
     monkeypatch.setattr("app.monitoring_api.pending_review_items", lambda dsn, **kwargs: [{}, {}])
+    monkeypatch.setattr("app.payables.attention", lambda dsn, **kwargs: {"overdue": 1, "due_soon": 3})
     client = TestClient(create_monitoring_app(postgres_dsn="postgresql://example"))
 
     assert client.get("/health").status_code == 200
     assert client.get("/backlog").status_code == 401
-    assert client.get("/backlog", auth=("admin", "secret-pass")).json() == {"review_queue_total": 2}
+    assert client.get("/backlog", auth=("admin", "secret-pass")).json() == {"review_queue_total": 2,
+                                                                          "overdue_bills_total": 1}
 
 
 def test_approving_passes_the_correction_and_note(operator: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:

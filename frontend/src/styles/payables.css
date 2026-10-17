@@ -1,0 +1,79 @@
+/* Payables: an agenda of bills grouped by when they should be paid. */
+.agenda-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 4px 16px;
+}
+
+.agenda-overdue {
+  color: var(--danger);
+}
+
+.agenda-totals {
+  font-variant-numeric: tabular-nums;
+}
+
+.agenda-list {
+  display: grid;
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.agenda-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px 16px;
+  padding: 12px 0;
+  border-top: 1px solid var(--line);
+}
+
+.agenda-bill {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.agenda-bill strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agenda-bill:hover strong,
+.agenda-bill:focus-visible strong {
+  text-decoration: underline;
+}
+
+.agenda-amount {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.agenda-row .payment-controls {
+  grid-column: 1 / -1;
+}
+
+.payment-controls {
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.input-date {
+  width: auto;
+}
+
+.payment-due {
+  margin: 8px 0 0;
+}

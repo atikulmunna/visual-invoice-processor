@@ -7,6 +7,7 @@ from typing import Any
 
 import psycopg
 
+from app.payables import initial_payment
 from app.vendor_store import link_vendor
 
 
@@ -36,12 +37,14 @@ def append_record(dsn: str, *, record: dict[str, Any], metadata: dict[str, Any])
         raise StorageError("Storing a record requires metadata.drive_file_id and metadata.file_hash")
 
     org_id = metadata.get("org_id")
+    payment_status, payment_date = initial_payment(record)
     with psycopg.connect(dsn, prepare_threshold=None) as conn:
         row = conn.execute(
             """
             insert into public.ledger_records
-                (drive_file_id, file_hash, status, record_json, metadata_json, processed_at_utc, org_id)
-            values (%s, %s, %s, %s::jsonb, %s::jsonb, now(), %s)
+                (drive_file_id, file_hash, status, record_json, metadata_json, processed_at_utc, org_id,
+                 payment_status, payment_date)
+            values (%s, %s, %s, %s::jsonb, %s::jsonb, now(), %s, %s, %s)
             on conflict (drive_file_id, file_hash) do nothing
             returning id
             """,
@@ -52,6 +55,8 @@ def append_record(dsn: str, *, record: dict[str, Any], metadata: dict[str, Any])
                 json.dumps(record, ensure_ascii=True),
                 json.dumps(metadata, ensure_ascii=True),
                 org_id,
+                payment_status,
+                payment_date,
             ),
         ).fetchone()
         if row is not None and org_id:
